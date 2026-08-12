@@ -18,6 +18,10 @@
 :8000 {
 	reverse_proxy glitchtip-web:8000
 	encode gzip
+
+	# Access log — the quickest way to answer "did the browser's event
+	# actually reach the pipeline?" (`docker compose logs caddy`).
+	log
 }
 
 :4000 {
@@ -28,6 +32,8 @@
 	request_body {
 		max_size 10MB
 	}
+
+	log
 }
 
 # --- Once you have a real domain pointed at this server (optional) -------

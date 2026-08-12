@@ -1,0 +1,479 @@
+/* Neutrals track the host admin panels (Ant Design light/dark, Moove) so the
+   embedded viewer reads as part of the app rather than a bolted-on iframe.
+   --accent is overridden at runtime from ?accent=<hex>, which each host sets
+   from its own brand colour. */
+:root {
+  --bg: #f5f5f5;
+  --panel: #ffffff;
+  --border: #d9d9d9;
+  --text: rgba(0, 0, 0, 0.88);
+  --muted: rgba(0, 0, 0, 0.45);
+  --accent: #1677ff;
+  --accent-contrast: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --auto: #d46b08;
+  --auto-soft: color-mix(in srgb, #d46b08 12%, transparent);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02);
+}
+
+:root[data-theme="dark"],
+body.theme-dark {
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141414;
+    --panel: #1f1f1f;
+    --border: #303030;
+    --text: rgba(255, 255, 255, 0.85);
+    --muted: rgba(255, 255, 255, 0.45);
+    --accent-contrast: #ffffff;
+    --accent-soft: color-mix(in srgb, var(--accent) 22%, transparent);
+    --auto: #e8a33d;
+    --auto-soft: color-mix(in srgb, #e8a33d 18%, transparent);
+    --shadow: none;
+  }
+}
+
+/* Host apps let the user pick a theme independently of the OS, so they can
+   force ours to match with ?theme=light|dark. */
+body.theme-light {
+  --bg: #f5f5f5;
+  --panel: #ffffff;
+  --border: #d9d9d9;
+  --text: rgba(0, 0, 0, 0.88);
+  --muted: rgba(0, 0, 0, 0.45);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --auto: #d46b08;
+  --auto-soft: color-mix(in srgb, #d46b08 12%, transparent);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02);
+}
+
+body.theme-dark {
+  --bg: #141414;
+  --panel: #1f1f1f;
+  --border: #303030;
+  --text: rgba(255, 255, 255, 0.85);
+  --muted: rgba(255, 255, 255, 0.45);
+  --accent-soft: color-mix(in srgb, var(--accent) 22%, transparent);
+  --auto: #e8a33d;
+  --auto-soft: color-mix(in srgb, #e8a33d 18%, transparent);
+  --shadow: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The gate and lightbox are display:grid, which would otherwise win over
+   the `hidden` attribute and leave them permanently on screen. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+code,
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--accent);
+}
+
+/* --- token gate --------------------------------------------------- */
+
+.gate {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.gate-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 28px;
+  width: min(440px, 100%);
+}
+
+.gate-card h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.gate-card p {
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+
+.gate-card input {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.gate-card button {
+  width: 100%;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+
+button {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-contrast);
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+/* --- shell -------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.topbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.topbar-controls #search {
+  min-width: 220px;
+}
+
+/* Embedded in an app's own admin: the host page already provides page
+   chrome and a heading, so drop ours and sit flush in the iframe. */
+.embedded {
+  background: transparent;
+}
+
+.embedded .topbar {
+  padding: 10px 0;
+  background: transparent;
+  border-bottom: none;
+}
+
+.embedded .topbar h1 {
+  display: none;
+}
+
+.embedded .layout {
+  padding: 0;
+}
+
+.embedded .list {
+  max-height: none;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) 1fr;
+  gap: 20px;
+  padding: 20px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- report list -------------------------------------------------- */
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
+}
+
+.list li button {
+  width: 100%;
+  text-align: left;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+  box-shadow: var(--shadow);
+}
+
+.list li button:hover {
+  filter: none;
+  border-color: var(--accent);
+}
+
+.list li button[aria-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.row-top {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.row-note {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-meta {
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.tag.auto {
+  background: var(--auto-soft);
+  color: var(--auto);
+}
+
+/* --- detail ------------------------------------------------------- */
+
+.detail {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+  min-height: 300px;
+}
+
+.detail h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.detail h3 {
+  margin: 24px 0 10px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.empty {
+  color: var(--muted);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 6px 14px;
+  font-size: 14px;
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.shots {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.shots button {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+  line-height: 0;
+}
+
+.shots img {
+  width: 190px;
+  height: 120px;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+
+.shot-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 4px 6px;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.replay {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+
+.replay .rr-player {
+  max-width: 100%;
+}
+
+.danger-zone {
+  margin-top: 28px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+button.danger {
+  color: #cf1322;
+  border-color: color-mix(in srgb, #cf1322 40%, transparent);
+}
+
+button.danger:hover {
+  background: color-mix(in srgb, #cf1322 10%, transparent);
+}
+
+.crumbs {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.crumb {
+  display: grid;
+  grid-template-columns: 92px 110px 1fr;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.crumb:last-child {
+  border-bottom: none;
+}
+
+.crumb .t,
+.crumb .c {
+  color: var(--muted);
+}
+
+.crumb .m {
+  overflow-wrap: anywhere;
+}
+
+/* --- lightbox ----------------------------------------------------- */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 12, 0.88);
+  display: grid;
+  grid-template-columns: 64px 1fr 64px;
+  place-items: center;
+  z-index: 20;
+}
+
+.lightbox img {
+  grid-column: 2;
+  max-width: 100%;
+  max-height: 86vh;
+  border-radius: 6px;
+}
+
+.lightbox-nav,
+.lightbox-close {
+  background: rgba(255, 255, 255, 0.14);
+  border: none;
+  color: #fff;
+  font-size: 24px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  font-size: 18px;
+}
+
+.lightbox-caption {
+  position: absolute;
+  bottom: 18px;
+  grid-column: 2;
+  color: #d8dde2;
+  font-size: 13px;
+  margin: 0;
+}
