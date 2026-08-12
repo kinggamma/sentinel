@@ -170,6 +170,40 @@ export async function fetchProjectDsn(projectSlug) {
   return key?.dsn?.public || null;
 }
 
+/**
+ * End the caller's GlitchTip session as well as ours.
+ *
+ * Signing out of one of two things that feel like one thing, and staying
+ * signed in to the other, is the sort of detail that makes them feel like
+ * two again. Best effort: allauth guards this with CSRF, and the browser
+ * hands us its csrftoken cookie for the same reason it hands us sessionid,
+ * so we can usually satisfy it. When we can't, expiring the cookie still
+ * signs the browser out — it just leaves the session record to age out on
+ * GlitchTip's side rather than being destroyed now.
+ */
+export async function revokeGlitchtipSession({ sessionId, csrfToken }) {
+  if (!glitchtipConfigured || !sessionId) return false;
+
+  const cookies = [`${GLITCHTIP_SESSION_COOKIE}=${sessionId}`];
+  if (csrfToken) cookies.push(`csrftoken=${csrfToken}`);
+
+  try {
+    const res = await fetch(`${GLITCHTIP_API_URL}/_allauth/browser/v1/auth/session`, {
+      method: "DELETE",
+      headers: {
+        cookie: cookies.join("; "),
+        accept: "application/json",
+        ...(csrfToken ? { "x-csrftoken": csrfToken, referer: GLITCHTIP_API_URL } : {}),
+      },
+    });
+    // allauth answers 401 once the session is gone, which is the outcome we
+    // were after.
+    return res.ok || res.status === 401;
+  } catch {
+    return false;
+  }
+}
+
 /** Link to a project's issue stream, or to a single event when we have one. */
 export function glitchtipLink({ projectSlug, eventId } = {}) {
   if (!glitchtipConfigured) return null;

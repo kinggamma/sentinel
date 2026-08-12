@@ -36,11 +36,22 @@ function unsign(value) {
   }
 }
 
-export function issueSession(res, { email, name, source }) {
+/**
+ * Fingerprint of the GlitchTip session a silent sign-in came from. Stored in
+ * our own cookie so that signing out of GlitchTip — or signing in there as
+ * somebody else — invalidates the Sentinel session on the very next request,
+ * without a round trip to GlitchTip to find out.
+ */
+export function fingerprint(sessionId) {
+  return crypto.createHash("sha256").update(String(sessionId)).digest("base64url").slice(0, 22);
+}
+
+export function issueSession(res, { email, name, source, boundTo = null }) {
   const payload = {
     email: email || null,
     name: name || null,
-    source, // "glitchtip" | "staff-token"
+    source, // "glitchtip" | "glitchtip-sso" | "staff-token"
+    boundTo, // fingerprint of the GlitchTip session, for SSO sessions
     exp: Date.now() + SESSION_HOURS * 60 * 60 * 1000,
   };
   res.cookie?.(SESSION_COOKIE, sign(payload), {
@@ -69,7 +80,17 @@ export function readCookie(req, name) {
 
 export function currentUser(req) {
   const cookie = readCookie(req, SESSION_COOKIE);
-  return cookie ? unsign(cookie) : null;
+  const session = cookie ? unsign(cookie) : null;
+  if (!session) return null;
+
+  // A session that came from GlitchTip's lasts exactly as long as GlitchTip's
+  // does. Sign out there and this one stops working here, in the same click.
+  if (session.boundTo) {
+    const glitchtipSession = readCookie(req, process.env.GLITCHTIP_SESSION_COOKIE || "sessionid");
+    if (!glitchtipSession || fingerprint(glitchtipSession) !== session.boundTo) return null;
+  }
+
+  return session;
 }
 
 /**

@@ -107,8 +107,8 @@ services:
       # nobody has to make one by hand. Give this token project:write and
       # NOT project:admin — creating needs the first, deleting needs the
       # second, so a leaked token can't cost you a project's history.
-      GLITCHTIP_SERVICE_TOKEN: ${GLITCHTIP_SERVICE_TOKEN}
-      GLITCHTIP_TEAM: ${GLITCHTIP_TEAM}
+      GLITCHTIP_SERVICE_TOKEN: ${GLITCHTIP_SERVICE_TOKEN:-}
+      GLITCHTIP_TEAM: ${GLITCHTIP_TEAM:-}
       # Signed session cookies. Without this, everyone is signed out on
       # every restart.
       SESSION_SECRET: ${SESSION_SECRET}

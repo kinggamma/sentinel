@@ -162,25 +162,58 @@ Admin role in full.
 
 ## Who can read reports
 
-There is no user database to administer. Signing in takes a personal
-GlitchTip auth token (**GlitchTip → Profile → Auth Tokens**), created with
-the **`org:read`** scope — GlitchTip's `/api/0/organizations/` requires it,
-and a token without it is rejected no matter who owns it. Sentinel asks
-GlitchTip whether that token belongs to a member of `GLITCHTIP_ORG`, and
-issues a session only if it does. So granting someone access is inviting
-them to the GlitchTip organisation, revoking it is removing them, and the
-two systems can't drift apart. Keep GlitchTip's
-`ENABLE_OPEN_USER_REGISTRATION=false` (the default here) so nobody can
-create their own account and walk in.
+There is no user database to administer. GlitchTip holds the accounts, and
+Sentinel asks it who you are. **Most of the time there is nothing to sign
+in to:** if you're already signed in to GlitchTip in that browser, opening
+Sentinel signs you in silently — GlitchTip's session cookie is host-only,
+and cookies ignore ports, so it reaches the receiver on `:4000` too.
+Sentinel hands it back to GlitchTip to ask whose it is.
+
+Signing out of Sentinel signs you out of GlitchTip, and signing out of
+GlitchTip locks Sentinel on the next click — a silent session is bound to
+the GlitchTip session it came from, so it can't outlive it.
+
+**First, once per installation:** open GlitchTip at `:8000`, create your
+account and your organisation, and put that organisation's slug in
+`GLITCHTIP_ORG`. Everyone else who needs to read reports gets invited to
+that organisation in GlitchTip — the invitation *is* their Sentinel access.
+
+After that there are two ways in, and both are fine.
+
+**1. Already signed in to GlitchTip → just open Sentinel.** Nothing to
+type. This is the usual one.
+
+**2. Sign in to Sentinel directly with an auth token.** Useful when you
+don't want to visit GlitchTip at all, or you're on a machine or browser
+that isn't signed in there. Do this once:
+
+1. In GlitchTip, click your avatar → **Profile**.
+2. Go to **Auth Tokens** → **Create New Token**.
+3. Tick **`org:read`** and create it. GlitchTip's `/api/0/organizations/`
+   requires that scope, and a token without it is refused no matter who
+   owns it — this is the one step worth getting right.
+4. Copy the token and **save it somewhere you'll find again** (a password
+   manager). GlitchTip shows it once.
+
+From then on, open Sentinel, paste the token, and you're in — the account
+behind it still has to belong to `GLITCHTIP_ORG`. The session lasts
+`SESSION_HOURS`, so it's not something you paste daily.
+
+Keep GlitchTip's `ENABLE_OPEN_USER_REGISTRATION=false` (the default here)
+so nobody can create their own account and walk in.
 
 Sessions are an HMAC-signed, httpOnly cookie — no server-side store, and no
 credential kept in the browser's localStorage. Set `SESSION_SECRET` or
 everyone is signed out whenever the receiver restarts.
 
-`STAFF_API_TOKEN` remains a second way in, for the cases that aren't a
-person: apps' SDKs posting reports, the embedded viewer, and setups running
-without GlitchTip. It's a shared secret rather than an identity, so prefer
-GlitchTip sign-in for anyone reading reports by hand.
+**`STAFF_API_TOKEN` is not a way to sign in.** It's how apps' SDKs post
+reports and how the embedded viewer reads them, which means it ships inside
+client-rendered admin panels and anyone who can open one can read it. If it
+also signed people in, viewing source would be enough to browse every
+report and every session replay. So it doesn't — a person signing in brings
+a GlitchTip account. (The one exception: with no GlitchTip configured there
+would be no way in at all, so it stays the credential of last resort for
+that setup.)
 
 Only the static page is unauthenticated; every byte of report data still
 goes through the guarded `/api` routes.

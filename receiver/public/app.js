@@ -252,33 +252,13 @@ el("gate-form").addEventListener("submit", async (event) => {
 });
 
 /**
- * Signing out has to stick. Silent sign-in would otherwise let you back in
- * on the very next load, since you're still signed in to GlitchTip — which
- * reads as a broken button. Suppressed per tab, so it lasts as long as the
- * tab does and never leaks into another one.
+ * Signing out ends the GlitchTip session too, so there's nothing left for
+ * silent sign-in to pick up and no need to suppress it: reloading lands on
+ * the sign-in screen. Signing back in to GlitchTip deliberately is then a
+ * way back in, which is what you'd want it to be.
  */
-const SIGNED_OUT_KEY = "sentinel-signed-out";
-
-function suppressSso(on) {
-  try {
-    if (on) sessionStorage.setItem(SIGNED_OUT_KEY, "1");
-    else sessionStorage.removeItem(SIGNED_OUT_KEY);
-  } catch {
-    // Storage disabled; silent sign-in just stays available.
-  }
-}
-
-function ssoSuppressed() {
-  try {
-    return sessionStorage.getItem(SIGNED_OUT_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
 el("forget").addEventListener("click", async () => {
   await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
-  suppressSso(true);
   projects = [];
   reports = [];
   selectedId = null;
@@ -986,7 +966,7 @@ async function boot() {
 
   // Failing that, whoever is reading may already be signed in to GlitchTip
   // in this browser — in which case there's nothing for them to type.
-  if (config.glitchtipEnabled && !ssoSuppressed()) {
+  if (config.glitchtipEnabled) {
     try {
       const res = await fetch("/api/auth/sso", { method: "POST", credentials: "same-origin" });
       if (res.ok) return await enter();
