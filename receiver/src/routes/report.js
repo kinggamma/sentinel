@@ -4,7 +4,13 @@ import { nanoid } from "nanoid";
 import { saveReport, getReport, listReports, deleteReport, reportDir } from "../storage.js";
 import { notifyNewReport } from "../notify.js";
 import { retentionPolicy } from "../retention.js";
-import { glitchtipLink, glitchtipInfo, projectSlugForApp } from "../glitchtip.js";
+import {
+  glitchtipLink,
+  glitchtipInfo,
+  createProjectForApp,
+  provisioningConfigured,
+} from "../glitchtip.js";
+import { slugForApp, isKnown, remember, all as allMappings } from "../project-map.js";
 import path from "node:path";
 
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 8);
@@ -20,6 +26,40 @@ const upload = multer({
 ]);
 
 export const reportRouter = Router();
+
+/**
+ * An app that has never reported before doesn't have a GlitchTip project
+ * yet, and asking someone to go and make one by hand is the step everybody
+ * forgets — so the first report from a new app creates it.
+ *
+ * Deliberately not awaited by the request that triggered it: the report is
+ * already saved, and an app filing a bug shouldn't get a 500 because
+ * GlitchTip was slow or down. Failures are logged and retried by the next
+ * report from that app, since nothing gets recorded until one succeeds.
+ */
+const provisioning = new Set();
+
+function provisionInBackground(appName) {
+  if (!provisioningConfigured || provisioning.has(appName)) return;
+
+  provisioning.add(appName);
+  void (async () => {
+    try {
+      if (await isKnown(appName)) return;
+      const project = await createProjectForApp(appName);
+      if (!project) return;
+      await remember(appName, project);
+      console.log(
+        `created GlitchTip project "${project.slug}" for ${appName}` +
+          (project.dsn ? " (DSN available in the viewer)" : " (no DSN readable)")
+      );
+    } catch (err) {
+      console.warn(`couldn't create a GlitchTip project for ${appName}: ${err.message}`);
+    } finally {
+      provisioning.delete(appName);
+    }
+  })();
+}
 
 // Accepts multipart/form-data:
 //   appName, url, note, reporterEmail, source ("staff-report" | "auto-error"),
@@ -88,6 +128,7 @@ reportRouter.post("/reports", upload, async (req, res) => {
     meta.hasReplay = hasReplay;
 
     await notifyNewReport(meta);
+    provisionInBackground(appName);
 
     res.status(201).json({ id, screenshots: screenshotPaths, hasReplay });
   } catch (err) {
@@ -133,9 +174,11 @@ reportRouter.get("/projects", async (_req, res) => {
     byApp.set(report.appName, entry);
   }
 
+  const mappings = await allMappings();
   const projects = [...byApp.values()]
     .map((entry) => {
-      const projectSlug = projectSlugForApp(entry.appName);
+      const mapping = mappings[entry.appName] || {};
+      const projectSlug = mapping.slug || null;
       return {
         ...entry,
         glitchtipProject: projectSlug,
@@ -143,6 +186,9 @@ reportRouter.get("/projects", async (_req, res) => {
         // mapping the link would land on every project's errors, which is
         // not what "this app's errors" means.
         glitchtipUrl: projectSlug ? glitchtipLink({ projectSlug }) : null,
+        // Present only for projects we created, which is exactly when
+        // whoever is integrating the app still needs it.
+        dsn: mapping.dsn || null,
       };
     })
     .sort((a, b) => String(b.lastReportAt).localeCompare(String(a.lastReportAt)));
@@ -173,7 +219,7 @@ reportRouter.get("/reports/:id", async (req, res) => {
     const report = await getReport(req.params.id);
     // Link straight to the matching error in GlitchTip when this report was
     // raised by one, so the two halves of an incident are one click apart.
-    const projectSlug = projectSlugForApp(report.appName);
+    const projectSlug = await slugForApp(report.appName);
     if (report.glitchtipEventId) {
       report.glitchtipUrl = glitchtipLink({ projectSlug, eventId: report.glitchtipEventId });
     } else {

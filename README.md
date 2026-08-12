@@ -133,6 +133,33 @@ own SPA shell:
 > compares the copy against the current image and exits non-zero when it has
 > gone stale — worth running straight after `docker compose pull`.
 
+## New apps create their own GlitchTip project
+
+Adding an app used to mean creating its GlitchTip project by hand, copying
+the DSN out, and telling Sentinel which project belonged to which app. Set
+`GLITCHTIP_SERVICE_TOKEN` and `GLITCHTIP_TEAM` and none of that is
+necessary: the first report from an app Sentinel hasn't seen creates the
+project, reads its DSN back, and remembers the mapping. The DSN then shows
+up on that app's card, ready to paste into the app's config.
+
+The mapping lives in `projects.json` beside the reports, so a restart
+doesn't re-create anything. `GLITCHTIP_PROJECT_MAP` still works and still
+wins — use it for apps whose project already existed under a different
+name.
+
+Provisioning happens after the report is saved and is never awaited, so an
+app filing a bug can't be failed by GlitchTip being slow or down; a failure
+is logged and the next report from that app tries again.
+
+**Give that token `project:write` and not `project:admin`.** Creating a
+project needs the first and deleting one needs the second, so a token
+without it can add projects and never remove one. The account does have to
+hold the organisation's Admin role — GlitchTip checks that by role and no
+scope substitutes for it — which is why it should be a dedicated account
+used only by the receiver. Don't sign in to GlitchTip as it in a browser:
+scopes only constrain token requests, and a browser session would carry the
+Admin role in full.
+
 ## Who can read reports
 
 There is no user database to administer. Signing in takes a personal

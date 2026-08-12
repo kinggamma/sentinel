@@ -428,6 +428,30 @@ function renderProjects() {
     foot.className = "card-foot muted";
     foot.textContent = `Last report ${fmtAgo(project.lastReportAt)}`;
 
+    // Shown only for projects Sentinel created, which is exactly when the
+    // app still needs its DSN pasting into a config somewhere.
+    let dsnButton = null;
+    if (project.dsn) {
+      const dsn = document.createElement("button");
+      dsn.type = "button";
+      dsn.className = "ghost dsn";
+      dsn.title = project.dsn;
+      dsn.textContent = "Copy DSN";
+      dsn.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(project.dsn);
+          dsn.textContent = "Copied";
+        } catch {
+          // Clipboard blocked (insecure origin, denied permission) — show it
+          // instead so it can be selected by hand.
+          dsn.textContent = project.dsn;
+        }
+        setTimeout(() => (dsn.textContent = "Copy DSN"), 2500);
+      });
+      dsnButton = dsn;
+    }
+
     const actions = document.createElement("div");
     actions.className = "card-actions";
     const open = document.createElement("button");
@@ -442,6 +466,7 @@ function renderProjects() {
       link.addEventListener("click", (event) => event.stopPropagation());
       actions.appendChild(link);
     }
+    if (dsnButton) actions.appendChild(dsnButton);
 
     card.append(heading, stats, foot, actions);
     card.addEventListener("click", (event) => {
