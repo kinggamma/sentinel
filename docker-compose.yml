@@ -66,6 +66,13 @@ services:
         condition: service_completed_successfully
     volumes:
       - glitchtip_uploads:/code/uploads
+      # Adds a "Bug reports in Sentinel" link to GlitchTip's UI, which ships
+      # as a prebuilt image with nowhere to configure one. This file is a
+      # patched copy of the image's own SPA shell and references its
+      # hash-named JS bundles, so it MUST be regenerated after every
+      # GlitchTip upgrade or GlitchTip will fail to load:
+      #   ./scripts/patch-glitchtip-index.sh --check
+      - ./glitchtip/index.html:/code/dist/index.html:ro
 
   glitchtip-worker:
     image: glitchtip/glitchtip:latest

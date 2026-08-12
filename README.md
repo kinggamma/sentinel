@@ -79,6 +79,12 @@ once you move it to the server.
    `GLITCHTIP_PROJECT_MAP` and Sentinel will link each report across to
    the matching project's errors.
 
+6. Run `./scripts/patch-glitchtip-index.sh` to point GlitchTip's UI back at
+   Sentinel. A copy is committed so a fresh clone starts up (Docker would
+   otherwise create a *directory* at that mount path and break GlitchTip),
+   but it was generated against whichever GlitchTip build was current then —
+   regenerate it against yours.
+
 **Later, moving it to the server:**
 
 1. Upload this repo to the server (`git clone`/`rsync`/whatever you use).
@@ -110,6 +116,22 @@ how many were staff-filed against auto-captured, how many carry a replay,
 and when the last one arrived — and clicking a card drills into that app's
 reports. Where an app's errors also live in GlitchTip, each card and each
 report links straight across.
+
+Going the other way, GlitchTip carries a small **Bug reports in Sentinel**
+link in the corner of every page. GlitchTip ships as a prebuilt image with
+nowhere to configure one, so it's added by mounting a patched copy of its
+own SPA shell:
+
+```bash
+./scripts/patch-glitchtip-index.sh
+```
+
+> **After every GlitchTip upgrade, re-run that script.** The patched shell
+> names GlitchTip's hash-named JS bundles, so once the image moves on, the
+> mount serves a shell pointing at bundles that no longer exist and
+> GlitchTip won't load at all. `./scripts/patch-glitchtip-index.sh --check`
+> compares the copy against the current image and exits non-zero when it has
+> gone stale — worth running straight after `docker compose pull`.
 
 ## Who can read reports
 
