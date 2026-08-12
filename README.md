@@ -13,7 +13,7 @@ the infra foundation and a reference JS integration.
 
 ```
 docker-compose.yml       GlitchTip + Postgres + Redis + feedback receiver + Caddy
-caddy/Caddyfile          Reverse proxy / TLS for errors.<domain> and feedback.<domain>
+caddy/Caddyfile          Reverse proxy — IP/port based (localhost:8000 / :4000), no DNS needed
 receiver/                Feedback/incident receiver service (Node/Express)
 sdk/                     Shared client-side module (incident-capture.js, report-widget.js)
                           + example-integration.js (Phase 2 reference wiring)
@@ -25,19 +25,39 @@ docs/PRIVACY-CHECKLIST.md  Phase 5 verification checklist
 
 ## Setup (Phase 1 — Foundation)
 
-1. Point DNS `errors.<domain>` and `feedback.<domain>` at the VPS.
-2. `cp .env.example .env` and fill in real values (passwords, secret key,
-   webhook URL, allowed origins).
-3. Edit `caddy/Caddyfile` and replace `<domain>` with your real domain.
-4. `docker compose up -d`
-5. Visit `https://errors.<domain>`, create the first GlitchTip org/admin
+No domain or DNS required — this runs on plain IP:port, both locally and
+once you move it to the server.
+
+**Run it locally first:**
+
+1. `cp .env.example .env` — the defaults already point at `localhost`,
+   so you can leave everything as-is except the passwords/secrets.
+2. `docker compose up -d`
+3. Visit `http://localhost:8000`, create the first GlitchTip org/admin
    account, then create one GlitchTip **project per app** (moodle-lms,
    app1, app2, ...). Each project gives you a DSN to put in that app's
    config.
-6. Generate a long random `STAFF_API_TOKEN` (already in `.env`) and give
+4. Generate a long random `STAFF_API_TOKEN` (already in `.env`) and give
    it to each app's server-side config — this is the token the SDK sends
-   to the feedback receiver. Treat it like a secret; it is not meant to
-   be public.
+   to the feedback receiver at `http://localhost:4000`. Treat it like a
+   secret; it is not meant to be public.
+
+**Later, moving it to the server:**
+
+1. Upload this repo to the server (`git clone`/`rsync`/whatever you use).
+2. In `.env` on the server, change `GLITCHTIP_DOMAIN` and
+   `ALLOWED_ORIGINS` from `localhost` to the server's public IP, e.g.
+   `http://203.0.113.10:8000`.
+3. `docker compose up -d` on the server.
+4. Reach it at `http://<server-ip>:8000` (GlitchTip) and
+   `http://<server-ip>:4000` (feedback receiver) — same setup as local,
+   just a different host. Make sure the server's firewall only opens
+   those ports to whoever should actually reach this (staff network,
+   VPN, allowlisted IPs) rather than the whole internet, since it's
+   plain HTTP with no TLS at this stage.
+5. If you get a real domain later, `caddy/Caddyfile` has the
+   automatic-HTTPS block commented out at the bottom — swap to that and
+   point DNS at the server whenever you want it.
 
 ## Setup (Phase 2 — first JS app integration)
 
@@ -50,8 +70,8 @@ docs/PRIVACY-CHECKLIST.md  Phase 5 verification checklist
    ```html
    <script>
      window.__INCIDENT_CAPTURE_CONFIG__ = {
-       dsn: "https://<key>@errors.<domain>/<project-id>",
-       receiverUrl: "https://feedback.<domain>/api",
+       dsn: "http://<key>@localhost:8000/<project-id>", // or http://<server-ip>:8000/<project-id>
+       receiverUrl: "http://localhost:4000/api",         // or http://<server-ip>:4000/api
        staffToken: "<STAFF_API_TOKEN>",
        userEmail: currentUser.email,
      };

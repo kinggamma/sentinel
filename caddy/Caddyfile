@@ -1,13 +1,26 @@
-# Reverse proxy / TLS termination for the error monitoring pipeline.
-# Replace <domain> with your real domain, e.g. internal-tools.example.org
-# Caddy auto-provisions and renews TLS certs (Let's Encrypt) for each host.
+# Reverse proxy for the error monitoring pipeline — IP/port based, no
+# domain or DNS required. Works the same whether you're running this on
+# localhost or on a VPS reached only by its public IP address.
+#
+#   GlitchTip (errors):        http://<host>:8000
+#   Feedback/incident receiver: http://<host>:4000
+#
+# "<host>" is whatever reaches the machine this is running on:
+# `localhost` locally, or the server's public IP once you upload it there.
+# Nothing here needs to change between those two cases.
+#
+# This intentionally stays plain HTTP: getting a browser-trusted cert for
+# a bare IP isn't possible (Let's Encrypt requires a domain), and traffic
+# is expected to stay inside a private network / behind the server's
+# firewall. If you later point a real domain at this server, see the
+# commented-out block at the bottom for automatic HTTPS.
 
-errors.<domain> {
+:8000 {
 	reverse_proxy glitchtip-web:8000
 	encode gzip
 }
 
-feedback.<domain> {
+:4000 {
 	reverse_proxy feedback-receiver:4000
 	encode gzip
 
@@ -16,3 +29,20 @@ feedback.<domain> {
 		max_size 10MB
 	}
 }
+
+# --- Once you have a real domain pointed at this server (optional) -------
+# Delete the :8000 / :4000 blocks above and use this instead — Caddy will
+# provision and renew TLS certs automatically:
+#
+# errors.<domain> {
+# 	reverse_proxy glitchtip-web:8000
+# 	encode gzip
+# }
+#
+# feedback.<domain> {
+# 	reverse_proxy feedback-receiver:4000
+# 	encode gzip
+# 	request_body {
+# 		max_size 10MB
+# 	}
+# }

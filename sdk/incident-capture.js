@@ -21,8 +21,8 @@
  *   import { initIncidentCapture } from "./incident-capture.js";
  *
  *   initIncidentCapture({
- *     dsn: "https://<key>@errors.<domain>/<project-id>",
- *     receiverUrl: "https://feedback.<domain>/api",
+ *     dsn: "http://<key>@localhost:8000/<project-id>", // or http://<server-ip>:8000/<project-id>
+ *     receiverUrl: "http://localhost:4000/api",         // or http://<server-ip>:4000/api
  *     staffToken: "<per-app shared token, injected server-side>",
  *     appName: "moodle-lms",
  *     userEmail: currentUser.email,           // used for "reported by", not sent to GlitchTip
