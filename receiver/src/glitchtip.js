@@ -37,10 +37,23 @@ export function glitchtipInfo() {
   return { url: GLITCHTIP_URL, org: GLITCHTIP_ORG, projectMap: PROJECT_MAP };
 }
 
-async function callGlitchtip(path, token) {
-  const res = await fetch(`${GLITCHTIP_API_URL}${path}`, {
-    headers: { authorization: `Bearer ${token}`, accept: "application/json" },
-  });
+/**
+ * GlitchTip's own session cookie. Host-only and port-blind, so a browser
+ * already signed in to GlitchTip on this host sends it to the receiver too —
+ * which is what makes silent sign-in possible.
+ */
+export const GLITCHTIP_SESSION_COOKIE = process.env.GLITCHTIP_SESSION_COOKIE || "sessionid";
+
+/**
+ * One call, two ways to prove who you are: a personal auth token, or the
+ * caller's own GlitchTip session forwarded back to GlitchTip.
+ */
+async function callGlitchtip(path, { token, sessionId } = {}) {
+  const headers = { accept: "application/json" };
+  if (token) headers.authorization = `Bearer ${token}`;
+  if (sessionId) headers.cookie = `${GLITCHTIP_SESSION_COOKIE}=${sessionId}`;
+
+  const res = await fetch(`${GLITCHTIP_API_URL}${path}`, { headers });
   if (!res.ok) {
     const error = new Error(`glitchtip responded ${res.status}`);
     error.status = res.status;
@@ -50,23 +63,23 @@ async function callGlitchtip(path, token) {
 }
 
 /**
- * Resolve a GlitchTip auth token to a person, but only if they belong to the
+ * Resolve a GlitchTip credential to a person, but only if they belong to the
  * configured organisation. Membership of some *other* org is not access here.
  *
  * @returns {Promise<{email: string, name: string|null}|null>} null when the
- *          token is valid but the user isn't a member.
+ *          credential is valid but the user isn't a member.
  */
-export async function verifyGlitchtipUser(token) {
+async function resolveMember(credential) {
   if (!glitchtipConfigured) return null;
 
-  const orgs = await callGlitchtip("/api/0/organizations/", token);
+  const orgs = await callGlitchtip("/api/0/organizations/", credential);
   const member = (Array.isArray(orgs) ? orgs : []).some((org) => org.slug === GLITCHTIP_ORG);
   if (!member) return null;
 
   let email = null;
   let name = null;
   try {
-    const me = await callGlitchtip("/api/0/users/me/", token);
+    const me = await callGlitchtip("/api/0/users/me/", credential);
     email = me.email || me.username || null;
     name = me.name || null;
   } catch {
@@ -75,6 +88,21 @@ export async function verifyGlitchtipUser(token) {
   }
 
   return { email, name };
+}
+
+/** A personal auth token, pasted into the sign-in screen. */
+export function verifyGlitchtipUser(token) {
+  return resolveMember({ token });
+}
+
+/**
+ * The caller's own GlitchTip session, handed straight back to GlitchTip to
+ * ask who it belongs to. Note that a session skips GlitchTip's token-scope
+ * check entirely — `has_permission` only applies it to token auth — so this
+ * works without anyone having to tick org:read on anything.
+ */
+export function verifyGlitchtipSession(sessionId) {
+  return resolveMember({ sessionId });
 }
 
 /** Link to a project's issue stream, or to a single event when we have one. */

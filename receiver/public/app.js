@@ -188,14 +188,21 @@ async function describeSignIn() {
   } catch {
     // Receiver unreachable — the sign-in attempt itself will say so.
   }
+  paintSignIn(config);
+  return config;
+}
+
+function paintSignIn(config) {
 
   const hint = el("gate-hint");
   const link = el("gate-glitchtip-link");
 
   if (config.glitchtipEnabled) {
     el("token-input").placeholder = "GlitchTip auth token";
+    // We only reach the sign-in screen when silent sign-in didn't work, so
+    // say what to do about that before offering the manual route.
     el("gate-help").textContent =
-      "Sign in with your GlitchTip auth token to read bug reports and session replays.";
+      "Sign in to GlitchTip in this browser and reload, or paste a GlitchTip auth token.";
     hint.hidden = false;
     if (config.glitchtipOrg) {
       el("gate-org").textContent = config.glitchtipOrg;
@@ -244,8 +251,34 @@ el("gate-form").addEventListener("submit", async (event) => {
   }
 });
 
+/**
+ * Signing out has to stick. Silent sign-in would otherwise let you back in
+ * on the very next load, since you're still signed in to GlitchTip — which
+ * reads as a broken button. Suppressed per tab, so it lasts as long as the
+ * tab does and never leaks into another one.
+ */
+const SIGNED_OUT_KEY = "sentinel-signed-out";
+
+function suppressSso(on) {
+  try {
+    if (on) sessionStorage.setItem(SIGNED_OUT_KEY, "1");
+    else sessionStorage.removeItem(SIGNED_OUT_KEY);
+  } catch {
+    // Storage disabled; silent sign-in just stays available.
+  }
+}
+
+function ssoSuppressed() {
+  try {
+    return sessionStorage.getItem(SIGNED_OUT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 el("forget").addEventListener("click", async () => {
   await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+  suppressSso(true);
   projects = [];
   reports = [];
   selectedId = null;
@@ -917,14 +950,32 @@ async function boot() {
     return;
   }
 
-  // Standalone: a session cookie may already be good.
-  await describeSignIn();
+  // Standalone: our own session cookie may already be good.
+  const config = await describeSignIn();
   try {
     const res = await fetch("/api/auth/me", { credentials: "same-origin" });
     if (res.ok) return await enter();
   } catch {
-    // Fall through to the sign-in screen.
+    // Fall through.
   }
+
+  // Failing that, whoever is reading may already be signed in to GlitchTip
+  // in this browser — in which case there's nothing for them to type.
+  if (config.glitchtipEnabled && !ssoSuppressed()) {
+    try {
+      const res = await fetch("/api/auth/sso", { method: "POST", credentials: "same-origin" });
+      if (res.ok) return await enter();
+      // 403 means signed in to GlitchTip but not a member of the org, which
+      // is worth saying out loud rather than showing a blank sign-in screen.
+      if (res.status === 403) {
+        const body = await res.json().catch(() => ({}));
+        return showGate(body.error || "That GlitchTip account isn't a member of the organisation.");
+      }
+    } catch {
+      // Fall through to the sign-in screen.
+    }
+  }
+
   showGate(embedded ? "This page was not given a token." : "");
 }
 

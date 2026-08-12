@@ -30,8 +30,10 @@
         <button type="submit">Sign in</button>
         <p id="gate-error" class="error" hidden></p>
         <p class="gate-hint muted" id="gate-hint" hidden>
-          Create one in GlitchTip under <strong>Profile → Auth Tokens</strong>. Your account must
-          belong to the <strong id="gate-org">organisation</strong> organisation.
+          Create one in GlitchTip under <strong>Profile → Auth Tokens</strong>, with the
+          <strong>org:read</strong> scope ticked — that's what lets us check your membership.
+          Your account must belong to the <strong id="gate-org">organisation</strong>
+          organisation.
           <a id="gate-glitchtip-link" href="#" target="_blank" rel="noreferrer noopener" hidden>
             Create a token ↗
           </a>

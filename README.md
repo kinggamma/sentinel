@@ -114,7 +114,9 @@ report links straight across.
 ## Who can read reports
 
 There is no user database to administer. Signing in takes a personal
-GlitchTip auth token (**GlitchTip → Profile → Auth Tokens**); Sentinel asks
+GlitchTip auth token (**GlitchTip → Profile → Auth Tokens**), created with
+the **`org:read`** scope — GlitchTip's `/api/0/organizations/` requires it,
+and a token without it is rejected no matter who owns it. Sentinel asks
 GlitchTip whether that token belongs to a member of `GLITCHTIP_ORG`, and
 issues a session only if it does. So granting someone access is inviting
 them to the GlitchTip organisation, revoking it is removing them, and the

@@ -57,7 +57,7 @@ export function clearSession(res) {
   res.clearCookie?.(SESSION_COOKIE, { path: "/" });
 }
 
-function readCookie(req, name) {
+export function readCookie(req, name) {
   const header = req.headers.cookie;
   if (!header) return null;
   for (const part of header.split(";")) {
