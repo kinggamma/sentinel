@@ -15,7 +15,7 @@
 require_once(__DIR__ . '/vendor/autoload.php');
 
 \Sentry\init([
-    'dsn' => getenv('GLITCHTIP_DSN_MOODLE'), // https://<key>@errors.<domain>/<project-id>
+    'dsn' => getenv('GLITCHTIP_DSN_MOODLE'), // http://<key>@localhost:8000/<project-id> (or http://<server-ip>:8000/<project-id>)
     'environment' => getenv('MOODLE_ENV') ?: 'production',
     'release' => getenv('MOODLE_RELEASE') ?: null,
     'max_breadcrumbs' => 40,

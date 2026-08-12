@@ -33,9 +33,15 @@ Run this against every app before calling its integration done.
 - [ ] GlitchTip admin/dashboard access is restricted to staff/admin
       accounts (not open registration — `ENABLE_OPEN_USER_REGISTRATION`
       is `false` in `docker-compose.yml`).
-- [ ] `feedback.<domain>` only accepts requests bearing a valid
-      `STAFF_API_TOKEN` (verify a request without the header gets a 401).
-- [ ] TLS is actually terminating correctly on both `errors.<domain>`
-      and `feedback.<domain>` (no plain-HTTP fallback).
+- [ ] The feedback receiver (`:4000`) only accepts requests bearing a
+      valid `STAFF_API_TOKEN` (verify a request without the header gets
+      a 401).
+- [ ] The server's firewall restricts ports `8000`/`4000` to staff
+      network/VPN/allowlisted IPs — this stack runs plain HTTP with no
+      TLS while it's IP-only, so it must not be reachable from the
+      open internet.
+- [ ] If/when a real domain + TLS is added later (see the commented
+      block in `caddy/Caddyfile`), confirm HTTPS is actually terminating
+      correctly on both hosts (no plain-HTTP fallback).
 - [ ] `.env` is not committed to git (`.gitignore` covers it) and secrets
       aren't reused across apps.

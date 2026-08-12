@@ -22,8 +22,8 @@ const cfg = window.__INCIDENT_CAPTURE_CONFIG__;
 
 if (cfg) {
   const { excluded } = initIncidentCapture({
-    dsn: cfg.dsn, // https://<key>@errors.<domain>/<project-id>
-    receiverUrl: cfg.receiverUrl, // https://feedback.<domain>/api
+    dsn: cfg.dsn, // http://<key>@localhost:8000/<project-id> (or http://<server-ip>:8000/<project-id>)
+    receiverUrl: cfg.receiverUrl, // http://localhost:4000/api (or http://<server-ip>:4000/api)
     staffToken: cfg.staffToken,
     appName: "example-js-app",
     environment: cfg.environment || "production",

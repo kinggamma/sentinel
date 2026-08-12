@@ -22,10 +22,15 @@ if (cfg && cfg.dsn) {
     userEmail: cfg.userEmail,
     environment: cfg.environment,
     extraTags: cfg.extraTags,
+    capture: cfg.capture,
     excludedPaths: [/\/grade\//i, /\/user\/profile/i, /\/user\/editadvanced/i],
   });
 
   if (!excluded) {
-    mountReportWidget();
+    mountReportWidget({
+      position: cfg.widgetPosition || "bottom-right",
+      offset: cfg.widgetOffset || {},
+      accent: cfg.accent,
+    });
   }
 }

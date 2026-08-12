@@ -1,43 +1,141 @@
 # error-monitoring-pipeline
 
-Self-hosted error tracking + bug reporting pipeline. Every internal app
-(Moodle LMS, MERN apps, NestJS services, Python/PHP services) reports
-errors and staff feedback here — one dashboard, no SaaS, no third-party
-data sharing.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-See `docs/ARCHITECTURE.md`-equivalent context (or the original design doc)
-for the full rationale. This repo is Phase 1 + Phase 2 of the roadmap:
-the infra foundation and a reference JS integration.
+A small, self-hosted alternative to error-tracking SaaS. Your apps report
+crashes, session replays, and staff bug reports to infrastructure you run —
+one dashboard, no third party, no per-seat pricing, and nobody else holding
+recordings of your users' sessions.
+
+Works with anything that can make an HTTP request: browser apps, Node,
+Python, PHP, Moodle, mobile. Each app integrates on its own, in its own
+repo, in about ten lines.
+
+**What it gives you**
+
+- **Error tracking** — uncaught exceptions with stack traces, grouped into
+  issues (GlitchTip, which speaks the Sentry protocol, so you use the
+  ordinary Sentry SDKs).
+- **Session replay** — the last ~30s before a problem, recorded as DOM
+  mutations with rrweb rather than screenshots. Tens of KB, scrubbable
+  frame by frame, and it survives page navigations.
+- **A "Report Issue" button** — staff describe what went wrong; the replay
+  and breadcrumbs are attached automatically.
+- **One viewer for every app** — readable standalone, or embedded in each
+  app's own admin, scoped to that app.
+- **Privacy by default** — inputs masked, sensitive pages excluded, PII
+  scrubbed before anything leaves the browser, and reports deleted on a
+  retention schedule.
+
+Runs on plain IP and ports — no domain or DNS needed, locally or on a
+server.
 
 ## What's in here
 
 ```
 docker-compose.yml       GlitchTip + Postgres + Redis + feedback receiver + Caddy
-caddy/Caddyfile          Reverse proxy / TLS for errors.<domain> and feedback.<domain>
+caddy/Caddyfile          Reverse proxy — IP/port based (localhost:8000 / :4000), no DNS needed
 receiver/                Feedback/incident receiver service (Node/Express)
-sdk/                     Shared client-side module (incident-capture.js, report-widget.js)
-                          + example-integration.js (Phase 2 reference wiring)
-moodle/                  Phase 3: PHP SDK snippet + Moove theme JS injection
-docs/ISSUES.md           GitHub milestones/labels/issues to create for this project
-docs/PRIVACY-CHECKLIST.md  Phase 5 verification checklist
+receiver/public/          Report viewer UI served at http://localhost:4000
+sdk/                     Shared browser SDK (incident-capture.js, report-widget.js)
+moodle/                  Moodle integration assets (PHP snippet + JS injection)
+docs/INTEGRATING.md      How to add an app — by language and framework
+docs/LOCAL-TESTING.md    Running the whole thing on your own machine
+docs/PRIVACY-CHECKLIST.md  Verify an integration before calling it done
+docs/ISSUES.md           Suggested GitHub milestones/labels/issues
 .env.example              All required environment variables
 ```
 
 ## Setup (Phase 1 — Foundation)
 
-1. Point DNS `errors.<domain>` and `feedback.<domain>` at the VPS.
-2. `cp .env.example .env` and fill in real values (passwords, secret key,
-   webhook URL, allowed origins).
-3. Edit `caddy/Caddyfile` and replace `<domain>` with your real domain.
-4. `docker compose up -d`
-5. Visit `https://errors.<domain>`, create the first GlitchTip org/admin
+No domain or DNS required — this runs on plain IP:port, both locally and
+once you move it to the server.
+
+**Run it locally first:**
+
+1. `cp .env.example .env` — the defaults already point at `localhost`,
+   so you can leave everything as-is except the passwords/secrets.
+2. `docker compose up -d`
+3. Visit `http://localhost:8000`, create the first GlitchTip org/admin
    account, then create one GlitchTip **project per app** (moodle-lms,
    app1, app2, ...). Each project gives you a DSN to put in that app's
    config.
-6. Generate a long random `STAFF_API_TOKEN` (already in `.env`) and give
+4. Generate a long random `STAFF_API_TOKEN` (already in `.env`) and give
    it to each app's server-side config — this is the token the SDK sends
-   to the feedback receiver. Treat it like a secret; it is not meant to
-   be public.
+   to the feedback receiver at `http://localhost:4000`. Treat it like a
+   secret; it is not meant to be public.
+
+**Later, moving it to the server:**
+
+1. Upload this repo to the server (`git clone`/`rsync`/whatever you use).
+2. In `.env` on the server, change `GLITCHTIP_DOMAIN` and
+   `ALLOWED_ORIGINS` from `localhost` to the server's public IP, e.g.
+   `http://203.0.113.10:8000`.
+3. `docker compose up -d` on the server.
+4. Reach it at `http://<server-ip>:8000` (GlitchTip) and
+   `http://<server-ip>:4000` (feedback receiver) — same setup as local,
+   just a different host. Make sure the server's firewall only opens
+   those ports to whoever should actually reach this (staff network,
+   VPN, allowlisted IPs) rather than the whole internet, since it's
+   plain HTTP with no TLS at this stage.
+5. If you get a real domain later, `caddy/Caddyfile` has the
+   automatic-HTTPS block commented out at the bottom — swap to that and
+   point DNS at the server whenever you want it.
+
+## Where things end up
+
+Two stores, two UIs — worth knowing which one to open:
+
+| What | Lands in | Look at it |
+|---|---|---|
+| Uncaught JS/PHP errors, stack traces | GlitchTip | http://localhost:8000 → Issues |
+| "Report Issue" clicks + screenshots + breadcrumbs | Feedback receiver | http://localhost:4000 |
+
+The receiver's viewer asks for `STAFF_API_TOKEN` on first visit and keeps
+it in that browser's localStorage — the API needs an `Authorization`
+header, which a plain browser navigation can't send. Only the static page
+is unauthenticated; every byte of report data still goes through the
+token-gated `/api` routes.
+
+### Embedding the viewer in an app's own admin
+
+Staff shouldn't have to know a second URL exists. Each app frames the same
+viewer inside its own admin area, scoped to that app's reports:
+
+```html
+<iframe src="http://localhost:4000/?app=<appName>&embed=1"></iframe>
+```
+
+`?app=` locks the list to one app and hides the app picker; `embed=1`
+drops the viewer's own page chrome so it sits flush in your layout. The
+host page — which already holds the staff token — hands it over by
+postMessage, so the token stays out of the URL, browser history, referrer
+headers, and access logs:
+
+```js
+window.addEventListener("message", (event) => {
+  if (event.origin !== RECEIVER_ORIGIN) return;
+  if (event.source !== frame.contentWindow) return;
+  if (event.data?.type !== "incident-viewer-ready") return;
+  event.source.postMessage(
+    { type: "incident-viewer-token", token: STAFF_API_TOKEN },
+    RECEIVER_ORIGIN
+  );
+});
+```
+
+Embedded, the viewer does *not* persist the token — the host re-supplies
+it on every load. Only origins in `ALLOWED_ORIGINS` may frame the viewer
+(CSP `frame-ancestors`), so add each app's origin there.
+
+`docs/INTEGRATING.md` has copy-pasteable versions for a React admin and for
+a Moodle plugin page. The standalone `http://localhost:4000` stays the
+cross-app view for whoever needs everything at once.
+
+Note that a staff-initiated report is **not** an error: it never reaches
+GlitchTip. And GlitchTip only sees *uncaught* errors — anything the app
+catches and renders as a notice has to be sent explicitly with
+`Sentry.captureException()`.
 
 ## Setup (Phase 2 — first JS app integration)
 
@@ -50,8 +148,8 @@ docs/PRIVACY-CHECKLIST.md  Phase 5 verification checklist
    ```html
    <script>
      window.__INCIDENT_CAPTURE_CONFIG__ = {
-       dsn: "https://<key>@errors.<domain>/<project-id>",
-       receiverUrl: "https://feedback.<domain>/api",
+       dsn: "http://<key>@localhost:8000/<project-id>", // or http://<server-ip>:8000/<project-id>
+       receiverUrl: "http://localhost:4000/api",         // or http://<server-ip>:4000/api
        staffToken: "<STAFF_API_TOKEN>",
        userEmail: currentUser.email,
      };
@@ -72,6 +170,73 @@ SDK) and `moodle/moove-theme-injection.php` +
 `moodle/incident-capture-init.js` (client-side, staff-gated via Moodle
 capability checks, with gradebook/profile pages excluded).
 
+## Session replay
+
+Apps record the page with **rrweb** rather than taking screenshots: a stream
+of DOM mutations against a periodic snapshot. A minute of replay is tens of
+KB (screenshots were ~150KB *per frame*), it scrubs frame-perfectly instead
+of landing between shots, and it costs a fraction of the CPU `html2canvas`
+did.
+
+It runs as a rolling in-memory buffer — the last ~60s, nothing uploaded
+until an error fires or someone files a report. By the time a person notices
+a problem it's already seconds in the past, which is why recording can't
+start when they click the button.
+
+The buffer **survives page navigation**. A full page load destroys the
+recorder, so on a multi-page app (Moodle) a report filed just after clicking
+through would otherwise show one second of the page you landed on. The tail
+of the previous page is handed forward through `sessionStorage` and replayed
+ahead of the new page's events — you see the click that navigated, then the
+new page, in one scrubbable timeline. Anything older than `maxSeconds` is
+dropped at a snapshot boundary, so the stream always stays playable.
+
+Defaults, overridable per app via `initIncidentCapture({ capture: {...} })`:
+
+| Option | Default | |
+|---|---|---|
+| `minSeconds` | 5 | always keep at least this much, when it exists |
+| `maxSeconds` | 30 | never keep more than this |
+| `carryAcrossPages` | `true` | stitch in the tail of the previous page |
+| `maskAllInputs` | `true` | never records what anyone types |
+| `maskAllText` | `false` | set `true` to mask every string on the page |
+| `maskTextSelector` | — | or mask only these elements |
+
+Each app owns its own window — a Moodle plugin can expose it as a site
+setting, a Vite app as an environment variable. An admin who wants a 10s
+minimum and a 5-minute maximum sets that in their own app; nothing changes
+in the pipeline.
+
+## When the pipeline can't be reached
+
+Apps never throw a raw error at whoever is filing a report. If the receiver
+is down, moved, or the app is pointed at the wrong address, the widget says
+so in plain words — naming the host it tried, so a misconfigured `.env` is
+obvious — and keeps the typed note on screen rather than discarding it.
+Wrong token and too-large-payload get their own messages.
+
+Both admin pages probe `/health` before framing the viewer, so a dead
+pipeline shows an explanation instead of the browser's connection-error page.
+
+Anything marked `data-incident-capture-ignore` is dropped from the recording
+entirely. Reports made before this change still carry screenshot frames and
+still display.
+
+## Retention
+
+Reports hold replays of real sessions, so they expire. Two independent caps
+in `.env`, whichever bites first:
+
+| | Default | |
+|---|---|---|
+| `RETENTION_DAYS` | 90 | delete anything older |
+| `RETENTION_MAX_MB` | 5120 | over budget, delete oldest-first until it fits |
+| `RETENTION_SWEEP_MINUTES` | 360 | how often to check |
+
+Set either to `0` to disable that cap. Staff can also delete any single
+report from the viewer (`DELETE /api/reports/:id`), which removes its
+screenshots and replay from disk immediately.
+
 ## Privacy
 
 - Nothing is captured on gradebook or profile pages — enforced twice:
@@ -81,21 +246,48 @@ capability checks, with gradebook/profile pages excluded).
   numbers/card-like sequences before it leaves the browser or server —
   see `deepScrub()` in `sdk/incident-capture.js` and
   `moodle_incident_capture_scrub()` in the PHP snippet.
-- Screenshots are small (0.5x scale, JPEG q=0.5), rolling (last ~8s),
-  and only ever uploaded when an error fires or a staff member
-  explicitly clicks "Report Issue" — never streamed continuously.
+- The replay buffer is in-memory and rolling (last ~60s), masks every
+  input by default, and is only ever uploaded when an error fires or a
+  staff member explicitly clicks "Report Issue" — never streamed
+  continuously.
+- Reports are deleted automatically on the retention schedule above, and
+  staff can delete any individual report from the viewer.
 - Before calling any phase "done," run through
   `docs/PRIVACY-CHECKLIST.md` on that app.
 
-## Roadmap
+## Rolling this out
 
-1. Foundation (this repo, Phase 1) — done once `docker compose up -d`
-   is running and reachable.
-2. First integration (this repo, Phase 2) — one JS app wired end to end.
-3. Moodle integration (this repo, Phase 3 assets, needs to be installed
-   into your Moove child theme).
-4. Remaining apps — repeat the Phase 2 pattern.
-5. Privacy hardening pass — `docs/PRIVACY-CHECKLIST.md` on every app.
-6. (Optional, later) full session replay via OpenReplay, only if needed.
+1. **Foundation** — `docker compose up -d`, create your org and one
+   GlitchTip project per app.
+2. **First app** — wire one app end to end and confirm both halves: an
+   error in GlitchTip, a staff report with a replay in the viewer.
+3. **The rest** — repeat per app; see `docs/INTEGRATING.md` for the
+   per-language recipes.
+4. **Privacy pass** — `docs/PRIVACY-CHECKLIST.md` on every app before you
+   call it done.
+5. **Hardening** — put TLS in front of it (or keep it on a private network),
+   and set retention to suit your policy.
 
-See `docs/ISSUES.md` for this broken into GitHub issues/milestones/labels.
+`docs/ISSUES.md` breaks this into GitHub issues, milestones, and labels if
+you want to track it there.
+
+## Known limits
+
+- No automated test suite yet — changes are verified by hand against a
+  running stack.
+- Replay needs a DOM, so mobile apps get error tracking only.
+- The receiver stores reports on the filesystem; there's no clustering or
+  object-storage backend.
+- Plain HTTP by default; see `caddy/Caddyfile` for the automatic-HTTPS
+  block once you have a domain.
+
+## Contributing
+
+Bug reports, integrations for new stacks, and documentation fixes are all
+welcome — see `CONTRIBUTING.md`. Security issues: `SECURITY.md`, privately
+please.
+
+## License
+
+MIT — see [LICENSE](LICENSE). GlitchTip, rrweb, and the Sentry SDKs are
+separate projects under their own licenses.
