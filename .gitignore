@@ -3,3 +3,4 @@ node_modules/
 receiver/node_modules/
 *.log
 .DS_Store
+.git-broken-unused/
