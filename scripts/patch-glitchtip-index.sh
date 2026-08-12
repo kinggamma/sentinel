@@ -141,38 +141,71 @@ snippet = """
           return null;
         }
 
-        /* Clone a sibling so the copy carries this build's own classes. */
+        /* Clone a sibling so the copy carries this build's own classes.
+           Nav items are <button mat-list-item> in current GlitchTip, not
+           links — it navigates by router, not href — so match both and give
+           a cloned button its own click handler, since cloneNode copies no
+           listeners. */
         function addToNav(nav) {
           if (nav.querySelector("[data-sentinel-link]")) return true;
-          var items = nav.querySelectorAll("a");
-          if (!items.length) return false;
 
-          var clone = items[items.length - 1].cloneNode(true);
+          /* The nav is divider, main items, divider, then the account
+             section. Sit with the main items and copy one of those, rather
+             than an account entry with its expand arrow. */
+          var dividers = nav.querySelectorAll("mat-divider, .mat-divider");
+          var before = dividers.length > 1 ? dividers[dividers.length - 1] : null;
+
+          var candidates = nav.querySelectorAll("a, button");
+          var source = null;
+          for (var i = 0; i < candidates.length; i++) {
+            if (!before) { source = candidates[i]; continue; }
+            var isBefore =
+              candidates[i].compareDocumentPosition(before) &
+              Node.DOCUMENT_POSITION_FOLLOWING;
+            if (isBefore) source = candidates[i];
+          }
+          if (!source) return false;
+
+          var clone = source.cloneNode(true);
           clone.setAttribute("data-sentinel-link", "");
-          clone.setAttribute("href", URL_);
-          clone.removeAttribute("target");
           /* Whatever marked the copied item as the current page. */
           clone.removeAttribute("aria-current");
           clone.classList.remove("mdc-list-item--activated", "active", "is-active");
 
+          if (clone.tagName === "A") {
+            clone.setAttribute("href", URL_);
+            clone.removeAttribute("target");
+          } else {
+            clone.setAttribute("type", "button");
+            clone.addEventListener("click", function (event) {
+              event.preventDefault();
+              event.stopPropagation();
+              window.location.assign(URL_);
+            });
+          }
+
           var icon = clone.querySelector("mat-icon, .mat-icon, .material-symbols-outlined");
           if (icon) icon.textContent = ICON;
 
-          var text = clone.querySelector(".mdc-list-item__primary-text");
+          /* .nav-text is GlitchTip's own label span — it hides it when the
+             sidebar is collapsed, so using it keeps that behaviour. */
+          var text =
+            clone.querySelector(".nav-text") ||
+            clone.querySelector(".mdc-list-item__primary-text");
           if (text) {
             text.textContent = LABEL;
           } else {
-            /* No known text node: replace the deepest single text child. */
             var walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT);
             var node, last = null;
             while ((node = walker.nextNode())) {
-              if (node.nodeValue.trim() && node.parentNode !== icon) last = node;
+              if (node.nodeValue.trim() && (!icon || !icon.contains(node))) last = node;
             }
             if (last) last.nodeValue = LABEL;
             else clone.appendChild(document.createTextNode(LABEL));
           }
 
-          nav.appendChild(clone);
+          if (before) nav.insertBefore(clone, before);
+          else nav.appendChild(clone);
           return true;
         }
 
