@@ -1,0 +1,18 @@
+# Reverse proxy / TLS termination for the error monitoring pipeline.
+# Replace <domain> with your real domain, e.g. internal-tools.example.org
+# Caddy auto-provisions and renews TLS certs (Let's Encrypt) for each host.
+
+errors.<domain> {
+	reverse_proxy glitchtip-web:8000
+	encode gzip
+}
+
+feedback.<domain> {
+	reverse_proxy feedback-receiver:4000
+	encode gzip
+
+	# Uploaded screenshot bundles can be a few MB; give the proxy headroom.
+	request_body {
+		max_size 10MB
+	}
+}

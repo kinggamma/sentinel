@@ -1,0 +1,19 @@
+{
+  "name": "feedback-incident-receiver",
+  "version": "1.0.0",
+  "description": "Stores staff-submitted bug reports and auto-captured screenshot/breadcrumb bundles, links them to GlitchTip errors, and notifies the team.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "nanoid": "^5.0.7",
+    "node-fetch": "^3.3.2"
+  }
+}
