@@ -100,6 +100,9 @@ services:
       # every restart.
       SESSION_SECRET: ${SESSION_SECRET}
       SESSION_HOURS: ${SESSION_HOURS:-12}
+      RETENTION_DAYS: ${RETENTION_DAYS:-90}
+      RETENTION_MAX_MB: ${RETENTION_MAX_MB:-5120}
+      RETENTION_SWEEP_MINUTES: ${RETENTION_SWEEP_MINUTES:-360}
     volumes:
       - receiver_data:/data
     depends_on:
