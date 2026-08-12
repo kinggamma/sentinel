@@ -27,7 +27,7 @@ local app to it. `docs/INTEGRATING.md` is the guide for adding an app.
 | Path | What lives there |
 |---|---|
 | `docker-compose.yml` | GlitchTip, Postgres, Redis, receiver, Caddy |
-| `receiver/src/` | The feedback receiver API (Node/Express) |
+| `receiver/src/` | The Sentinel receiver API (Node/Express) |
 | `receiver/public/` | The report viewer UI — plain HTML/CSS/JS, no framework |
 | `sdk/` | The shared browser SDK apps embed |
 | `moodle/` | Moodle-specific integration assets |

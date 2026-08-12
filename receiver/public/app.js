@@ -1,22 +1,30 @@
 /**
- * Incident report viewer.
+ * Sentinel viewer.
  *
- * Every API route needs `Authorization: Bearer <staff token>`, which a
- * browser can't attach by navigating — so the token is entered once and
- * kept in localStorage, and all fetches (including screenshot images) go
- * through fetch() rather than plain <img src>.
+ * Two ways in, matching the receiver's two ways of authenticating:
+ *
+ *   standalone — you sign in on this page, which sets an httpOnly session
+ *                cookie. The credential is a personal GlitchTip auth token,
+ *                so access is granted by inviting someone to the GlitchTip
+ *                organisation and revoked by removing them. A setup with no
+ *                GlitchTip can use the shared staff token instead.
+ *   embedded    — inside an app's own admin area via
+ *                <iframe src="?app=<name>&embed=1">. The host page already
+ *                holds the shared staff token and hands it over by
+ *                postMessage, so we send it as a bearer header and the view
+ *                is locked to that one app.
+ *
+ * No credential is ever written to localStorage: standalone has the cookie,
+ * embedded gets a fresh token from its host on every load.
  */
 
-const TOKEN_KEY = "incident-viewer-token";
+/** Left over from when the viewer kept a bearer token here. Clear it out. */
+try {
+  localStorage.removeItem("incident-viewer-token");
+} catch {
+  // Storage disabled; nothing to clean up.
+}
 
-/**
- * Two ways this page runs:
- *   standalone — http://localhost:4000, every app's reports, token pasted once.
- *   embedded   — inside an app's own admin area via <iframe src="?app=<name>&embed=1">.
- *                The host page already holds the staff token, so it hands it
- *                over by postMessage instead of asking staff to paste it, and
- *                the list is locked to that one app.
- */
 const params = new URLSearchParams(location.search);
 const scopedApp = params.get("app") || "";
 const embedded = params.get("embed") === "1" || window.parent !== window;
@@ -79,9 +87,17 @@ const gate = el("gate");
 const app = el("app");
 const list = el("list");
 const detail = el("detail");
+const projectsView = el("projects-view");
 
-let token = localStorage.getItem(TOKEN_KEY) || "";
+/** Only set when embedded: the shared staff token, from the host page. */
+let bearerToken = "";
+
+let projects = [];
 let reports = [];
+let appNames = [];
+let glitchtipRoot = null;
+let view = "projects";
+let selectedApp = "";
 let selectedId = null;
 let lightboxFrames = [];
 let lightboxIndex = 0;
@@ -89,11 +105,15 @@ let lightboxIndex = 0;
 /** Object URLs we minted for screenshots — revoked when the view changes. */
 let objectUrls = [];
 
+/**
+ * Standalone the session cookie carries us; embedded there is no cookie to
+ * carry (third-party cookies in an iframe), so the host's staff token goes
+ * on the header instead.
+ */
 function api(path, init = {}) {
-  return fetch(path, {
-    ...init,
-    headers: { ...(init.headers || {}), authorization: `Bearer ${token}` },
-  });
+  const headers = { ...(init.headers || {}) };
+  if (bearerToken) headers.authorization = `Bearer ${bearerToken}`;
+  return fetch(path, { ...init, headers, credentials: "same-origin" });
 }
 
 function releaseObjectUrls() {
@@ -124,7 +144,27 @@ function fmtCrumbTime(ts) {
   });
 }
 
-// ---------------------------------------------------------------- gate
+/** "3 minutes ago" is the useful form for a last-seen timestamp on a card. */
+function fmtAgo(iso) {
+  if (!iso) return "never";
+  const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (!Number.isFinite(seconds)) return "never";
+  const steps = [
+    [60, "second", 1],
+    [3600, "minute", 60],
+    [86400, "hour", 3600],
+    [2592000, "day", 86400],
+  ];
+  for (const [limit, unit, divisor] of steps) {
+    if (seconds < limit) {
+      const value = Math.max(1, Math.floor(seconds / divisor));
+      return `${value} ${unit}${value === 1 ? "" : "s"} ago`;
+    }
+  }
+  return fmtTime(iso);
+}
+
+// ---------------------------------------------------------------- sign-in
 
 function showGate(message) {
   app.hidden = true;
@@ -135,19 +175,83 @@ function showGate(message) {
   el("token-input").focus();
 }
 
-async function unlock(candidate, { persist = true } = {}) {
-  const res = await fetch("/api/reports", {
-    headers: { authorization: `Bearer ${candidate}` },
-  });
-  if (res.status === 401) return false;
-  if (!res.ok) throw new Error(`receiver responded ${res.status}`);
-  token = candidate;
-  // Embedded, the host page supplies the token on every load — no reason
-  // to leave a second copy of it lying around in storage.
-  if (persist) localStorage.setItem(TOKEN_KEY, candidate);
-  reports = await res.json();
-  return true;
+/**
+ * Which credential the sign-in screen should ask for. With GlitchTip wired
+ * up it's a personal auth token; without it, the shared staff token is all
+ * there is.
+ */
+async function describeSignIn() {
+  let config = {};
+  try {
+    const res = await fetch("/api/auth/config", { credentials: "same-origin" });
+    if (res.ok) config = await res.json();
+  } catch {
+    // Receiver unreachable — the sign-in attempt itself will say so.
+  }
+
+  const hint = el("gate-hint");
+  const link = el("gate-glitchtip-link");
+
+  if (config.glitchtipEnabled) {
+    el("token-input").placeholder = "GlitchTip auth token";
+    el("gate-help").textContent =
+      "Sign in with your GlitchTip auth token to read bug reports and session replays.";
+    hint.hidden = false;
+    if (config.glitchtipOrg) {
+      el("gate-org").textContent = config.glitchtipOrg;
+    }
+    if (config.glitchtipUrl) {
+      link.href = `${config.glitchtipUrl.replace(/\/+$/, "")}/profile/auth-tokens`;
+      link.hidden = false;
+    } else {
+      link.hidden = true;
+    }
+  } else {
+    el("token-input").placeholder = "Staff token";
+    el("gate-help").textContent = "Enter the staff token to read bug reports and session replays.";
+    hint.hidden = true;
+  }
 }
+
+el("gate-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const token = el("token-input").value.trim();
+  if (!token) return;
+
+  const button = el("gate-form").querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ token }),
+    });
+
+    if (res.ok) {
+      // The session is the cookie now; don't keep a copy of the token.
+      el("token-input").value = "";
+      await enter();
+      return;
+    }
+
+    const body = await res.json().catch(() => ({}));
+    showGate(body.error || `Sign-in failed (${res.status}).`);
+  } catch (err) {
+    showGate(err.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+el("forget").addEventListener("click", async () => {
+  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+  projects = [];
+  reports = [];
+  selectedId = null;
+  detail.innerHTML = "<p class='empty'>Select a report.</p>";
+  showGate();
+});
 
 /**
  * Ask the embedding admin page for the staff token. The outbound ping
@@ -172,37 +276,38 @@ function requestTokenFromHost() {
   });
 }
 
-el("gate-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const candidate = el("token-input").value.trim();
-  if (!candidate) return;
-  try {
-    if (await unlock(candidate)) {
-      gate.hidden = true;
-      app.hidden = false;
-      render();
-    } else {
-      showGate("That token was rejected.");
-    }
-  } catch (err) {
-    showGate(err.message);
+// ------------------------------------------------------------------ data
+
+async function loadData() {
+  const [projectsRes, reportsRes] = await Promise.all([api("/api/projects"), api("/api/reports")]);
+
+  if (projectsRes.status === 401 || reportsRes.status === 401) {
+    showGate(
+      embedded ? "The token this page was given was rejected." : "Your session has expired."
+    );
+    return false;
   }
-});
+  if (!reportsRes.ok) throw new Error(`receiver responded ${reportsRes.status}`);
 
-el("forget").addEventListener("click", () => {
-  localStorage.removeItem(TOKEN_KEY);
-  token = "";
-  reports = [];
-  el("token-input").value = "";
-  showGate();
-});
+  const payload = projectsRes.ok ? await projectsRes.json() : { projects: [] };
+  projects = payload.projects || [];
+  glitchtipRoot = payload.glitchtip || null;
+  reports = await reportsRes.json();
 
-// -------------------------------------------------------------- render
+  // One sorted list of app names, so the per-app colour is the same on a
+  // card and on every row inside it.
+  appNames = [...new Set([...projects.map((p) => p.appName), ...reports.map((r) => r.appName)])]
+    .filter(Boolean)
+    .sort();
+  return true;
+}
 
-/**
- * A stable colour per app, derived from its name — so the same app always
- * looks the same without anyone configuring a palette.
- */
+function projectFor(appName) {
+  return projects.find((p) => p.appName === appName) || null;
+}
+
+// ---------------------------------------------------------------- render
+
 /** Twelve hues chosen to stay tellable apart at chip size, in both themes. */
 const PROJECT_HUES = [210, 340, 150, 35, 275, 190, 15, 120, 300, 60, 240, 95];
 
@@ -213,8 +318,7 @@ const PROJECT_HUES = [210, 340, 150, 35, 275, 190, 15, 120, 300, 60, 240, 95];
  * hues — and telling apps apart at a glance is the entire point.
  */
 function appHue(appName) {
-  const names = [...new Set(reports.map((r) => r.appName))].sort();
-  const index = names.indexOf(appName);
+  const index = appNames.indexOf(appName);
   return PROJECT_HUES[(index < 0 ? 0 : index) % PROJECT_HUES.length];
 }
 
@@ -232,20 +336,104 @@ function evidenceLabel(report) {
   return "no replay";
 }
 
+function projectChip(appName) {
+  const chip = document.createElement("span");
+  chip.className = "tag project";
+  chip.style.setProperty("--project-hue", String(appHue(appName)));
+  chip.textContent = appName;
+  return chip;
+}
+
+function glitchtipAnchor(url, label) {
+  const a = document.createElement("a");
+  a.className = "button-link";
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noreferrer noopener";
+  a.textContent = label;
+  return a;
+}
+
+// ------------------------------------------------------- projects landing
+
+function renderProjects() {
+  projectsView.innerHTML = "";
+
+  if (!projects.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "No app has reported yet.";
+    projectsView.appendChild(empty);
+    return;
+  }
+
+  for (const project of projects) {
+    const card = document.createElement("article");
+    card.className = "project-card";
+    card.style.setProperty("--project-hue", String(appHue(project.appName)));
+
+    const heading = document.createElement("h2");
+    heading.textContent = project.appName;
+
+    const stats = document.createElement("dl");
+    stats.className = "card-stats";
+    const figures = [
+      ["Reports", project.total],
+      ["Staff", project.staffReports],
+      ["Auto", project.autoErrors],
+      ["Replays", project.withReplay],
+    ];
+    for (const [label, value] of figures) {
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = String(value ?? 0);
+      stats.append(dt, dd);
+    }
+
+    const foot = document.createElement("p");
+    foot.className = "card-foot muted";
+    foot.textContent = `Last report ${fmtAgo(project.lastReportAt)}`;
+
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.textContent = "Open reports";
+    open.addEventListener("click", () => showReports(project.appName));
+    actions.appendChild(open);
+
+    if (project.glitchtipUrl) {
+      const link = glitchtipAnchor(project.glitchtipUrl, "GlitchTip ↗");
+      // The whole card is clickable; the link is the one thing that isn't.
+      link.addEventListener("click", (event) => event.stopPropagation());
+      actions.appendChild(link);
+    }
+
+    card.append(heading, stats, foot, actions);
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("a")) return;
+      showReports(project.appName);
+    });
+    projectsView.appendChild(card);
+  }
+}
+
+// ----------------------------------------------------------- reports list
+
 function currentFilters() {
   return {
     q: el("search").value.trim().toLowerCase(),
-    app: el("app-filter").value,
     source: el("source-filter").value,
   };
 }
 
 function visibleReports() {
-  const { q, app: appName, source } = currentFilters();
+  const { q, source } = currentFilters();
   return reports.filter((r) => {
-    // Scoped embed: an app's own admin only ever shows that app's reports.
-    if (scopedApp && r.appName !== scopedApp) return false;
-    if (appName && r.appName !== appName) return false;
+    // The list only ever shows one app: either the drilled-into project or,
+    // embedded, the app whose admin we're sitting inside.
+    if (selectedApp && r.appName !== selectedApp) return false;
     if (source && r.source !== source) return false;
     if (!q) return true;
     return [r.note, r.url, r.reporterEmail, r.appName, r.id]
@@ -254,27 +442,7 @@ function visibleReports() {
   });
 }
 
-function syncAppFilter() {
-  const select = el("app-filter");
-  if (scopedApp) {
-    // Nothing to choose between — the scope is fixed by the host app.
-    select.hidden = true;
-    return;
-  }
-  const names = [...new Set(reports.map((r) => r.appName))].sort();
-  const current = select.value;
-  select.innerHTML = '<option value="">All apps</option>';
-  for (const name of names) {
-    const option = document.createElement("option");
-    option.value = name;
-    option.textContent = name;
-    select.appendChild(option);
-  }
-  if (names.includes(current)) select.value = current;
-}
-
-function render() {
-  syncAppFilter();
+function renderList() {
   const rows = visibleReports();
   list.innerHTML = "";
 
@@ -304,14 +472,7 @@ function render() {
 
     const meta = document.createElement("div");
     meta.className = "row-meta";
-    // Which app this came from is the first thing you need when the list
-    // mixes several — give it a chip of its own, colour-keyed per app.
-    const project = document.createElement("span");
-    project.className = "tag project";
-    project.style.setProperty("--project-hue", String(appHue(report.appName)));
-    project.textContent = report.appName;
     meta.append(
-      project,
       Object.assign(document.createElement("span"), { textContent: fmtTime(report.createdAt) }),
       Object.assign(document.createElement("span"), { textContent: evidenceLabel(report) })
     );
@@ -323,13 +484,71 @@ function render() {
   }
 }
 
+// ------------------------------------------------------------- navigation
+
+/** Topbar and view visibility for whichever of the two views is current. */
+function paintChrome() {
+  const inReports = view === "reports";
+
+  projectsView.hidden = inReports;
+  el("reports-view").hidden = !inReports;
+  el("search").hidden = !inReports;
+  el("source-filter").hidden = !inReports;
+
+  const crumb = el("crumb");
+  crumb.hidden = !inReports || !selectedApp;
+  crumb.textContent = selectedApp ? `/ ${selectedApp}` : "";
+
+  // Scoped to one app by its host: there is no "all projects" to go back to.
+  el("home-link").disabled = Boolean(scopedApp) || !inReports;
+
+  const url = inReports ? projectFor(selectedApp)?.glitchtipUrl || glitchtipRoot : glitchtipRoot;
+  const link = el("glitchtip-link");
+  link.hidden = !url;
+  if (url) link.href = url;
+}
+
+function showProjects() {
+  if (scopedApp) return;
+  view = "projects";
+  selectedApp = "";
+  selectedId = null;
+  releaseObjectUrls();
+  detail.innerHTML = "<p class='empty'>Select a report.</p>";
+  document.title = "Sentinel";
+  paintChrome();
+  renderProjects();
+}
+
+function showReports(appName) {
+  view = "reports";
+  selectedApp = appName || "";
+  selectedId = null;
+  releaseObjectUrls();
+  detail.innerHTML = "<p class='empty'>Select a report.</p>";
+  document.title = selectedApp ? `${selectedApp} — Sentinel` : "Sentinel";
+  el("search").placeholder = selectedApp
+    ? `Search ${selectedApp} reports…`
+    : "Search note, URL, reporter…";
+  paintChrome();
+  renderList();
+}
+
+function render() {
+  if (view === "reports") renderList();
+  else renderProjects();
+}
+
+// ----------------------------------------------------------- report detail
+
 async function selectReport(id) {
   selectedId = id;
-  render();
+  renderList();
   releaseObjectUrls();
   detail.innerHTML = "<p class='empty'>Loading…</p>";
 
   const res = await api(`/api/reports/${encodeURIComponent(id)}`);
+  if (res.status === 401) return showGate("Your session has expired.");
   if (!res.ok) {
     detail.innerHTML = `<p class="error">Could not load report (${res.status}).</p>`;
     return;
@@ -347,14 +566,10 @@ function renderDetail(report) {
 
   const sub = document.createElement("p");
   sub.className = "detail-sub";
-  const project = document.createElement("span");
-  project.className = "tag project";
-  project.style.setProperty("--project-hue", String(appHue(report.appName)));
-  project.textContent = report.appName;
   const id = document.createElement("span");
   id.className = "muted mono";
   id.textContent = report.id;
-  sub.append(project, id);
+  sub.append(projectChip(report.appName), id);
   detail.appendChild(sub);
 
   const kv = document.createElement("dl");
@@ -365,7 +580,7 @@ function renderDetail(report) {
     ["Reported by", report.reporterEmail || "—"],
     ["Page", report.url || "—"],
     ["When", fmtTime(report.createdAt)],
-    ["GlitchTip event", report.glitchtipEventId || "— (staff reports aren't sent to GlitchTip)"],
+    ["GlitchTip", report.glitchtipEventId || "— (staff reports aren't sent to GlitchTip)"],
   ];
   for (const [key, value] of rows) {
     const dt = document.createElement("dt");
@@ -377,6 +592,17 @@ function renderDetail(report) {
       a.textContent = report.url;
       a.target = "_blank";
       a.rel = "noreferrer noopener";
+      dd.appendChild(a);
+    } else if (key === "GlitchTip" && report.glitchtipUrl) {
+      // With an event id this lands on the error itself; without one, on the
+      // project's issue stream, which is still the right next place to look.
+      const a = document.createElement("a");
+      a.href = report.glitchtipUrl;
+      a.target = "_blank";
+      a.rel = "noreferrer noopener";
+      a.textContent = report.glitchtipEventId
+        ? `${report.glitchtipEventId} ↗`
+        : "Open this app's errors ↗";
       dd.appendChild(a);
     } else {
       dd.textContent = value;
@@ -473,9 +699,13 @@ function renderDangerZone(report) {
       return;
     }
     reports = reports.filter((r) => r.id !== report.id);
+    // The card's counts are now wrong, so re-derive them from the receiver
+    // rather than guessing at them here.
+    const project = projectFor(report.appName);
+    if (project) project.total = Math.max(0, project.total - 1);
     selectedId = null;
     detail.innerHTML = "<p class='empty'>Report deleted.</p>";
-    render();
+    renderList();
   });
 
   wrap.appendChild(button);
@@ -630,15 +860,33 @@ function labelThemeToggle(theme) {
 themeToggle.addEventListener("click", () => labelThemeToggle(cycleTheme()));
 
 el("search").addEventListener("input", render);
-el("app-filter").addEventListener("change", render);
 el("source-filter").addEventListener("change", render);
+el("home-link").addEventListener("click", () => showProjects());
 el("refresh").addEventListener("click", () => void refresh());
 
 async function refresh() {
-  const res = await api("/api/reports");
-  if (res.status === 401) return showGate("Token no longer accepted.");
-  reports = await res.json();
+  try {
+    if (!(await loadData())) return;
+  } catch (err) {
+    detail.innerHTML = `<p class="error">${err.message}</p>`;
+    return;
+  }
+  // The app we were looking at may have had its last report deleted.
+  if (view === "reports" && selectedApp && !projectFor(selectedApp) && !scopedApp) {
+    showProjects();
+    return;
+  }
+  paintChrome();
   render();
+}
+
+/** Past the gate: load everything, then land on the right view. */
+async function enter() {
+  gate.hidden = true;
+  app.hidden = false;
+  if (!(await loadData())) return;
+  if (scopedApp) showReports(scopedApp);
+  else showProjects();
 }
 
 async function boot() {
@@ -656,25 +904,28 @@ async function boot() {
     }
     labelThemeToggle(stored || "system");
   }
-  if (scopedApp) {
-    document.title = `${scopedApp} — incident reports`;
-    el("search").placeholder = `Search ${scopedApp} reports…`;
-  }
 
+  // Embedded: the host hands us the shared staff token, no sign-in screen.
   const hostToken = await requestTokenFromHost();
-  const candidate = hostToken || token;
-  if (!candidate) return showGate();
-
-  try {
-    if (await unlock(candidate, { persist: !hostToken })) {
-      app.hidden = false;
-      render();
-    } else {
-      showGate(hostToken ? "The token this page was given was rejected." : "Saved token was rejected.");
+  if (hostToken) {
+    bearerToken = hostToken;
+    try {
+      await enter();
+    } catch (err) {
+      showGate(err.message);
     }
-  } catch (err) {
-    showGate(err.message);
+    return;
   }
+
+  // Standalone: a session cookie may already be good.
+  await describeSignIn();
+  try {
+    const res = await fetch("/api/auth/me", { credentials: "same-origin" });
+    if (res.ok) return await enter();
+  } catch {
+    // Fall through to the sign-in screen.
+  }
+  showGate(embedded ? "This page was not given a token." : "");
 }
 
 void boot();

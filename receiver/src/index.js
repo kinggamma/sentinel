@@ -4,7 +4,9 @@ import helmet from "helmet";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { reportRouter } from "./routes/report.js";
+import { authRouter } from "./routes/auth.js";
 import { requireStaffToken } from "./middleware/auth.js";
+import { glitchtipConfigured, glitchtipInfo } from "./glitchtip.js";
 import { startRetentionSweeps } from "./retention.js";
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -59,10 +61,22 @@ app.use(
   })
 );
 
+// Sign-in lives outside the guard — it's how you get past it.
+app.use("/api", authRouter);
+
 app.use("/api", requireStaffToken, reportRouter);
 
 app.listen(PORT, () => {
-  console.log(`feedback-incident-receiver listening on :${PORT}`);
+  console.log(`Sentinel receiver listening on :${PORT}`);
+  if (glitchtipConfigured) {
+    console.log(
+      `sign-in: GlitchTip accounts in the "${glitchtipInfo().org}" org, or the shared staff token`
+    );
+  } else {
+    console.warn(
+      "GLITCHTIP_URL / GLITCHTIP_ORG are unset — sign-in falls back to the shared staff token only."
+    );
+  }
   startRetentionSweeps();
   if (!ALLOWED_ORIGINS.length) {
     console.warn("ALLOWED_ORIGINS is empty — no browser origin will be able to call this API.");

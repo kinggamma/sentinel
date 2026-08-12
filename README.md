@@ -1,6 +1,9 @@
-# error-monitoring-pipeline
+# Sentinel
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+*Sentinel* is the viewer and receiver in this repository; the repository and
+its directory keep the name `error-monitoring-pipeline`.
 
 A small, self-hosted alternative to error-tracking SaaS. Your apps report
 crashes, session replays, and staff bug reports to infrastructure you run —
@@ -21,8 +24,12 @@ repo, in about ten lines.
   frame by frame, and it survives page navigations.
 - **A "Report Issue" button** — staff describe what went wrong; the replay
   and breadcrumbs are attached automatically.
-- **One viewer for every app** — readable standalone, or embedded in each
-  app's own admin, scoped to that app.
+- **One viewer for every app** — Sentinel opens on a card per app that has
+  reported; click through for that app's reports. Readable standalone, or
+  embedded in each app's own admin, scoped to that app.
+- **Sign-in you don't have to administer** — no user database. People sign
+  in with their own GlitchTip auth token, and belonging to your GlitchTip
+  organisation *is* the permission.
 - **Privacy by default** — inputs masked, sensitive pages excluded, PII
   scrubbed before anything leaves the browser, and reports deleted on a
   retention schedule.
@@ -33,10 +40,10 @@ server.
 ## What's in here
 
 ```
-docker-compose.yml       GlitchTip + Postgres + Redis + feedback receiver + Caddy
+docker-compose.yml       GlitchTip + Postgres + Redis + Sentinel receiver + Caddy
 caddy/Caddyfile          Reverse proxy — IP/port based (localhost:8000 / :4000), no DNS needed
-receiver/                Feedback/incident receiver service (Node/Express)
-receiver/public/          Report viewer UI served at http://localhost:4000
+receiver/                Sentinel receiver service (Node/Express)
+receiver/public/          Sentinel viewer UI served at http://localhost:4000
 sdk/                     Shared browser SDK (incident-capture.js, report-widget.js)
 moodle/                  Moodle integration assets (PHP snippet + JS injection)
 docs/INTEGRATING.md      How to add an app — by language and framework
@@ -62,8 +69,15 @@ once you move it to the server.
    config.
 4. Generate a long random `STAFF_API_TOKEN` (already in `.env`) and give
    it to each app's server-side config — this is the token the SDK sends
-   to the feedback receiver at `http://localhost:4000`. Treat it like a
+   to the Sentinel receiver at `http://localhost:4000`. Treat it like a
    secret; it is not meant to be public.
+5. Set `GLITCHTIP_ORG` to the slug of the org you just created and
+   `SESSION_SECRET` to a long random string (`openssl rand -hex 32`), so
+   staff can sign in to Sentinel as themselves rather than sharing one
+   token. Apps report under a name of their own choosing, which needn't
+   match the GlitchTip project slug — map one to the other in
+   `GLITCHTIP_PROJECT_MAP` and Sentinel will link each report across to
+   the matching project's errors.
 
 **Later, moving it to the server:**
 
@@ -73,7 +87,7 @@ once you move it to the server.
    `http://203.0.113.10:8000`.
 3. `docker compose up -d` on the server.
 4. Reach it at `http://<server-ip>:8000` (GlitchTip) and
-   `http://<server-ip>:4000` (feedback receiver) — same setup as local,
+   `http://<server-ip>:4000` (Sentinel) — same setup as local,
    just a different host. Make sure the server's firewall only opens
    those ports to whoever should actually reach this (staff network,
    VPN, allowlisted IPs) rather than the whole internet, since it's
@@ -89,13 +103,36 @@ Two stores, two UIs — worth knowing which one to open:
 | What | Lands in | Look at it |
 |---|---|---|
 | Uncaught JS/PHP errors, stack traces | GlitchTip | http://localhost:8000 → Issues |
-| "Report Issue" clicks + screenshots + breadcrumbs | Feedback receiver | http://localhost:4000 |
+| "Report Issue" clicks + session replays + breadcrumbs | Sentinel | http://localhost:4000 |
 
-The receiver's viewer asks for `STAFF_API_TOKEN` on first visit and keeps
-it in that browser's localStorage — the API needs an `Authorization`
-header, which a plain browser navigation can't send. Only the static page
-is unauthenticated; every byte of report data still goes through the
-token-gated `/api` routes.
+Sentinel opens on one card per app that has reported — how many reports,
+how many were staff-filed against auto-captured, how many carry a replay,
+and when the last one arrived — and clicking a card drills into that app's
+reports. Where an app's errors also live in GlitchTip, each card and each
+report links straight across.
+
+## Who can read reports
+
+There is no user database to administer. Signing in takes a personal
+GlitchTip auth token (**GlitchTip → Profile → Auth Tokens**); Sentinel asks
+GlitchTip whether that token belongs to a member of `GLITCHTIP_ORG`, and
+issues a session only if it does. So granting someone access is inviting
+them to the GlitchTip organisation, revoking it is removing them, and the
+two systems can't drift apart. Keep GlitchTip's
+`ENABLE_OPEN_USER_REGISTRATION=false` (the default here) so nobody can
+create their own account and walk in.
+
+Sessions are an HMAC-signed, httpOnly cookie — no server-side store, and no
+credential kept in the browser's localStorage. Set `SESSION_SECRET` or
+everyone is signed out whenever the receiver restarts.
+
+`STAFF_API_TOKEN` remains a second way in, for the cases that aren't a
+person: apps' SDKs posting reports, the embedded viewer, and setups running
+without GlitchTip. It's a shared secret rather than an identity, so prefer
+GlitchTip sign-in for anyone reading reports by hand.
+
+Only the static page is unauthenticated; every byte of report data still
+goes through the guarded `/api` routes.
 
 ### Embedding the viewer in an app's own admin
 
@@ -106,11 +143,11 @@ viewer inside its own admin area, scoped to that app's reports:
 <iframe src="http://localhost:4000/?app=<appName>&embed=1"></iframe>
 ```
 
-`?app=` locks the list to one app and hides the app picker; `embed=1`
-drops the viewer's own page chrome so it sits flush in your layout. The
-host page — which already holds the staff token — hands it over by
-postMessage, so the token stays out of the URL, browser history, referrer
-headers, and access logs:
+`?app=` locks the view to one app and skips the landing page; `embed=1`
+drops Sentinel's own page chrome so it sits flush in your layout. The host
+page — which already holds the staff token — hands it over by postMessage,
+so the token stays out of the URL, browser history, referrer headers, and
+access logs:
 
 ```js
 window.addEventListener("message", (event) => {

@@ -21,8 +21,16 @@ bug or the documented design:
   the bundle and is therefore visible to anyone who can load that panel —
   which is why capture must be gated to staff sessions server-side.
 - **Access control lives in the host app.** The pipeline trusts that an app
-  only renders the SDK config for people allowed to be recorded. There is no
-  per-user authentication inside the receiver.
+  only renders the SDK config for people allowed to be recorded. Nothing the
+  receiver does substitutes for that gate.
+- **Reading reports is authenticated; being recorded is not.** Signing in to
+  Sentinel resolves a personal GlitchTip auth token against membership of
+  `GLITCHTIP_ORG`, so GlitchTip is the authority on who may read reports and
+  removing someone there removes them here. Sessions are HMAC-signed httpOnly
+  cookies with no server-side store, so `SESSION_SECRET` is a secret: anyone
+  holding it can mint a session. `STAFF_API_TOKEN` still works as a second
+  way in, with the caveat above — it is a shared secret, so it attributes
+  nothing to anyone.
 - **Plain HTTP is the default.** The stack ships without TLS because it is
   meant to sit on a private network, behind a VPN, or behind a firewall that
   only staff can reach. Exposing port 8000 or 4000 to the public internet
@@ -36,7 +44,9 @@ bug or the documented design:
 ## Things that are in scope
 
 - Bypassing the receiver's token check.
-- Reading or deleting reports without the token.
+- Reading or deleting reports without the token or a valid session.
+- Forging a session cookie, or getting one issued for a GlitchTip account
+  that isn't a member of the configured organisation.
 - Escaping the report viewer's origin (XSS, CSP bypass, clickjacking of the
   embedded viewer).
 - Path traversal in report or screenshot retrieval.

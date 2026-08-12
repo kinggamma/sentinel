@@ -30,7 +30,7 @@ a lot of confusion:
 | What | Where it goes | Where you read it |
 |---|---|---|
 | Uncaught errors + stack traces | GlitchTip | `http://<pipeline-host>:8000` → Issues |
-| "Report Issue" submissions, session replays, breadcrumbs | Feedback receiver | `http://<pipeline-host>:4000` |
+| "Report Issue" submissions, session replays, breadcrumbs | Sentinel | `http://<pipeline-host>:4000` |
 
 A staff report is **not** an error — it never appears in GlitchTip. And
 GlitchTip only sees *uncaught* errors; anything your app catches and renders
@@ -336,7 +336,8 @@ your own admin, scoped to your app:
 http://<pipeline-host>:4000/?app=<appName>&embed=1&accent=%231677ff&theme=dark
 ```
 
-- `app` locks the list to your app and hides the app picker
+- `app` locks the view to your app and skips the landing page, so staff
+  land directly on your reports
 - `embed=1` drops the viewer's own page chrome so it sits flush in your layout
 - `accent` (hex) and `theme` (`light` / `dark`) match your palette
 
@@ -358,7 +359,18 @@ Probe `GET /health` before rendering the iframe — if the pipeline is down,
 show your own message rather than the browser's connection-error page.
 
 The standalone `:4000` remains the all-apps view for whoever needs everything
-at once.
+at once — it opens on a card per app and drills down from there. Embedded, the
+host supplies the shared staff token; standalone, staff sign in as themselves
+and the token isn't involved.
+
+Whoever runs the pipeline has to tell it which GlitchTip project your app
+reports to, since `appName` is yours to choose and needn't match a project
+slug. That mapping lives in the pipeline's `GLITCHTIP_PROJECT_MAP`, and it's
+what puts a working "GlitchTip ↗" link on your app's reports:
+
+```
+GLITCHTIP_PROJECT_MAP={"<appName>":"<glitchtip-project-slug>"}
+```
 
 ## Configuration reference
 
@@ -369,7 +381,7 @@ Passed to `initIncidentCapture({ ... })`:
 | `dsn` | yes | GlitchTip DSN for this app's project |
 | `receiverUrl` | yes | `http://<host>:4000/api` |
 | `staffToken` | yes | shared `STAFF_API_TOKEN` |
-| `appName` | yes | label on every report; the viewer filters on it |
+| `appName` | yes | label on every report; Sentinel groups apps by it |
 | `userEmail` | — | "reported by"; never sent to GlitchTip |
 | `environment` | — | `development` / `production` tag |
 | `excludedPaths` | — | regexes; capture nothing at all on these paths |
