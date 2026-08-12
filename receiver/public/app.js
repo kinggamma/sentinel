@@ -26,20 +26,53 @@ const embedded = params.get("embed") === "1" || window.parent !== window;
  * embedded viewer matches the surrounding admin instead of announcing
  * itself. Both are cosmetic and validated before use.
  */
+const THEME_KEY = "incident-viewer-theme";
+
+function setTheme(theme) {
+  document.body.classList.remove("theme-light", "theme-dark");
+  if (theme === "light" || theme === "dark") {
+    document.body.classList.add(`theme-${theme}`);
+  }
+}
+
 function applyHostTheme({ accent, theme } = {}) {
   const nextAccent = accent || params.get("accent");
   if (nextAccent && /^#[0-9a-f]{3,8}$/i.test(nextAccent)) {
     document.documentElement.style.setProperty("--accent", nextAccent);
   }
 
-  const nextTheme = theme || params.get("theme");
-  if (nextTheme === "light" || nextTheme === "dark") {
-    document.body.classList.remove("theme-light", "theme-dark");
-    document.body.classList.add(`theme-${nextTheme}`);
+  // Standalone, whoever is reading gets to choose and we remember it.
+  // Embedded, the host app's own theme wins — the viewer shouldn't be light
+  // inside a dark admin.
+  let stored = null;
+  try {
+    stored = localStorage.getItem(THEME_KEY);
+  } catch {
+    // Storage disabled; fall through to the system preference.
   }
+
+  setTheme(theme || params.get("theme") || (embedded ? null : stored));
 }
 
 applyHostTheme();
+
+/** light → dark → system → light. "system" follows prefers-color-scheme. */
+function cycleTheme() {
+  const order = ["light", "dark", "system"];
+  let current = "system";
+  if (document.body.classList.contains("theme-light")) current = "light";
+  if (document.body.classList.contains("theme-dark")) current = "dark";
+
+  const next = order[(order.indexOf(current) + 1) % order.length];
+  setTheme(next === "system" ? null : next);
+  try {
+    if (next === "system") localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // Not worth failing over; the choice just won't persist.
+  }
+  return next;
+}
 
 const el = (id) => document.getElementById(id);
 const gate = el("gate");
@@ -166,6 +199,25 @@ el("forget").addEventListener("click", () => {
 
 // -------------------------------------------------------------- render
 
+/**
+ * A stable colour per app, derived from its name — so the same app always
+ * looks the same without anyone configuring a palette.
+ */
+/** Twelve hues chosen to stay tellable apart at chip size, in both themes. */
+const PROJECT_HUES = [210, 340, 150, 35, 275, 190, 15, 120, 300, 60, 240, 95];
+
+/**
+ * A colour per app, handed out by position in the sorted list of apps that
+ * actually have reports. Hashing the name instead would be stable across
+ * datasets, but two of a handful of apps regularly hash to neighbouring
+ * hues — and telling apps apart at a glance is the entire point.
+ */
+function appHue(appName) {
+  const names = [...new Set(reports.map((r) => r.appName))].sort();
+  const index = names.indexOf(appName);
+  return PROJECT_HUES[(index < 0 ? 0 : index) % PROJECT_HUES.length];
+}
+
 /** What visual evidence a report carries — replay now, screenshots on older ones. */
 function evidenceLabel(report) {
   if (report.hasReplay) {
@@ -252,8 +304,14 @@ function render() {
 
     const meta = document.createElement("div");
     meta.className = "row-meta";
+    // Which app this came from is the first thing you need when the list
+    // mixes several — give it a chip of its own, colour-keyed per app.
+    const project = document.createElement("span");
+    project.className = "tag project";
+    project.style.setProperty("--project-hue", String(appHue(report.appName)));
+    project.textContent = report.appName;
     meta.append(
-      Object.assign(document.createElement("span"), { textContent: report.appName }),
+      project,
       Object.assign(document.createElement("span"), { textContent: fmtTime(report.createdAt) }),
       Object.assign(document.createElement("span"), { textContent: evidenceLabel(report) })
     );
@@ -288,8 +346,15 @@ function renderDetail(report) {
   detail.appendChild(heading);
 
   const sub = document.createElement("p");
-  sub.className = "muted mono";
-  sub.textContent = report.id;
+  sub.className = "detail-sub";
+  const project = document.createElement("span");
+  project.className = "tag project";
+  project.style.setProperty("--project-hue", String(appHue(report.appName)));
+  project.textContent = report.appName;
+  const id = document.createElement("span");
+  id.className = "muted mono";
+  id.textContent = report.id;
+  sub.append(project, id);
   detail.appendChild(sub);
 
   const kv = document.createElement("dl");
@@ -555,6 +620,15 @@ document.addEventListener("keydown", (event) => {
 
 // ------------------------------------------------------------- wiring
 
+const themeToggle = el("theme-toggle");
+
+function labelThemeToggle(theme) {
+  const icons = { light: "☀︎ Light", dark: "☾ Dark", system: "◐ System" };
+  themeToggle.textContent = icons[theme] || icons.system;
+}
+
+themeToggle.addEventListener("click", () => labelThemeToggle(cycleTheme()));
+
 el("search").addEventListener("input", render);
 el("app-filter").addEventListener("change", render);
 el("source-filter").addEventListener("change", render);
@@ -571,6 +645,16 @@ async function boot() {
   if (embedded) {
     document.body.classList.add("embedded");
     el("forget").hidden = true;
+    // The host app owns the theme when we're inside it.
+    themeToggle.hidden = true;
+  } else {
+    let stored = null;
+    try {
+      stored = localStorage.getItem(THEME_KEY);
+    } catch {
+      // Storage disabled.
+    }
+    labelThemeToggle(stored || "system");
   }
   if (scopedApp) {
     document.title = `${scopedApp} — incident reports`;

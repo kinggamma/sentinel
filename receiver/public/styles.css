@@ -299,6 +299,39 @@ button.ghost {
   color: var(--auto);
 }
 
+/* Which app a report came from. Hue is derived from the app name, so the
+   same app keeps the same colour everywhere without configuration. */
+.tag.project {
+  background: hsl(var(--project-hue) 70% 94%);
+  color: hsl(var(--project-hue) 65% 28%);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+@media (prefers-color-scheme: dark) {
+  .tag.project {
+    background: hsl(var(--project-hue) 45% 20%);
+    color: hsl(var(--project-hue) 70% 78%);
+  }
+}
+
+body.theme-light .tag.project {
+  background: hsl(var(--project-hue) 70% 94%);
+  color: hsl(var(--project-hue) 65% 28%);
+}
+
+body.theme-dark .tag.project {
+  background: hsl(var(--project-hue) 45% 20%);
+  color: hsl(var(--project-hue) 70% 78%);
+}
+
+.detail-sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 4px;
+}
+
 /* --- detail ------------------------------------------------------- */
 
 .detail {

@@ -42,7 +42,22 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // Viewer UI. Static assets only — every byte of report data still comes
 // from the token-gated /api routes below.
-app.use(express.static(PUBLIC_DIR));
+app.use(
+  express.static(PUBLIC_DIR, {
+    setHeaders(res, filePath) {
+      // The viewer is a handful of small files that change when the
+      // pipeline is upgraded. Without this, browsers serve a stale copy
+      // after a rebuild and staff see an old UI against new data.
+      // "no-cache" still allows 304s — it just forces revalidation.
+      res.setHeader(
+        "Cache-Control",
+        filePath.includes(`${path.sep}vendor${path.sep}`)
+          ? "public, max-age=604800, immutable" // bundled player, changes with the image
+          : "no-cache"
+      );
+    },
+  })
+);
 
 app.use("/api", requireStaffToken, reportRouter);
 
