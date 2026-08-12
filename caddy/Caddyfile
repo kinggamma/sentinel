@@ -19,6 +19,19 @@
 	reverse_proxy glitchtip-web:8000
 	encode gzip
 
+	# GlitchTip's SPA shell carries no caching headers at all, so browsers
+	# apply their own heuristics and can serve a stale copy for hours. That
+	# matters here because we patch that shell to add the Sentinel nav link:
+	# without this, re-patching appears to do nothing in a browser that has
+	# already seen the old one. Only the HTML is affected — the hash-named
+	# JS and CSS keep whatever caching they came with.
+	header {
+		match {
+			header Content-Type text/html*
+		}
+		Cache-Control "no-cache"
+	}
+
 	# Access log — the quickest way to answer "did the browser's event
 	# actually reach the pipeline?" (`docker compose logs caddy`).
 	log

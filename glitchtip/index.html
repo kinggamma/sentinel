@@ -276,9 +276,21 @@
         var LABEL = "Sentinel";
         var ICON = "bug_report";
 
+        /* Three ways to find the sidebar, cheapest first. The last one asks
+           "where does GlitchTip's own Issues link live?" and uses whatever
+           contains it, which survives the nav being renamed or restructured
+           in a future build. */
         function navList() {
-          return document.querySelector("mat-nav-list") ||
-                 document.querySelector(".mat-mdc-nav-list");
+          var byTag = document.querySelector("mat-nav-list, .mat-mdc-nav-list");
+          if (byTag) return byTag;
+
+          var links = document.querySelectorAll('a[href*="/issues"]');
+          for (var i = 0; i < links.length; i++) {
+            var parent = links[i].parentElement;
+            /* A nav, not a link in page content: it should hold siblings. */
+            if (parent && parent.querySelectorAll("a").length > 1) return parent;
+          }
+          return null;
         }
 
         /* Clone a sibling so the copy carries this build's own classes. */
