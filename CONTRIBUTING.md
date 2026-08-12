@@ -7,8 +7,8 @@ documentation fixes are all welcome.
 ## Getting it running
 
 ```bash
-git clone https://github.com/kinggamma/error-monitoring-pipeline.git
-cd error-monitoring-pipeline
+git clone https://github.com/kinggamma/sentinel.git
+cd sentinel
 cp .env.example .env
 ```
 

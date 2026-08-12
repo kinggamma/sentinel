@@ -64,12 +64,12 @@ programmatically in a future session, either:
   issues via the GitHub MCP tools, or
 - Run `gh auth login` in a shell you control, then:
   ```
-  gh repo create <org>/error-monitoring-pipeline --private --source=. --remote=origin --push
+  gh repo create <org>/sentinel --private --source=. --remote=origin --push
   gh label create infra --color 1D76DB
   gh label create moodle --color 5319E7
   gh label create js-app --color 0E8A16
   gh label create privacy --color D93F0B
   gh label create docs --color FBCA04
-  gh milestone create "Foundation" --repo <org>/error-monitoring-pipeline
+  gh milestone create "Foundation" --repo <org>/sentinel
   # ...then gh issue create for each item above
   ```

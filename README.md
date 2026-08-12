@@ -2,9 +2,6 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-*Sentinel* is the viewer and receiver in this repository; the repository and
-its directory keep the name `error-monitoring-pipeline`.
-
 A small, self-hosted alternative to error-tracking SaaS. Your apps report
 crashes, session replays, and staff bug reports to infrastructure you run —
 one dashboard, no third party, no per-seat pricing, and nobody else holding
