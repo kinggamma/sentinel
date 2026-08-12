@@ -24,6 +24,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kinggamma/error-monitoring-pipeline.git"
+    "url": "https://github.com/kinggamma/sentinel.git"
   }
 }

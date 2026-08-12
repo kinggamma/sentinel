@@ -33,7 +33,7 @@ Run this against every app before calling its integration done.
 - [ ] GlitchTip admin/dashboard access is restricted to staff/admin
       accounts (not open registration — `ENABLE_OPEN_USER_REGISTRATION`
       is `false` in `docker-compose.yml`).
-- [ ] The feedback receiver (`:4000`) only accepts requests bearing a
+- [ ] The Sentinel receiver (`:4000`) only accepts requests bearing a
       valid `STAFF_API_TOKEN` (verify a request without the header gets
       a 401).
 - [ ] The server's firewall restricts ports `8000`/`4000` to staff

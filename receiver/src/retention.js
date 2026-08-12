@@ -13,9 +13,27 @@ import { listReports, deleteReport, reportSize } from "./storage.js";
  *
  * Set either to 0 to disable that cap.
  */
-const RETENTION_DAYS = Number(process.env.RETENTION_DAYS ?? 90);
-const RETENTION_MAX_MB = Number(process.env.RETENTION_MAX_MB ?? 5120);
-const SWEEP_INTERVAL_MS = Number(process.env.RETENTION_SWEEP_MINUTES ?? 360) * 60 * 1000;
+/**
+ * `??` isn't enough here: Compose passes an unset variable through as an
+ * empty string, and Number("") is 0 — which for the sweep interval means a
+ * timer that fires continuously. Anything that isn't a number falls back to
+ * the default; an explicit 0 is still honoured for the two caps.
+ */
+function envNumber(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    console.warn(`${name}="${raw}" is not a number — using ${fallback}.`);
+    return fallback;
+  }
+  return value;
+}
+
+const RETENTION_DAYS = envNumber("RETENTION_DAYS", 90);
+const RETENTION_MAX_MB = envNumber("RETENTION_MAX_MB", 5120);
+// A zero-minute sweep is never what anyone means, so treat it as unset.
+const SWEEP_INTERVAL_MS = (envNumber("RETENTION_SWEEP_MINUTES", 360) || 360) * 60 * 1000;
 
 export async function sweep() {
   const reports = await listReports(); // newest first

@@ -1,8 +1,6 @@
-version: "3.9"
-
 # ---------------------------------------------------------------------------
-# Error Monitoring & Bug Reporting Pipeline
-# Self-hosted stack: GlitchTip (errors) + feedback/incident receiver + Caddy
+# Sentinel — error monitoring and bug reporting pipeline
+# Self-hosted stack: GlitchTip (errors) + Sentinel receiver/viewer + Caddy
 # ---------------------------------------------------------------------------
 # Copy .env.example to .env and fill in real values before running:
 #   docker compose up -d
@@ -68,6 +66,13 @@ services:
         condition: service_completed_successfully
     volumes:
       - glitchtip_uploads:/code/uploads
+      # Adds a "Bug reports in Sentinel" link to GlitchTip's UI, which ships
+      # as a prebuilt image with nowhere to configure one. This file is a
+      # patched copy of the image's own SPA shell and references its
+      # hash-named JS bundles, so it MUST be regenerated after every
+      # GlitchTip upgrade or GlitchTip will fail to load:
+      #   ./scripts/patch-glitchtip-index.sh --check
+      - ./glitchtip/index.html:/code/dist/index.html:ro
 
   glitchtip-worker:
     image: glitchtip/glitchtip:latest
@@ -91,6 +96,26 @@ services:
       NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       MAX_UPLOAD_MB: "8"
+      # Sign-in: GlitchTip org membership decides who may read reports.
+      # GLITCHTIP_URL goes into links staff click, so it must be reachable
+      # from their browser; the API call is made container-to-container.
+      GLITCHTIP_URL: ${GLITCHTIP_DOMAIN}
+      GLITCHTIP_API_URL: http://glitchtip-web:8000
+      GLITCHTIP_ORG: ${GLITCHTIP_ORG}
+      GLITCHTIP_PROJECT_MAP: ${GLITCHTIP_PROJECT_MAP}
+      # Creates a GlitchTip project the first time a new app reports, so
+      # nobody has to make one by hand. Give this token project:write and
+      # NOT project:admin — creating needs the first, deleting needs the
+      # second, so a leaked token can't cost you a project's history.
+      GLITCHTIP_SERVICE_TOKEN: ${GLITCHTIP_SERVICE_TOKEN:-}
+      GLITCHTIP_TEAM: ${GLITCHTIP_TEAM:-}
+      # Signed session cookies. Without this, everyone is signed out on
+      # every restart.
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      RETENTION_DAYS: ${RETENTION_DAYS:-90}
+      RETENTION_MAX_MB: ${RETENTION_MAX_MB:-5120}
+      RETENTION_SWEEP_MINUTES: ${RETENTION_SWEEP_MINUTES:-360}
     volumes:
       - receiver_data:/data
     depends_on:
@@ -101,7 +126,7 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000" # GlitchTip — http://<host>:8000
-      - "4000:4000" # feedback receiver — http://<host>:4000
+      - "4000:4000" # Sentinel — http://<host>:4000
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data

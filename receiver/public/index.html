@@ -3,54 +3,78 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Incident reports</title>
+    <title>Sentinel</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/vendor/rrweb-player.css" />
     <link
       rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🐛</text></svg>"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🛡️</text></svg>"
     />
   </head>
   <body>
-    <!-- Token gate. The API needs an Authorization header, which a browser
-         address bar can't send, so the token is pasted once and kept in
-         localStorage for this browser only. -->
+    <!-- Sign-in. Preferred: a personal GlitchTip auth token, so access is
+         granted by inviting someone to the GlitchTip org and revoked by
+         removing them. The shared staff token still works for setups with
+         no GlitchTip. -->
     <div id="gate" class="gate" hidden>
       <form id="gate-form" class="gate-card">
-        <h1>Incident reports</h1>
-        <p class="muted">
-          Paste the staff API token (<code>STAFF_API_TOKEN</code> from the
-          pipeline <code>.env</code>). It stays in this browser.
-        </p>
+        <h1>Sentinel</h1>
+        <p class="muted" id="gate-help">Sign in to read bug reports and session replays.</p>
         <input
           id="token-input"
           type="password"
-          placeholder="staff API token"
+          placeholder="GlitchTip auth token"
           autocomplete="off"
           spellcheck="false"
         />
-        <button type="submit">Unlock</button>
+        <button type="submit">Sign in</button>
         <p id="gate-error" class="error" hidden></p>
+        <p class="gate-hint muted" id="gate-hint" hidden>
+          Create one in GlitchTip under <strong>Profile → Auth Tokens</strong>, with the
+          <strong>org:read</strong> scope ticked — that's what lets us check your membership.
+          Your account must belong to the <strong id="gate-org">organisation</strong>
+          organisation.
+          <a id="gate-glitchtip-link" href="#" target="_blank" rel="noreferrer noopener" hidden>
+            Create a token ↗
+          </a>
+        </p>
       </form>
     </div>
 
     <div id="app" hidden>
       <header class="topbar">
-        <h1>Incident reports</h1>
+        <h1 id="app-title">
+          <button id="home-link" type="button" class="linky">Sentinel</button>
+          <span id="crumb" class="breadcrumb" hidden></span>
+        </h1>
         <div class="topbar-controls">
-          <input id="search" type="search" placeholder="Search note, URL, reporter…" />
-          <select id="app-filter"><option value="">All apps</option></select>
-          <select id="source-filter">
+          <input id="search" type="search" placeholder="Search note, URL, reporter…" hidden />
+          <select id="source-filter" hidden>
             <option value="">All sources</option>
             <option value="staff-report">Staff reports</option>
             <option value="auto-error">Auto-captured</option>
           </select>
+          <a id="glitchtip-link" class="button-link" target="_blank" rel="noreferrer noopener" hidden>
+            Errors in GlitchTip ↗
+          </a>
           <button id="refresh" type="button" title="Reload">Refresh</button>
-          <button id="forget" type="button" class="ghost" title="Forget token">Lock</button>
+          <button
+            id="theme-toggle"
+            type="button"
+            class="ghost"
+            title="Switch between light, dark, and your system setting"
+          >
+            Theme
+          </button>
+          <button id="forget" type="button" class="ghost" title="Sign out">Sign out</button>
         </div>
       </header>
 
-      <main class="layout">
+      <!-- Landing: one card per app that has reported. -->
+      <main id="projects-view" class="projects" aria-label="Projects"></main>
+
+      <!-- Drill-down: reports for one app. -->
+      <main id="reports-view" class="layout" hidden>
         <ul id="list" class="list" aria-label="Reports"></ul>
         <section id="detail" class="detail">
           <p class="empty">Select a report.</p>

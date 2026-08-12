@@ -1,4 +1,4 @@
-# error-monitoring-pipeline
+# Sentinel
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -21,8 +21,12 @@ repo, in about ten lines.
   frame by frame, and it survives page navigations.
 - **A "Report Issue" button** — staff describe what went wrong; the replay
   and breadcrumbs are attached automatically.
-- **One viewer for every app** — readable standalone, or embedded in each
-  app's own admin, scoped to that app.
+- **One viewer for every app** — Sentinel opens on a card per app that has
+  reported; click through for that app's reports. Readable standalone, or
+  embedded in each app's own admin, scoped to that app.
+- **Sign-in you don't have to administer** — no user database. People sign
+  in with their own GlitchTip auth token, and belonging to your GlitchTip
+  organisation *is* the permission.
 - **Privacy by default** — inputs masked, sensitive pages excluded, PII
   scrubbed before anything leaves the browser, and reports deleted on a
   retention schedule.
@@ -33,10 +37,10 @@ server.
 ## What's in here
 
 ```
-docker-compose.yml       GlitchTip + Postgres + Redis + feedback receiver + Caddy
+docker-compose.yml       GlitchTip + Postgres + Redis + Sentinel receiver + Caddy
 caddy/Caddyfile          Reverse proxy — IP/port based (localhost:8000 / :4000), no DNS needed
-receiver/                Feedback/incident receiver service (Node/Express)
-receiver/public/          Report viewer UI served at http://localhost:4000
+receiver/                Sentinel receiver service (Node/Express)
+receiver/public/          Sentinel viewer UI served at http://localhost:4000
 sdk/                     Shared browser SDK (incident-capture.js, report-widget.js)
 moodle/                  Moodle integration assets (PHP snippet + JS injection)
 docs/INTEGRATING.md      How to add an app — by language and framework
@@ -62,8 +66,21 @@ once you move it to the server.
    config.
 4. Generate a long random `STAFF_API_TOKEN` (already in `.env`) and give
    it to each app's server-side config — this is the token the SDK sends
-   to the feedback receiver at `http://localhost:4000`. Treat it like a
+   to the Sentinel receiver at `http://localhost:4000`. Treat it like a
    secret; it is not meant to be public.
+5. Set `GLITCHTIP_ORG` to the slug of the org you just created and
+   `SESSION_SECRET` to a long random string (`openssl rand -hex 32`), so
+   staff can sign in to Sentinel as themselves rather than sharing one
+   token. Apps report under a name of their own choosing, which needn't
+   match the GlitchTip project slug — map one to the other in
+   `GLITCHTIP_PROJECT_MAP` and Sentinel will link each report across to
+   the matching project's errors.
+
+6. Run `./scripts/patch-glitchtip-index.sh` to point GlitchTip's UI back at
+   Sentinel. A copy is committed so a fresh clone starts up (Docker would
+   otherwise create a *directory* at that mount path and break GlitchTip),
+   but it was generated against whichever GlitchTip build was current then —
+   regenerate it against yours.
 
 **Later, moving it to the server:**
 
@@ -73,7 +90,7 @@ once you move it to the server.
    `http://203.0.113.10:8000`.
 3. `docker compose up -d` on the server.
 4. Reach it at `http://<server-ip>:8000` (GlitchTip) and
-   `http://<server-ip>:4000` (feedback receiver) — same setup as local,
+   `http://<server-ip>:4000` (Sentinel) — same setup as local,
    just a different host. Make sure the server's firewall only opens
    those ports to whoever should actually reach this (staff network,
    VPN, allowlisted IPs) rather than the whole internet, since it's
@@ -89,13 +106,119 @@ Two stores, two UIs — worth knowing which one to open:
 | What | Lands in | Look at it |
 |---|---|---|
 | Uncaught JS/PHP errors, stack traces | GlitchTip | http://localhost:8000 → Issues |
-| "Report Issue" clicks + screenshots + breadcrumbs | Feedback receiver | http://localhost:4000 |
+| "Report Issue" clicks + session replays + breadcrumbs | Sentinel | http://localhost:4000 |
 
-The receiver's viewer asks for `STAFF_API_TOKEN` on first visit and keeps
-it in that browser's localStorage — the API needs an `Authorization`
-header, which a plain browser navigation can't send. Only the static page
-is unauthenticated; every byte of report data still goes through the
-token-gated `/api` routes.
+Sentinel opens on one card per app that has reported — how many reports,
+how many were staff-filed against auto-captured, how many carry a replay,
+and when the last one arrived — and clicking a card drills into that app's
+reports. Where an app's errors also live in GlitchTip, each card and each
+report links straight across.
+
+Going the other way, GlitchTip's sidebar carries a **Sentinel** item, below
+its own nav. GlitchTip ships as a prebuilt image with nowhere to configure
+one, so it's added by mounting a patched copy of its own SPA shell. The
+sidebar is built by Angular at runtime, so the injected script clones a nav
+item that's already there and retargets the copy — which means it picks up
+whatever styling that build uses instead of guessing at class names, and it
+is restored if Angular re-renders. Where no sidebar exists (the login page,
+or a build that restructured it) a small corner link is shown instead, so
+the link is never simply missing.
+
+```bash
+./scripts/patch-glitchtip-index.sh
+```
+
+> **After every GlitchTip upgrade, re-run that script.** The patched shell
+> names GlitchTip's hash-named JS bundles, so once the image moves on, the
+> mount serves a shell pointing at bundles that no longer exist and
+> GlitchTip won't load at all. `./scripts/patch-glitchtip-index.sh --check`
+> compares the copy against the current image and exits non-zero when it has
+> gone stale — worth running straight after `docker compose pull`.
+
+## New apps create their own GlitchTip project
+
+Adding an app used to mean creating its GlitchTip project by hand, copying
+the DSN out, and telling Sentinel which project belonged to which app. Set
+`GLITCHTIP_SERVICE_TOKEN` and `GLITCHTIP_TEAM` and none of that is
+necessary: the first report from an app Sentinel hasn't seen creates the
+project, reads its DSN back, and remembers the mapping. The DSN then shows
+up on that app's card, ready to paste into the app's config.
+
+The mapping lives in `projects.json` beside the reports, so a restart
+doesn't re-create anything. `GLITCHTIP_PROJECT_MAP` still works and still
+wins — use it for apps whose project already existed under a different
+name.
+
+Provisioning happens after the report is saved and is never awaited, so an
+app filing a bug can't be failed by GlitchTip being slow or down; a failure
+is logged and the next report from that app tries again.
+
+**Give that token `project:write` and not `project:admin`.** Creating a
+project needs the first and deleting one needs the second, so a token
+without it can add projects and never remove one. The account does have to
+hold the organisation's Admin role — GlitchTip checks that by role and no
+scope substitutes for it — which is why it should be a dedicated account
+used only by the receiver. Don't sign in to GlitchTip as it in a browser:
+scopes only constrain token requests, and a browser session would carry the
+Admin role in full.
+
+## Who can read reports
+
+There is no user database to administer. GlitchTip holds the accounts, and
+Sentinel asks it who you are. **Most of the time there is nothing to sign
+in to:** if you're already signed in to GlitchTip in that browser, opening
+Sentinel signs you in silently — GlitchTip's session cookie is host-only,
+and cookies ignore ports, so it reaches the receiver on `:4000` too.
+Sentinel hands it back to GlitchTip to ask whose it is.
+
+Signing out of Sentinel signs you out of GlitchTip, and signing out of
+GlitchTip locks Sentinel on the next click — a silent session is bound to
+the GlitchTip session it came from, so it can't outlive it.
+
+**First, once per installation:** open GlitchTip at `:8000`, create your
+account and your organisation, and put that organisation's slug in
+`GLITCHTIP_ORG`. Everyone else who needs to read reports gets invited to
+that organisation in GlitchTip — the invitation *is* their Sentinel access.
+
+After that there are two ways in, and both are fine.
+
+**1. Already signed in to GlitchTip → just open Sentinel.** Nothing to
+type. This is the usual one.
+
+**2. Sign in to Sentinel directly with an auth token.** Useful when you
+don't want to visit GlitchTip at all, or you're on a machine or browser
+that isn't signed in there. Do this once:
+
+1. In GlitchTip, click your avatar → **Profile**.
+2. Go to **Auth Tokens** → **Create New Token**.
+3. Tick **`org:read`** and create it. GlitchTip's `/api/0/organizations/`
+   requires that scope, and a token without it is refused no matter who
+   owns it — this is the one step worth getting right.
+4. Copy the token and **save it somewhere you'll find again** (a password
+   manager). GlitchTip shows it once.
+
+From then on, open Sentinel, paste the token, and you're in — the account
+behind it still has to belong to `GLITCHTIP_ORG`. The session lasts
+`SESSION_HOURS`, so it's not something you paste daily.
+
+Keep GlitchTip's `ENABLE_OPEN_USER_REGISTRATION=false` (the default here)
+so nobody can create their own account and walk in.
+
+Sessions are an HMAC-signed, httpOnly cookie — no server-side store, and no
+credential kept in the browser's localStorage. Set `SESSION_SECRET` or
+everyone is signed out whenever the receiver restarts.
+
+**`STAFF_API_TOKEN` is not a way to sign in.** It's how apps' SDKs post
+reports and how the embedded viewer reads them, which means it ships inside
+client-rendered admin panels and anyone who can open one can read it. If it
+also signed people in, viewing source would be enough to browse every
+report and every session replay. So it doesn't — a person signing in brings
+a GlitchTip account. (The one exception: with no GlitchTip configured there
+would be no way in at all, so it stays the credential of last resort for
+that setup.)
+
+Only the static page is unauthenticated; every byte of report data still
+goes through the guarded `/api` routes.
 
 ### Embedding the viewer in an app's own admin
 
@@ -106,11 +229,11 @@ viewer inside its own admin area, scoped to that app's reports:
 <iframe src="http://localhost:4000/?app=<appName>&embed=1"></iframe>
 ```
 
-`?app=` locks the list to one app and hides the app picker; `embed=1`
-drops the viewer's own page chrome so it sits flush in your layout. The
-host page — which already holds the staff token — hands it over by
-postMessage, so the token stays out of the URL, browser history, referrer
-headers, and access logs:
+`?app=` locks the view to one app and skips the landing page; `embed=1`
+drops Sentinel's own page chrome so it sits flush in your layout. The host
+page — which already holds the staff token — hands it over by postMessage,
+so the token stays out of the URL, browser history, referrer headers, and
+access logs:
 
 ```js
 window.addEventListener("message", (event) => {
