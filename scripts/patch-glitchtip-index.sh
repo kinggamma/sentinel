@@ -77,12 +77,22 @@ with open(src_path) as f:
 if "</body>" not in source:
     sys.exit("GlitchTip's index.html has no </body> — its layout changed; update this script.")
 
-# A single small pill, bottom-right, out of the way of GlitchTip's own UI.
-# Themed off the .dark/.light class GlitchTip already puts on <html>.
+# The link belongs in the sidebar, where people actually look — a corner
+# pill goes unnoticed. GlitchTip's sidebar is an Angular Material
+# <mat-nav-list> built at runtime, so we can't write the markup for it:
+# the classes are Angular's and change between builds. Instead we clone an
+# item that's already there and retarget the copy, which inherits whatever
+# styling that build uses.
+#
+# Angular renders after this script runs and re-renders on navigation, so a
+# MutationObserver puts the item back whenever it goes missing. If no nav
+# ever appears — a logged-out page, or a build that restructured the
+# sidebar — a corner pill is shown instead, so the link is never simply
+# absent.
 snippet = """
     <!-- sentinel-link-start sentinel-patched-from:%(hash)s -->
     <style nonce="{{ csp_nonce }}">
-      .sentinel-link {
+      .sentinel-pill {
         position: fixed;
         right: 16px;
         bottom: 16px;
@@ -99,24 +109,97 @@ snippet = """
         text-decoration: none;
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
       }
-      .sentinel-link:hover {
-        border-color: rgba(0, 0, 0, 0.28);
-      }
-      html.dark .sentinel-link {
+      html.dark .sentinel-pill {
         background: #1f1f1f;
         color: rgba(255, 255, 255, 0.88);
         border-color: rgba(255, 255, 255, 0.18);
       }
-      html.dark .sentinel-link:hover {
-        border-color: rgba(255, 255, 255, 0.38);
-      }
       @media print {
-        .sentinel-link { display: none; }
+        .sentinel-pill { display: none; }
       }
     </style>
-    <a class="sentinel-link" href="%(url)s" rel="noreferrer noopener">
-      Bug reports in Sentinel &#8599;
-    </a>
+    <script nonce="{{ csp_nonce }}">
+      (function () {
+        var URL_ = "%(url)s";
+        var LABEL = "Sentinel";
+        var ICON = "bug_report";
+
+        function navList() {
+          return document.querySelector("mat-nav-list") ||
+                 document.querySelector(".mat-mdc-nav-list");
+        }
+
+        /* Clone a sibling so the copy carries this build's own classes. */
+        function addToNav(nav) {
+          if (nav.querySelector("[data-sentinel-link]")) return true;
+          var items = nav.querySelectorAll("a");
+          if (!items.length) return false;
+
+          var clone = items[items.length - 1].cloneNode(true);
+          clone.setAttribute("data-sentinel-link", "");
+          clone.setAttribute("href", URL_);
+          clone.removeAttribute("target");
+          /* Whatever marked the copied item as the current page. */
+          clone.removeAttribute("aria-current");
+          clone.classList.remove("mdc-list-item--activated", "active", "is-active");
+
+          var icon = clone.querySelector("mat-icon, .mat-icon, .material-symbols-outlined");
+          if (icon) icon.textContent = ICON;
+
+          var text = clone.querySelector(".mdc-list-item__primary-text");
+          if (text) {
+            text.textContent = LABEL;
+          } else {
+            /* No known text node: replace the deepest single text child. */
+            var walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT);
+            var node, last = null;
+            while ((node = walker.nextNode())) {
+              if (node.nodeValue.trim() && node.parentNode !== icon) last = node;
+            }
+            if (last) last.nodeValue = LABEL;
+            else clone.appendChild(document.createTextNode(LABEL));
+          }
+
+          nav.appendChild(clone);
+          return true;
+        }
+
+        function pill() {
+          if (document.querySelector(".sentinel-pill")) return;
+          var a = document.createElement("a");
+          a.className = "sentinel-pill";
+          a.href = URL_;
+          a.textContent = "Bug reports in Sentinel \\u2197";
+          document.body.appendChild(a);
+        }
+
+        var placed = false;
+        function attempt() {
+          var nav = navList();
+          if (nav && addToNav(nav)) {
+            placed = true;
+            var stale = document.querySelector(".sentinel-pill");
+            if (stale) stale.remove();
+          }
+        }
+
+        function start() {
+          attempt();
+          new MutationObserver(attempt).observe(document.body, {
+            childList: true,
+            subtree: true,
+          });
+          /* Nothing nav-shaped turned up; fall back so the link still exists. */
+          setTimeout(function () { if (!placed) pill(); }, 8000);
+        }
+
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", start);
+        } else {
+          start();
+        }
+      })();
+    </script>
     <!-- sentinel-link-end -->
 """ % {"hash": source_hash, "url": html.escape(url, quote=True)}
 
@@ -126,5 +209,16 @@ with open(out_path, "w") as f:
 print("wrote %s -> %s" % (out_path, url))
 PY
 
-echo "docker-compose.yml mounts it over GlitchTip's shell; restart glitchtip-web to pick it up."
+# Django parses the shell once and keeps it, so editing the file changes
+# nothing until the process restarts — and `compose up -d` won't restart a
+# service whose configuration hasn't changed. Do it here rather than leave a
+# re-patch looking like it silently failed.
+if docker compose ps --status running --services 2>/dev/null | grep -qx glitchtip-web; then
+  echo "restarting glitchtip-web so it re-reads the shell..."
+  docker compose restart glitchtip-web >/dev/null
+  echo "done."
+else
+  echo "glitchtip-web isn't running; it'll pick this up on the next start."
+fi
+
 echo "Re-run after every GlitchTip upgrade (./scripts/patch-glitchtip-index.sh --check tells you)."

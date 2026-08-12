@@ -244,7 +244,7 @@
   <script src="static/polyfills-CCKN7K54.js" type="module" nonce="{{ csp_nonce }}"></script><script src="static/main-ERLL3HVH.js" type="module" nonce="{{ csp_nonce }}"></script>
     <!-- sentinel-link-start sentinel-patched-from:420f7d1285485d4c700f43bbd0b4bd94daaa13d848a38842128e5f32d5144cf4 -->
     <style nonce="{{ csp_nonce }}">
-      .sentinel-link {
+      .sentinel-pill {
         position: fixed;
         right: 16px;
         bottom: 16px;
@@ -261,24 +261,97 @@
         text-decoration: none;
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
       }
-      .sentinel-link:hover {
-        border-color: rgba(0, 0, 0, 0.28);
-      }
-      html.dark .sentinel-link {
+      html.dark .sentinel-pill {
         background: #1f1f1f;
         color: rgba(255, 255, 255, 0.88);
         border-color: rgba(255, 255, 255, 0.18);
       }
-      html.dark .sentinel-link:hover {
-        border-color: rgba(255, 255, 255, 0.38);
-      }
       @media print {
-        .sentinel-link { display: none; }
+        .sentinel-pill { display: none; }
       }
     </style>
-    <a class="sentinel-link" href="http://localhost:4000" rel="noreferrer noopener">
-      Bug reports in Sentinel &#8599;
-    </a>
+    <script nonce="{{ csp_nonce }}">
+      (function () {
+        var URL_ = "http://localhost:4000";
+        var LABEL = "Sentinel";
+        var ICON = "bug_report";
+
+        function navList() {
+          return document.querySelector("mat-nav-list") ||
+                 document.querySelector(".mat-mdc-nav-list");
+        }
+
+        /* Clone a sibling so the copy carries this build's own classes. */
+        function addToNav(nav) {
+          if (nav.querySelector("[data-sentinel-link]")) return true;
+          var items = nav.querySelectorAll("a");
+          if (!items.length) return false;
+
+          var clone = items[items.length - 1].cloneNode(true);
+          clone.setAttribute("data-sentinel-link", "");
+          clone.setAttribute("href", URL_);
+          clone.removeAttribute("target");
+          /* Whatever marked the copied item as the current page. */
+          clone.removeAttribute("aria-current");
+          clone.classList.remove("mdc-list-item--activated", "active", "is-active");
+
+          var icon = clone.querySelector("mat-icon, .mat-icon, .material-symbols-outlined");
+          if (icon) icon.textContent = ICON;
+
+          var text = clone.querySelector(".mdc-list-item__primary-text");
+          if (text) {
+            text.textContent = LABEL;
+          } else {
+            /* No known text node: replace the deepest single text child. */
+            var walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT);
+            var node, last = null;
+            while ((node = walker.nextNode())) {
+              if (node.nodeValue.trim() && node.parentNode !== icon) last = node;
+            }
+            if (last) last.nodeValue = LABEL;
+            else clone.appendChild(document.createTextNode(LABEL));
+          }
+
+          nav.appendChild(clone);
+          return true;
+        }
+
+        function pill() {
+          if (document.querySelector(".sentinel-pill")) return;
+          var a = document.createElement("a");
+          a.className = "sentinel-pill";
+          a.href = URL_;
+          a.textContent = "Bug reports in Sentinel \u2197";
+          document.body.appendChild(a);
+        }
+
+        var placed = false;
+        function attempt() {
+          var nav = navList();
+          if (nav && addToNav(nav)) {
+            placed = true;
+            var stale = document.querySelector(".sentinel-pill");
+            if (stale) stale.remove();
+          }
+        }
+
+        function start() {
+          attempt();
+          new MutationObserver(attempt).observe(document.body, {
+            childList: true,
+            subtree: true,
+          });
+          /* Nothing nav-shaped turned up; fall back so the link still exists. */
+          setTimeout(function () { if (!placed) pill(); }, 8000);
+        }
+
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", start);
+        } else {
+          start();
+        }
+      })();
+    </script>
     <!-- sentinel-link-end -->
   </body>
 </html>

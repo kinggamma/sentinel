@@ -117,10 +117,15 @@ and when the last one arrived — and clicking a card drills into that app's
 reports. Where an app's errors also live in GlitchTip, each card and each
 report links straight across.
 
-Going the other way, GlitchTip carries a small **Bug reports in Sentinel**
-link in the corner of every page. GlitchTip ships as a prebuilt image with
-nowhere to configure one, so it's added by mounting a patched copy of its
-own SPA shell:
+Going the other way, GlitchTip's sidebar carries a **Sentinel** item, below
+its own nav. GlitchTip ships as a prebuilt image with nowhere to configure
+one, so it's added by mounting a patched copy of its own SPA shell. The
+sidebar is built by Angular at runtime, so the injected script clones a nav
+item that's already there and retargets the copy — which means it picks up
+whatever styling that build uses instead of guessing at class names, and it
+is restored if Angular re-renders. Where no sidebar exists (the login page,
+or a build that restructured it) a small corner link is shown instead, so
+the link is never simply missing.
 
 ```bash
 ./scripts/patch-glitchtip-index.sh
