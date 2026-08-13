@@ -148,6 +148,55 @@ export function verifyGlitchtipUser(token) {
 }
 
 /**
+ * Who a credential belongs to, without requiring that they belong anywhere.
+ *
+ * Someone with a GlitchTip account and no organisation can't be let in to
+ * read anything — but they can be allowed to ask, and that needs their
+ * identity. Returns null only if GlitchTip doesn't recognise them at all.
+ */
+export async function identifyGlitchtipUser(credential) {
+  if (!glitchtipConfigured) return null;
+  try {
+    const me = await callGlitchtip("/api/0/users/me/", credential);
+    const email = me.email || me.username || null;
+    return email ? { email, name: me.name || null } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ask GlitchTip to invite someone to an organisation.
+ *
+ * Done with the service token rather than the approver's own credential:
+ * approving happens in Sentinel, where we have a session but not the
+ * GlitchTip token behind it. The service account therefore has to be a
+ * manager or above in that organisation, and its token needs member:write.
+ *
+ * The response carries the acceptance link. That matters more than it
+ * sounds: with email disabled — which is the default here — it is the only
+ * way the invitation can reach the person it's for.
+ */
+export async function inviteToOrg({ org, email, role = "member" }) {
+  if (!glitchtipConfigured) throw new Error("GlitchTip isn't configured");
+  if (!SERVICE_TOKEN) {
+    const err = new Error(
+      "No GLITCHTIP_SERVICE_TOKEN is set, so invitations can't be sent from here. " +
+        "Invite them in GlitchTip under Organization > Members instead."
+    );
+    err.status = 501;
+    throw err;
+  }
+
+  const created = await callGlitchtip(
+    `/api/0/organizations/${org}/members/`,
+    { token: SERVICE_TOKEN },
+    { method: "POST", body: { email, orgRole: role, teamRoles: [] } }
+  );
+  return { inviteLink: created.inviteLink || created.invite_link || null };
+}
+
+/**
  * The caller's own GlitchTip session, handed straight back to GlitchTip to
  * ask who it belongs to. Note that a session skips GlitchTip's token-scope
  * check entirely — `has_permission` only applies it to token auth — so this

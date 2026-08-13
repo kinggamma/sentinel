@@ -244,6 +244,8 @@ el("gate-form").addEventListener("submit", async (event) => {
     if (res.ok) {
       // The session is the cookie now; don't keep a copy of the token.
       el("token-input").value = "";
+      const body = await res.json().catch(() => ({}));
+      if (body.pending) return showWaiting(body);
       await enter();
       return;
     }
@@ -867,6 +869,213 @@ function renderBreadcrumbs(report) {
   detail.appendChild(box);
 }
 
+// ------------------------------------------------------- awaiting access
+
+const waiting = el("waiting");
+
+/**
+ * Someone with a GlitchTip account and no organisation. They can't be shown
+ * reports, but a dead end is the wrong answer — GlitchTip has no way to ask
+ * for access, so this is it.
+ */
+async function showWaiting(identity) {
+  gate.hidden = true;
+  app.hidden = true;
+  waiting.hidden = false;
+  el("waiting-email").textContent = identity?.email || "your account";
+  await paintWaiting();
+}
+
+async function paintWaiting() {
+  const res = await fetch("/api/access/me", { credentials: "same-origin" });
+  if (!res.ok) return;
+  const body = await res.json();
+
+  const request = body.request;
+  const status = el("waiting-status");
+  const ask = el("waiting-ask");
+  const accept = el("waiting-accept");
+
+  if (!request) {
+    ask.hidden = false;
+    status.hidden = true;
+    accept.hidden = true;
+    return;
+  }
+
+  ask.hidden = true;
+  status.hidden = false;
+  accept.hidden = true;
+
+  if (request.status === "pending") {
+    status.textContent =
+      "Your request has been sent. Someone in the organisation has to approve it — this page will " +
+      "show the invitation once they do.";
+  } else if (request.status === "approved") {
+    status.textContent = request.organization
+      ? `Approved for ${request.organization}.`
+      : "Approved.";
+    if (request.inviteLink) {
+      // With email disabled this link is the only way the invitation reaches
+      // them, so put it in front of them rather than in a log.
+      accept.href = request.inviteLink;
+      accept.hidden = false;
+    } else {
+      status.textContent += " Check GlitchTip — you should be a member now.";
+    }
+  } else {
+    status.textContent = "Your request wasn't approved. Ask whoever runs this if you think that's wrong.";
+  }
+}
+
+el("waiting-request").addEventListener("click", async () => {
+  const err = el("waiting-error");
+  err.hidden = true;
+  const res = await fetch("/api/access/request", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ note: el("waiting-note").value.trim() }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    err.hidden = false;
+    err.textContent = body.error || `Could not send that (${res.status}).`;
+    return;
+  }
+  await paintWaiting();
+});
+
+el("waiting-signout").addEventListener("click", async () => {
+  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+  waiting.hidden = true;
+  showGate();
+});
+
+// ------------------------------------------------------- access requests
+
+const requestsPanel = el("requests");
+
+function renderRequests(requests, organisations) {
+  const list = el("request-list");
+  list.innerHTML = "";
+
+  const pending = requests.filter((r) => r.status === "pending");
+  if (!pending.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "Nobody is waiting.";
+    list.appendChild(li);
+    return;
+  }
+
+  for (const request of pending) {
+    const li = document.createElement("li");
+
+    const who = document.createElement("div");
+    who.innerHTML = "";
+    const email = document.createElement("div");
+    email.className = "mono";
+    email.textContent = request.email;
+    who.appendChild(email);
+    if (request.note) {
+      const note = document.createElement("div");
+      note.className = "muted";
+      note.textContent = request.note;
+      who.appendChild(note);
+    }
+    li.appendChild(who);
+
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+
+    // Which organisation to put them in. Only the approver's own.
+    const picker = document.createElement("select");
+    for (const org of organisations) {
+      const option = document.createElement("option");
+      option.value = org;
+      option.textContent = org;
+      picker.appendChild(option);
+    }
+    if (!organisations.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "no organisation to add them to";
+      picker.appendChild(option);
+      picker.disabled = true;
+    }
+
+    const approve = document.createElement("button");
+    approve.type = "button";
+    approve.textContent = "Approve";
+    approve.disabled = !organisations.length;
+    approve.addEventListener("click", () => void decideRequest(request.id, "approve", picker.value));
+
+    const decline = document.createElement("button");
+    decline.type = "button";
+    decline.className = "ghost danger";
+    decline.textContent = "Decline";
+    decline.addEventListener("click", () => void decideRequest(request.id, "decline"));
+
+    actions.append(picker, approve, decline);
+    li.appendChild(actions);
+    list.appendChild(li);
+  }
+}
+
+async function loadRequests() {
+  const err = el("requests-error");
+  err.hidden = true;
+  const res = await api("/api/access/requests");
+  if (!res.ok) {
+    err.hidden = false;
+    err.textContent = `Could not load requests (${res.status}).`;
+    return;
+  }
+  const body = await res.json();
+  renderRequests(body.requests || [], body.organisations || []);
+}
+
+async function decideRequest(id, action, organisation) {
+  const err = el("requests-error");
+  err.hidden = true;
+  const res = await api(`/api/access/requests/${encodeURIComponent(id)}/${action}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ organisation }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    err.hidden = false;
+    // 501 means no service token: the decision stands, we just can't carry
+    // it out from here.
+    err.textContent = body.error || `Could not do that (${res.status}).`;
+    return;
+  }
+  await loadRequests();
+}
+
+el("requests-open").addEventListener("click", async () => {
+  requestsPanel.hidden = false;
+  await loadRequests();
+});
+el("requests-close").addEventListener("click", () => (requestsPanel.hidden = true));
+requestsPanel.addEventListener("click", (event) => {
+  if (event.target === requestsPanel) requestsPanel.hidden = true;
+});
+
+/** Only worth offering when there's something to decide. */
+async function refreshRequestCount() {
+  if (embedded) return;
+  const res = await api("/api/access/requests");
+  if (!res.ok) return;
+  const body = await res.json().catch(() => ({}));
+  const pending = (body.requests || []).filter((r) => r.status === "pending").length;
+  const button = el("requests-open");
+  button.hidden = pending === 0;
+  button.textContent = pending === 1 ? "1 request" : `${pending} requests`;
+}
+
 // ---------------------------------------------------------- settings
 
 const settings = el("settings");
@@ -1080,8 +1289,16 @@ async function refresh() {
 /** Past the gate: load everything, then land on the right view. */
 async function enter() {
   gate.hidden = true;
+  waiting.hidden = true;
   app.hidden = false;
   if (!(await loadData())) return;
+  void refreshRequestCount();
+  // Arrived from GlitchTip's "Requests" item: open the queue rather than
+  // making them find it.
+  if (params.get("view") === "requests") {
+    requestsPanel.hidden = false;
+    void loadRequests();
+  }
   if (scopedApp) showReports(scopedApp);
   else showProjects();
 }
@@ -1118,7 +1335,11 @@ async function boot() {
   const config = await describeSignIn();
   try {
     const res = await fetch("/api/auth/me", { credentials: "same-origin" });
-    if (res.ok) return await enter();
+    if (res.ok) {
+      const me = await res.json().catch(() => ({}));
+      if (me.pending) return showWaiting(me);
+      return await enter();
+    }
   } catch {
     // Fall through.
   }
@@ -1128,7 +1349,11 @@ async function boot() {
   if (config.glitchtipEnabled) {
     try {
       const res = await fetch("/api/auth/sso", { method: "POST", credentials: "same-origin" });
-      if (res.ok) return await enter();
+      if (res.ok) {
+        const body = await res.json().catch(() => ({}));
+        if (body.pending) return showWaiting(body);
+        return await enter();
+      }
       // 403 means signed in to GlitchTip but not a member of the org, which
       // is worth saying out loud rather than showing a blank sign-in screen.
       if (res.status === 403) {

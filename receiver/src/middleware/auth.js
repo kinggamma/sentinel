@@ -46,7 +46,15 @@ export function fingerprint(sessionId) {
   return crypto.createHash("sha256").update(String(sessionId)).digest("base64url").slice(0, 22);
 }
 
-export function issueSession(res, { email, name, source, boundTo = null, projects = null }) {
+export function issueSession(res, {
+  email,
+  name,
+  source,
+  boundTo = null,
+  projects = null,
+  orgs = null,
+  pending = false,
+}) {
   const payload = {
     email: email || null,
     name: name || null,
@@ -55,6 +63,12 @@ export function issueSession(res, { email, name, source, boundTo = null, project
     // GlitchTip project slugs this person can see. null means unrestricted,
     // which is the staff token and nothing else.
     projects,
+    // Organisations this person belongs to. Needed to decide where they may
+    // approve somebody into — never anywhere they aren't a member themselves.
+    orgs,
+    // A recognised GlitchTip account that belongs to no organisation. Enough
+    // to ask for access; not enough to read anything.
+    pending,
     exp: Date.now() + SESSION_HOURS * 60 * 60 * 1000,
   };
   res.cookie?.(SESSION_COOKIE, sign(payload), {
@@ -124,10 +138,29 @@ export function requireStaffToken(req, res, next) {
   }
 
   const session = currentUser(req);
-  if (session) {
+  if (session && !session.pending) {
     req.viewer = session;
     return next();
   }
 
+  // A pending session is a person we know of who hasn't been let in yet.
+  // Saying "unauthorized" would be true but unhelpful; the viewer needs to
+  // tell them where they stand.
+  if (session?.pending) {
+    return res.status(403).json({ error: "awaiting access", pending: true });
+  }
+
   return res.status(401).json({ error: "unauthorized" });
+}
+
+/**
+ * For the few routes a not-yet-approved person may use: asking for access,
+ * and being told what happened to that request. Everything else goes through
+ * requireStaffToken, which refuses them.
+ */
+export function requireSignedIn(req, res, next) {
+  const session = currentUser(req);
+  if (!session) return res.status(401).json({ error: "unauthorized" });
+  req.viewer = session;
+  return next();
 }
