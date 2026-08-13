@@ -358,8 +358,21 @@ that isn't signed in there. Do this once:
 From then on, open Sentinel, paste the token, and you're in. The session lasts
 `SESSION_HOURS`, so it's not something you paste daily.
 
-Keep GlitchTip's `ENABLE_OPEN_USER_REGISTRATION=false` (the default here)
-so nobody can create their own account and walk in.
+**Adding someone** is one action: in GlitchTip, *Organization → Members →
+Invite Member*. There is no "request to join" — you invite, they accept,
+and they're in. Nothing comes back to you for approval afterwards, because
+you were the one who started it.
+
+Creating an account and being able to read anything are separate things. An
+account on its own sees nothing at all; joining an organisation is what
+grants access. That's why `ENABLE_USER_REGISTRATION` is left on: GlitchTip
+refuses to invite an email address that has no account yet, so turning
+registration off means you can only invite people who already registered —
+and nobody new can. `ENABLE_OPEN_USER_REGISTRATION`, despite the name,
+governs whether users may create *organisations*, and is off.
+
+Somebody can belong to more than one organisation, and then sees the apps
+of all of them in one list.
 
 Sessions are an HMAC-signed, httpOnly cookie — no server-side store, and no
 credential kept in the browser's localStorage. Set `SESSION_SECRET` or
