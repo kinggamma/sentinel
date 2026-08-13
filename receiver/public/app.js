@@ -19,7 +19,14 @@
  */
 
 import { initIssues, showIssues } from "./issues.js";
-import { route, start as startRouter, go as goRoute, refresh as refreshRoute, href as routeHref } from "./lib/router.js";
+import {
+  route,
+  layer,
+  start as startRouter,
+  go as goRoute,
+  refresh as refreshRoute,
+  href as routeHref,
+} from "./lib/router.js";
 import { requestsView } from "./views/requests.js";
 import { settingsView } from "./views/settings.js";
 import { projectsView } from "./views/projects.js";
@@ -67,8 +74,9 @@ const MOUNT = document.querySelector('meta[name="sentinel-mount"]')?.content ?? 
  * and the dialog opens over a blank page. So the background is part of the
  * route rather than something the boot sequence has to remember.
  *
- * Composed here rather than painted directly from enter(), because going
- * through the router is what earns the abort signal and the staleness check:
+ * Composed with layer() rather than painted directly from enter(), because
+ * going through the router is what earns the abort signal, the staleness
+ * check, and a teardown that covers both views:
  * navigate away mid-fetch and this render is cancelled and discarded, where
  * a hand-rolled paint would land on whatever screen replaced it.
  *
@@ -76,17 +84,18 @@ const MOUNT = document.querySelector('meta[name="sentinel-mount"]')?.content ?? 
  * One small GET for a background that is definitely current, rather than a
  * cache to invalidate.
  */
-const overLanding = (view) => async (ctx) => {
-  if (!scopedApp) await projectsView(ctx, { onOpenReports: showReports, hueFor: appHue });
-  return view(ctx);
-};
+const landing = (ctx) =>
+  scopedApp ? undefined : projectsView(ctx, { onOpenReports: showReports, hueFor: appHue });
 
-route("/requests", overLanding(requestsView));
-route("/settings", overLanding((ctx) => settingsView(ctx)));
+// layer() rather than calling one and returning the other: two views in one
+// render produce two cleanups, and a route hands the router only one. The
+// card timers behind the dialog were being left running.
+route("/requests", layer(landing, requestsView));
+route("/settings", layer(landing, (ctx) => settingsView(ctx)));
 // A per-app save changes what a project card shows (its origin count, or —
 // for "add an app" — whether the card exists at all), so it's the one
 // caller that needs to know when settingsView has saved something.
-route("/settings/apps/:app", overLanding((ctx) => settingsView(ctx, { onSaved: refresh })));
+route("/settings/apps/:app", layer(landing, (ctx) => settingsView(ctx, { onSaved: refresh })));
 // Scoped and embedded sessions are locked to one app's reports and have no
 // "all projects" to come home to — showProjects() already refused to show
 // it for the same reason, this is that same refusal at the address level.

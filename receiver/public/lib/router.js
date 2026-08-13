@@ -184,6 +184,39 @@ async function render({ force = false, scroll = false } = {}) {
   }
 }
 
+/**
+ * Mount several views into one route.
+ *
+ * A dialog that layers over a screen is two views in a single render, and a
+ * route hands the router exactly one cleanup — so composing them by hand
+ * silently drops whichever cleanup isn't the one returned, and the screen
+ * underneath keeps its timers and listeners for the rest of the session.
+ *
+ * Here every view that mounted is torn down, in reverse order, so the thing
+ * on top goes first. If one throws on the way up, whatever already mounted
+ * is torn down before the error is rethrown — the router never sees a
+ * cleanup for a view that failed, so nobody else can do it.
+ */
+export function layer(...views) {
+  return async (ctx) => {
+    const mounted = [];
+    const teardown = () => {
+      while (mounted.length) safely(mounted.pop(), "layered view cleanup");
+    };
+
+    try {
+      for (const view of views) {
+        const cleanup = await view(ctx);
+        if (typeof cleanup === "function") mounted.push(cleanup);
+      }
+    } catch (error) {
+      teardown();
+      throw error;
+    }
+    return teardown;
+  };
+}
+
 function onPopState() {
   // Not forced: a fragment-only step in history keeps the screen it lands on.
   void render();
