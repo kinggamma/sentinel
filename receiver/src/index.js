@@ -72,7 +72,7 @@ app.listen(PORT, () => {
     console.log(`sign-in: GlitchTip accounts in the "${glitchtipInfo().org}" organisation`);
   } else if (glitchtipConfigured) {
     console.log(
-      "sign-in: GlitchTip accounts — the organisation will be taken from the first person to sign in"
+      "sign-in: any GlitchTip account — each person sees the apps whose projects they can see"
     );
   } else {
     console.warn(
