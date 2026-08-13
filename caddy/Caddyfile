@@ -29,8 +29,11 @@
 	# GlitchTip's event ingest is /api/<project-id>/…, so the receiver's own
 	# routes are matched by name first and everything else under /api goes to
 	# GlitchTip.
-	@sentinel_api path /api/reports* /api/projects* /api/retention /api/auth/* /api/settings/* /api/access/*
-	handle @sentinel_api {
+	# Only the path apps' SDKs post to. Everything else under /api is
+	# GlitchTip's — including /api/settings/, which its own frontend calls
+	# before anything else, and /api/<project-id>/ where events arrive.
+	@report_intake path /api/reports*
+	handle @report_intake {
 		reverse_proxy feedback-receiver:4000
 	}
 

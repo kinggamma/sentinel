@@ -251,6 +251,22 @@ travelling over TLS, so they stop being sent over plain HTTP at all:
 echo 'SECURE_COOKIES=true' >> .env && docker compose up -d feedback-receiver
 ```
 
+## Issues, in Sentinel
+
+Errors are read straight from GlitchTip's API and listed under **Issues**,
+beside the bug reports. Not a copy of the data — the same issues, the same
+statuses, GlitchTip still the thing that stores them. Resolving one here
+resolves it there.
+
+That works because both are served from one origin, so the browser sends
+the GlitchTip session it already has and sees exactly the issues GlitchTip
+would show it. Nothing proxies anyone's credential and nothing stores a
+token.
+
+The layout follows GlitchTip's own list on purpose — the same filters,
+sorts, ranges and bulk actions in the same places. The point isn't to
+redesign a screen people know; it's to stop it being a second application.
+
 ## Where things end up
 
 Two stores, two UIs — worth knowing which one to open:
