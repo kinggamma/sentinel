@@ -113,6 +113,10 @@ services:
       # every restart.
       SESSION_SECRET: ${SESSION_SECRET}
       SESSION_HOURS: ${SESSION_HOURS:-12}
+      # Set once there's TLS in front: session cookies then refuse to travel
+      # over plain HTTP. Leave false on a bare-IP deployment or nobody can
+      # sign in at all.
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
       RETENTION_DAYS: ${RETENTION_DAYS:-90}
       RETENTION_MAX_MB: ${RETENTION_MAX_MB:-5120}
       RETENTION_SWEEP_MINUTES: ${RETENTION_SWEEP_MINUTES:-360}
@@ -124,9 +128,15 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Published ports are configurable because a shared server often has
+    # something on 8000 already. Only the left-hand side moves: Caddy still
+    # listens on 8000 and 4000 inside the network, so the Caddyfile and every
+    # container-to-container URL stay as they are. Change GLITCHTIP_PORT and
+    # GLITCHTIP_DOMAIN together — GlitchTip builds DSNs and email links from
+    # the domain, so a mismatch produces DSNs nothing can reach.
     ports:
-      - "8000:8000" # GlitchTip — http://<host>:8000
-      - "4000:4000" # Sentinel — http://<host>:4000
+      - "${GLITCHTIP_PORT:-8000}:8000" # GlitchTip — http://<host>:<GLITCHTIP_PORT>
+      - "${SENTINEL_PORT:-4000}:4000"  # Sentinel  — http://<host>:<SENTINEL_PORT>
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data

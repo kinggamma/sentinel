@@ -51,9 +51,11 @@ button.
 You need three values from whoever runs the pipeline:
 
 1. **Pipeline host** — `localhost` locally, or the server's IP or domain.
-2. **A GlitchTip DSN for your app.** In GlitchTip, create one *project per
-   app*. Each project gives you a DSN like
-   `http://<key>@<pipeline-host>:8000/<project-id>`. A frontend and its
+2. **A GlitchTip DSN for your app**, like
+   `http://<key>@<pipeline-host>:8000/<project-id>`. Where the pipeline has
+   project provisioning switched on, the project is created for you the
+   first time your app reports, and its DSN then appears on that app's card
+   in the viewer — ask rather than creating one by hand. A frontend and its
    backend are usually two separate projects.
 3. **`STAFF_API_TOKEN`** — the shared secret apps send to the feedback
    receiver. It lives in the pipeline's `.env`. It is not a per-user login.
@@ -68,6 +70,19 @@ That one list controls both which origins may POST reports (CORS) and which
 may embed the viewer (CSP `frame-ancestors`). Restart the receiver after
 changing it. **Symptom of forgetting:** reports fail with a CORS error in the
 console and the embedded viewer refuses to frame.
+
+Both of those are browser rules, which matters once your app is on a
+different machine to the pipeline. If your app's **server** forwards
+reports rather than its browser code posting them, it needs no entry in
+that list at all — it needs network access to port 4000 and nothing more.
+Only browser origins go in `ALLOWED_ORIGINS`.
+
+Being on a different machine also puts `STAFF_API_TOKEN` on the network on
+every report. Over plain HTTP it travels in cleartext, so either keep port
+4000 reachable only from your app servers, or put TLS in front of the
+pipeline. This is the same token for every connected app, so treating it
+casually costs more than it looks: it reads every app's reports, not just
+yours.
 
 Pick an **app name** now — a stable slug like `admin-panel` or `billing-api`.
 It labels every report and the viewer filters on it. Renaming it later
