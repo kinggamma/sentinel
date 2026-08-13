@@ -30,8 +30,11 @@ MODE="${1:-patch}"
 # An explicit SENTINEL_URL=... in front of the command wins, then .env, then
 # the local default. Reading .env unconditionally made the variable
 # impossible to override, which is awkward to test and surprising to use.
+# Relative by default, because Sentinel is served on this same origin now —
+# which also means nothing host-specific is written into a tracked file.
+# Set SENTINEL_URL only when it still lives on a separate address.
 SENTINEL_URL="${SENTINEL_URL:-$(grep -E '^SENTINEL_URL=' .env 2>/dev/null | cut -d= -f2- || true)}"
-: "${SENTINEL_URL:=http://localhost:4000}"
+SENTINEL_URL="${SENTINEL_URL:-/sentinel/}"
 
 # `docker compose config --images <service>` ignores the service filter on
 # some versions and lists the whole stack, so pick ours out by name rather

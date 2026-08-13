@@ -16,7 +16,32 @@
 # commented-out block at the bottom for automatic HTTPS.
 
 :8000 {
-	reverse_proxy glitchtip-web:8000
+	# One origin, two backends behind it.
+	#
+	# Sentinel used to live on its own port, which meant a second origin and
+	# everything that follows from that: CORS on every call, cookies reasoned
+	# about per port, and two apps where there should be one. Serving it here
+	# means a browser signed in to GlitchTip can call GlitchTip's own API
+	# directly, with the session it already has, and Sentinel is a path rather
+	# than a separate address.
+	#
+	# Order matters. Sentinel's API and GlitchTip's both start /api, and
+	# GlitchTip's event ingest is /api/<project-id>/…, so the receiver's own
+	# routes are matched by name first and everything else under /api goes to
+	# GlitchTip.
+	@sentinel_api path /api/reports* /api/projects* /api/retention /api/auth/* /api/settings/* /api/access/*
+	handle @sentinel_api {
+		reverse_proxy feedback-receiver:4000
+	}
+
+	handle /sentinel* {
+		reverse_proxy feedback-receiver:4000
+	}
+
+	handle {
+		reverse_proxy glitchtip-web:8000
+	}
+
 	encode gzip
 
 	# GlitchTip's SPA shell carries no caching headers at all, so browsers
