@@ -155,6 +155,18 @@ An app whose *server* forwards reports needs no entry in
 are browser rules. Such an app needs network access to port 4000 and
 nothing more.
 
+You won't have to come back to `.env` for this. Sentinel's own
+**Settings** holds the same list, and each app's card has a control for
+its own addresses — which is the form the question usually takes, since
+it's one app that has moved rather than the whole list being wrong. Both
+apply immediately: no restart, no shell. Whatever is in `ALLOWED_ORIGINS`
+remains the floor and can't be removed from a browser.
+
+An app can be registered there before it has ever reported, and shows as
+a card with no reports until one arrives. That's deliberate: an app
+posting from a browser can't get its first report in until its address is
+allowed, so waiting for a first report would deadlock.
+
 Start it, and watch the first boot — GlitchTip migrates its database
 before it answers:
 
