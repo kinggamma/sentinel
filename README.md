@@ -57,47 +57,177 @@ once you move it to the server.
 
 **Run it locally first:**
 
-1. `cp .env.example .env` — the defaults already point at `localhost`,
-   so you can leave everything as-is except the passwords/secrets.
-2. `docker compose up -d`
-3. Visit `http://localhost:8000`, create the first GlitchTip org/admin
-   account, then create one GlitchTip **project per app** (moodle-lms,
-   app1, app2, ...). Each project gives you a DSN to put in that app's
-   config.
-4. Generate a long random `STAFF_API_TOKEN` (already in `.env`) and give
-   it to each app's server-side config — this is the token the SDK sends
-   to the Sentinel receiver at `http://localhost:4000`. Treat it like a
-   secret; it is not meant to be public.
-5. Set `GLITCHTIP_ORG` to the slug of the org you just created and
-   `SESSION_SECRET` to a long random string (`openssl rand -hex 32`), so
-   staff can sign in to Sentinel as themselves rather than sharing one
-   token. Apps report under a name of their own choosing, which needn't
-   match the GlitchTip project slug — map one to the other in
-   `GLITCHTIP_PROJECT_MAP` and Sentinel will link each report across to
-   the matching project's errors.
+The defaults already point at `localhost`, so only the secrets need
+filling in:
 
-6. Run `./scripts/patch-glitchtip-index.sh` to point GlitchTip's UI back at
-   Sentinel. A copy is committed so a fresh clone starts up (Docker would
-   otherwise create a *directory* at that mount path and break GlitchTip),
-   but it was generated against whichever GlitchTip build was current then —
-   regenerate it against yours.
+```bash
+cp .env.example .env
+```
+
+```bash
+for k in POSTGRES_PASSWORD GLITCHTIP_SECRET_KEY STAFF_API_TOKEN SESSION_SECRET; do sed -i '' "s|^$k=.*|$k=$(openssl rand -hex 32)|" .env; done
+```
+
+On Linux that's `sed -i` without the `''`.
+
+```bash
+docker compose up -d && docker compose logs -f glitchtip-web
+```
+
+Visit `http://localhost:8000`, create the first account and an
+organisation, then record its slug — membership of that organisation is
+what lets someone read reports:
+
+```bash
+sed -i '' 's|^GLITCHTIP_ORG=.*|GLITCHTIP_ORG=<org-slug>|' .env && docker compose up -d feedback-receiver
+```
+
+Point GlitchTip's sidebar back at Sentinel. A patched copy is committed so
+that a fresh clone starts at all — Docker would otherwise create a
+*directory* at that mount path and break GlitchTip — but it was generated
+against whichever GlitchTip build was current then, so regenerate it
+against yours:
+
+```bash
+./scripts/patch-glitchtip-index.sh
+```
+
+Then hand `STAFF_API_TOKEN` to each app's **server-side** config. It is
+what an app's SDK sends when it posts a report. Treat it as a secret: it
+reads every report from every app connected to this pipeline, so an app
+that serves it to a browser hands that access to whoever loads the page.
+
+```bash
+grep '^STAFF_API_TOKEN=' .env
+```
+
+You don't need to create a GlitchTip project per app by hand — set
+`GLITCHTIP_SERVICE_TOKEN` and `GLITCHTIP_TEAM` and the first report from a
+new app creates its project and reads back its DSN. See *New apps create
+their own GlitchTip project* below.
 
 **Later, moving it to the server:**
 
-1. Upload this repo to the server (`git clone`/`rsync`/whatever you use).
-2. In `.env` on the server, change `GLITCHTIP_DOMAIN` and
-   `ALLOWED_ORIGINS` from `localhost` to the server's public IP, e.g.
-   `http://203.0.113.10:8000`.
-3. `docker compose up -d` on the server.
-4. Reach it at `http://<server-ip>:8000` (GlitchTip) and
-   `http://<server-ip>:4000` (Sentinel) — same setup as local,
-   just a different host. Make sure the server's firewall only opens
-   those ports to whoever should actually reach this (staff network,
-   VPN, allowlisted IPs) rather than the whole internet, since it's
-   plain HTTP with no TLS at this stage.
-5. If you get a real domain later, `caddy/Caddyfile` has the
-   automatic-HTTPS block commented out at the bottom — swap to that and
-   point DNS at the server whenever you want it.
+Nothing here is specific to a machine — `caddy/Caddyfile` binds ports
+rather than hostnames, so the whole move is `.env` values. Substitute your
+server's address for `<server-ip>` throughout.
+
+Install Docker if it isn't there, then clone:
+
+```bash
+sudo apt update && sudo apt install -y docker.io docker-compose-v2 && sudo usermod -aG docker $USER
+```
+
+```bash
+git clone <this-repo> ~/sentinel && cd ~/sentinel
+```
+
+Write `.env`, generating the three secrets as you go. `ALLOWED_ORIGINS`
+is every **browser** origin that posts reports or embeds the viewer:
+
+```bash
+cat > .env <<EOF
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+GLITCHTIP_SECRET_KEY=$(openssl rand -hex 32)
+STAFF_API_TOKEN=$(openssl rand -hex 32)
+SESSION_SECRET=$(openssl rand -hex 32)
+GLITCHTIP_DOMAIN=http://<server-ip>:8000
+SENTINEL_URL=http://<server-ip>:4000
+ALLOWED_ORIGINS=http://<an-app-host>:<port>
+EMAIL_URL=consolemail://
+DEFAULT_FROM_EMAIL=errors@example.org
+NOTIFY_WEBHOOK_URL=
+GLITCHTIP_ORG=
+SESSION_HOURS=12
+GLITCHTIP_SERVICE_TOKEN=
+GLITCHTIP_TEAM=
+GLITCHTIP_PROJECT_MAP={}
+RETENTION_DAYS=90
+RETENTION_MAX_MB=5120
+RETENTION_SWEEP_MINUTES=360
+EOF
+```
+
+An app whose *server* forwards reports needs no entry in
+`ALLOWED_ORIGINS`: that list drives CORS and CSP `frame-ancestors`, which
+are browser rules. Such an app needs network access to port 4000 and
+nothing more.
+
+Start it, and watch the first boot — GlitchTip migrates its database
+before it answers:
+
+```bash
+docker compose up -d && docker compose logs -f glitchtip-web
+```
+
+```bash
+curl -s localhost:4000/health && curl -s -o /dev/null -w ' glitchtip %{http_code}\n' localhost:8000/
+```
+
+Open `http://<server-ip>:8000`, create the first account and the
+organisation, then record its slug — that organisation is who may read
+reports:
+
+```bash
+sed -i 's|^GLITCHTIP_ORG=.*|GLITCHTIP_ORG=<org-slug>|' .env && docker compose up -d feedback-receiver
+```
+
+Add the Sentinel link to GlitchTip's sidebar. This bakes `SENTINEL_URL`
+into GlitchTip's shell, so it runs *after* that value is right — and again
+whenever it changes, or after a GlitchTip upgrade:
+
+```bash
+./scripts/patch-glitchtip-index.sh
+```
+
+Finally, hand each app the token it will send with reports:
+
+```bash
+grep '^STAFF_API_TOKEN=' .env
+```
+
+If the server already runs something else, check the two ports are free
+before any of the above:
+
+```bash
+sudo ss -tlnp | grep -E ':(4000|8000)'
+```
+
+`EMAIL_URL=consolemail://` prints invitation emails to the container log
+instead of sending them, which is enough to get started — but inviting
+someone to the organisation is how you grant access, so real SMTP is
+needed before anyone else can be let in.
+
+**Two things worth deciding before you expose it.**
+
+Keep GlitchTip and Sentinel on the same host. Signing in to Sentinel
+silently relies on GlitchTip's session cookie, which is host-only and
+port-blind — same host on different ports is fine, two hosts is not.
+Split them and silent sign-in and linked sign-out both stop working, and
+everyone falls back to pasting auth tokens. Apps may live wherever they
+like; this is only about these two.
+
+Plain HTTP means the staff token crosses the network in cleartext on every
+report. On a private network that may be fine; facing the internet it
+isn't. Open the two ports only to what needs them:
+
+```bash
+sudo ufw allow from <app-server-ip> to any port 4000 proto tcp
+```
+
+```bash
+sudo ufw allow from <staff-address> to any port 8000 proto tcp
+```
+
+A bare IP can't hold a browser-trusted certificate, so TLS needs a
+domain. Once you have one, point it at the server and swap to the
+automatic-HTTPS block at the bottom of `caddy/Caddyfile` — Caddy obtains
+and renews the certificate itself. Then tell the receiver its cookies are
+travelling over TLS, so they stop being sent over plain HTTP at all:
+
+```bash
+echo 'SECURE_COOKIES=true' >> .env && docker compose up -d feedback-receiver
+```
 
 ## Where things end up
 
@@ -380,8 +510,8 @@ screenshots and replay from disk immediately.
 
 ## Rolling this out
 
-1. **Foundation** — `docker compose up -d`, create your org and one
-   GlitchTip project per app.
+1. **Foundation** — `docker compose up -d`, create your organisation.
+   Projects create themselves as apps start reporting.
 2. **First app** — wire one app end to end and confirm both halves: an
    error in GlitchTip, a staff report with a replay in the viewer.
 3. **The rest** — repeat per app; see `docs/INTEGRATING.md` for the
@@ -390,6 +520,28 @@ screenshots and replay from disk immediately.
    call it done.
 5. **Hardening** — put TLS in front of it (or keep it on a private network),
    and set retention to suit your policy.
+
+Checking a live pipeline, in the order things break:
+
+```bash
+docker compose ps
+```
+
+```bash
+curl -s localhost:4000/health && curl -s -o /dev/null -w ' glitchtip %{http_code}\n' localhost:8000/
+```
+
+```bash
+curl -s localhost:4000/api/projects -H "Authorization: Bearer $(grep '^STAFF_API_TOKEN=' .env | cut -d= -f2)"
+```
+
+That last one answers the question that actually matters — has anything
+reported yet, and does each app map to a GlitchTip project. If a report
+should have arrived and didn't, see whether it reached the proxy at all:
+
+```bash
+docker compose logs --tail 40 caddy | grep -o '"uri":"[^"]*"'
+```
 
 `docs/ISSUES.md` breaks this into GitHub issues, milestones, and labels if
 you want to track it there.

@@ -113,6 +113,10 @@ services:
       # every restart.
       SESSION_SECRET: ${SESSION_SECRET}
       SESSION_HOURS: ${SESSION_HOURS:-12}
+      # Set once there's TLS in front: session cookies then refuse to travel
+      # over plain HTTP. Leave false on a bare-IP deployment or nobody can
+      # sign in at all.
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
       RETENTION_DAYS: ${RETENTION_DAYS:-90}
       RETENTION_MAX_MB: ${RETENTION_MAX_MB:-5120}
       RETENTION_SWEEP_MINUTES: ${RETENTION_SWEEP_MINUTES:-360}
