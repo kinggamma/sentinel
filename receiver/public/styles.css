@@ -766,6 +766,27 @@ button.danger:hover {
   border-color: transparent;
 }
 
+/* An address that matched nothing. Sits in the outlet like any screen — it
+   is one, rather than an empty page that looks like a failure to load. */
+.not-found {
+  padding: 48px 20px;
+  text-align: center;
+}
+
+.not-found h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.not-found p {
+  margin: 0 0 18px;
+  overflow-wrap: anywhere;
+}
+
+.not-found .button-link {
+  display: inline-block;
+}
+
 /* --- issues ------------------------------------------------------- */
 
 .issues-view {

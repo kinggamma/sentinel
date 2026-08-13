@@ -106,18 +106,39 @@ function cursorOf(link) {
   }
 }
 
-/** What went wrong, in terms of what to do about it. */
-function readFailure(status) {
+/**
+ * What went wrong, in terms of what to do about it.
+ *
+ * 404 means two entirely different things depending on who asked, and the
+ * list's answer was being given to both. On the list it is almost always the
+ * deployment: served on its own port, /api/0 belongs to the receiver and
+ * 404s, which otherwise looks like an installation with no errors in it. On
+ * one issue it is almost always that issue — deleted, merged away, or in a
+ * project this account can't see — and telling someone to check how Sentinel
+ * is deployed sends them a very long way from the truth.
+ */
+function readFailure(status, { subject = "list" } = {}) {
   if (status === 401 || status === 403) {
     return "GlitchTip wouldn't answer for this account. Sign in to GlitchTip in this browser.";
   }
-  // Served on its own port, /api/0 belongs to the receiver and 404s. Worth
-  // saying, because it looks like there are simply no errors.
   if (status === 404) {
-    return "Issues need Sentinel served alongside GlitchTip on the same address.";
+    return subject === "issue"
+      ? "That issue doesn't exist any more, or this account can't see it."
+      : "Issues need Sentinel served alongside GlitchTip on the same address.";
   }
   if (status === 0) return "Couldn't reach the error tracker.";
   return `The error tracker answered ${status}.`;
+}
+
+/**
+ * An action nobody awaits — a click handler's promise. A cancelled one is
+ * not a failure and must not surface as an unhandled rejection, which is the
+ * only reason this isn't a bare `void`.
+ */
+function run(promise) {
+  promise.catch((error) => {
+    if (error?.name !== "AbortError") console.error("issue action failed", error);
+  });
 }
 
 // ---------------------------------------------------------------- the list
@@ -250,19 +271,18 @@ function toolbar(filters, navigate) {
   );
 }
 
-export async function issuesListView({ outlet, query, signal, onCleanup }, { org } = {}) {
+/**
+ * No onCleanup here, and nothing to return: this screen holds no timer, no
+ * listener on document and no object URL. What it does hold is requests, and
+ * the router aborts their signal on teardown — so the signal already answers
+ * "has this screen gone", and a second flag tracking the same fact could
+ * only ever drift from it.
+ */
+export async function issuesListView({ outlet, query, signal }, { org } = {}) {
   if (!org) {
     fill(outlet, emptyState("No organisation to browse errors under."));
     return;
   }
-
-  let gone = false;
-  // A status change re-renders the screen when it lands. Navigate away while
-  // one is in flight and that re-render would hit whatever screen replaced
-  // this one, refetching someone else's data under them.
-  onCleanup(() => {
-    gone = true;
-  });
 
   const filters = readFilters(query);
   const navigate = (next) => go(`/issues${search(next)}`);
@@ -334,6 +354,10 @@ export async function issuesListView({ outlet, query, signal, onCleanup }, { org
       if (status === "delete") await glitchtip.del(path, { signal, ...NO_REDIRECT });
       else await glitchtip.put(path, { status }, { signal, ...NO_REDIRECT });
     } catch (error) {
+      // First, because a navigation cancels this the same way it cancels a
+      // read — and reporting "couldn't update those (0)" into a screen that
+      // has already been replaced is a failure invented by leaving.
+      throwIfAborted(signal);
       failed(
         error?.status === 403
           ? "That was refused. Reload the page and try again — your session may have expired."
@@ -341,7 +365,8 @@ export async function issuesListView({ outlet, query, signal, onCleanup }, { org
       );
       return;
     }
-    if (!gone) void refreshRoute();
+    throwIfAborted(signal);
+    void refreshRoute();
   };
 
   const bulkButtons = [
@@ -354,7 +379,7 @@ export async function issuesListView({ outlet, query, signal, onCleanup }, { org
       text: label,
       disabled: true,
       attrs: { "data-status": status },
-      on: { click: () => void act(status) },
+      on: { click: () => run(act(status)) },
     })
   );
   const deleteButton = h("button", {
@@ -362,7 +387,7 @@ export async function issuesListView({ outlet, query, signal, onCleanup }, { org
     className: "ghost danger",
     text: "Delete",
     disabled: true,
-    on: { click: () => void act("delete") },
+    on: { click: () => run(act("delete")) },
   });
 
   const pageLink = (cursor, label, ariaLabel) =>
@@ -567,16 +592,12 @@ function eventBody(event) {
   return parts;
 }
 
-export async function issueDetailView({ outlet, params, query, signal, onCleanup }, { org } = {}) {
+/** Same as the list above: the signal is the only teardown state it needs. */
+export async function issueDetailView({ outlet, params, query, signal }, { org } = {}) {
   if (!org) {
     fill(outlet, emptyState("No organisation to browse errors under."));
     return;
   }
-
-  let gone = false;
-  onCleanup(() => {
-    gone = true;
-  });
 
   const id = params.id;
   // The filters came along in the query, so "all issues" goes back to the
@@ -596,7 +617,7 @@ export async function issueDetailView({ outlet, params, query, signal, onCleanup
     throwIfAborted(signal);
     fill(
       outlet,
-      h("div", { className: "issues-view" }, back, h("p", { className: "error", text: readFailure(error?.status ?? 0) }))
+      h("div", { className: "issues-view" }, back, h("p", { className: "error", text: readFailure(error?.status ?? 0, { subject: "issue" }) }))
     );
     return;
   }
@@ -623,21 +644,22 @@ export async function issueDetailView({ outlet, params, query, signal, onCleanup
         { signal, ...NO_REDIRECT }
       );
     } catch (error) {
+      throwIfAborted(signal);
       resolve.disabled = false;
       fill(body, h("p", { className: "error", text: `Couldn't update that (${error?.status ?? 0}).` }));
       return;
     }
-    if (gone) return;
+    throwIfAborted(signal);
     resolve.disabled = false;
     paintStatus(next);
   };
 
-  resolve.addEventListener("click", () => void setStatus(resolve.dataset.next || "resolved"));
+  resolve.addEventListener("click", () => run(setStatus(resolve.dataset.next || "resolved")));
   const ignore = h("button", {
     type: "button",
     className: "ghost",
     text: "Mark ignored",
-    on: { click: () => void setStatus("ignored") },
+    on: { click: () => run(setStatus("ignored")) },
   });
 
   const count = Number(issue.count ?? 0);

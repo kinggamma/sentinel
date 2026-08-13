@@ -26,6 +26,8 @@ import {
   start as startRouter,
   go as goRoute,
   refresh as refreshRoute,
+  stop as stopRouter,
+  setNotFound,
   currentPath,
   href as routeHref,
 } from "./lib/router.js";
@@ -132,6 +134,30 @@ const issuesRoute = (view) => (ctx) => {
   paintChrome();
   return view(ctx, { org: organisation });
 };
+/**
+ * Anything else. The router has always supported this and nothing ever
+ * registered one, so a typo past the mount rendered an empty outlet inside a
+ * complete shell — which reads as a screen that failed to load rather than
+ * an address that doesn't exist.
+ */
+setNotFound(({ outlet, path }) => {
+  paintChrome();
+  fill(
+    outlet,
+    h(
+      "div",
+      { className: "not-found" },
+      h("h2", { text: "That page doesn't exist" }),
+      h("p", { className: "muted mono", text: path }),
+      h("a", {
+        className: "button-link",
+        href: routeHref(scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/"),
+        text: scopedApp ? "Back to reports" : "Back to your apps",
+      })
+    )
+  );
+});
+
 route("/issues", issuesRoute(issuesListView));
 route("/issues/:id", issuesRoute(issueDetailView));
 
@@ -241,6 +267,11 @@ function api(path, init = {}) {
 // ---------------------------------------------------------------- sign-in
 
 function showGate(message) {
+  // Hiding the app is not stopping it. The router kept its listeners on
+  // document and kept the last view mounted behind the sign-in screen — a
+  // replay still playing, its timers still running, and every link click on
+  // this page still intercepted by a router whose session has gone.
+  stopRouter();
   app.hidden = true;
   gate.hidden = false;
   const err = el("gate-error");
@@ -581,6 +612,9 @@ const waiting = el("waiting");
  * for access, so this is it.
  */
 async function showWaiting(identity) {
+  // Same transition as showGate(): whatever was mounted is behind this
+  // screen now, and nothing behind a screen should still be running.
+  stopRouter();
   gate.hidden = true;
   app.hidden = true;
   waiting.hidden = false;
