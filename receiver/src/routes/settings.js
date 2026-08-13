@@ -1,5 +1,7 @@
 import { Router } from "express";
 import {
+  integrationStatus,
+  setIntegration,
   fixedOrigins,
   forgetApp,
   listGlobalOrigins,
@@ -76,4 +78,35 @@ settingsRouter.put("/settings/apps/:appName", async (req, res) => {
 settingsRouter.delete("/settings/apps/:appName", async (req, res) => {
   const apps = await forgetApp(req.params.appName);
   res.json({ apps, fixed: fixedOrigins() });
+});
+
+
+/**
+ * The GlitchTip service credential. Set here or in the environment; the
+ * environment wins, and either way the token itself is never sent back —
+ * the viewer only learns whether one exists.
+ */
+settingsRouter.get("/settings/integration", (_req, res) => {
+  res.json(integrationStatus());
+});
+
+settingsRouter.put("/settings/integration", async (req, res) => {
+  const status = integrationStatus();
+  if (req.body?.serviceToken !== undefined && status.tokenFromEnv) {
+    return res.status(409).json({
+      error: "The service token is set in this deployment's environment, so it can't be changed here.",
+    });
+  }
+  if (req.body?.team !== undefined && status.teamFromEnv) {
+    return res.status(409).json({
+      error: "The team is set in this deployment's environment, so it can't be changed here.",
+    });
+  }
+
+  const updated = await setIntegration({
+    serviceToken: req.body?.serviceToken,
+    team: req.body?.team,
+  });
+  console.log(`glitchtip service credential ${updated.hasToken ? "set" : "cleared"}`);
+  res.json(updated);
 });

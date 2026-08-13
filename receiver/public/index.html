@@ -133,6 +133,33 @@
           <button type="submit">Add</button>
         </form>
         <p id="settings-error" class="error" hidden></p>
+
+        <!-- Lets Sentinel act in GlitchTip on your behalf: inviting people
+             who ask for access, and creating a project for a new app. -->
+        <div id="integration" class="integration">
+          <h3>GlitchTip service token</h3>
+          <p class="muted">
+            Lets Sentinel invite people you approve, and create a GlitchTip project the first
+            time a new app reports. Create it in GlitchTip under
+            <strong>Profile → Auth Tokens</strong> with <strong>member:write</strong> and
+            <strong>project:write</strong>, on an account with the Admin role. Leave
+            <strong>project:admin</strong> unticked so it can never delete a project.
+          </p>
+          <p id="integration-status" class="muted"></p>
+          <form id="integration-form" class="origin-add">
+            <input
+              id="integration-token"
+              type="password"
+              placeholder="Paste a token to set it"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <input id="integration-team" type="text" placeholder="Team slug" />
+            <button type="submit">Save</button>
+          </form>
+          <p id="integration-error" class="error" hidden></p>
+        </div>
+
         <div class="settings-actions">
           <button id="settings-close" type="button" class="ghost">Done</button>
         </div>

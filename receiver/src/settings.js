@@ -35,6 +35,20 @@ const ENV_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .map((o) => o.trim())
   .filter(Boolean);
 
+/**
+ * The GlitchTip service credential, used to invite people and create
+ * projects on your behalf. Environment first, then whatever was set in the
+ * viewer — same rule as origins, so a deployment that configures it keeps
+ * control of it.
+ *
+ * Written to disk in the data volume, in clear, exactly as it would be in
+ * .env. It is never read back out over the API: the viewer is told whether
+ * one is set, never what it is.
+ */
+const ENV_SERVICE_TOKEN = process.env.GLITCHTIP_SERVICE_TOKEN || "";
+const ENV_TEAM = process.env.GLITCHTIP_TEAM || "";
+let integration = { serviceToken: "", team: "" };
+
 /** Origins that apply to everything, however they were added. */
 let globalOrigins = [];
 /** appName -> { origins: string[] } */
@@ -47,9 +61,14 @@ async function load() {
     const parsed = JSON.parse(await readFile(SETTINGS_PATH, "utf8"));
     apps = parsed.apps && typeof parsed.apps === "object" ? parsed.apps : {};
     globalOrigins = Array.isArray(parsed.origins) ? parsed.origins : [];
+    integration = {
+      serviceToken: parsed.integration?.serviceToken || "",
+      team: parsed.integration?.team || "",
+    };
   } catch {
     apps = {};
     globalOrigins = [];
+    integration = { serviceToken: "", team: "" };
   }
   loaded = true;
 }
@@ -144,6 +163,38 @@ export async function forgetApp(appName) {
 async function persist() {
   await mkdir(DATA_DIR, { recursive: true });
   const tmp = `${SETTINGS_PATH}.tmp`;
-  await writeFile(tmp, JSON.stringify({ origins: globalOrigins, apps }, null, 2));
+  await writeFile(tmp, JSON.stringify({ origins: globalOrigins, apps, integration }, null, 2));
   await rename(tmp, SETTINGS_PATH);
+}
+
+
+/** The credential in force, however it was configured. */
+export function serviceToken() {
+  return ENV_SERVICE_TOKEN || integration.serviceToken;
+}
+
+export function serviceTeam() {
+  return ENV_TEAM || integration.team;
+}
+
+/**
+ * What the viewer may know about it: whether there is one, and whether it
+ * came from the environment — never the token itself.
+ */
+export function integrationStatus() {
+  return {
+    hasToken: Boolean(serviceToken()),
+    tokenFromEnv: Boolean(ENV_SERVICE_TOKEN),
+    team: serviceTeam(),
+    teamFromEnv: Boolean(ENV_TEAM),
+  };
+}
+
+/** Passing an empty string clears; passing undefined leaves it alone. */
+export async function setIntegration({ serviceToken: token, team }) {
+  await load();
+  if (token !== undefined) integration.serviceToken = String(token).trim();
+  if (team !== undefined) integration.team = String(team).trim();
+  await persist();
+  return integrationStatus();
 }

@@ -374,10 +374,16 @@ invitation link directly, which matters because with email disabled that
 link is otherwise only in a container log. Until they accept it they can
 see nothing: a pending session can ask for access and read nothing else.
 
-Approving needs `GLITCHTIP_SERVICE_TOKEN` with the `member:write` scope,
-since Sentinel has your session rather than your GlitchTip token. Without
-it the request still queues, and Sentinel says to invite them in GlitchTip
-by hand instead.
+Approving needs a GlitchTip service token with the `member:write` scope,
+since Sentinel holds your session rather than your GlitchTip token. Set it
+in **Settings**, or as `GLITCHTIP_SERVICE_TOKEN` — the environment wins
+where both exist, and a token set there can't be replaced from a browser.
+Either way it's write-only from the viewer's side: it will tell you whether
+one is set, never what it is. Without a token the request still queues, and
+Sentinel says to invite them in GlitchTip by hand instead.
+
+That's the same token that creates projects for new apps, so setting it
+once covers both.
 
 Creating an account and being able to read anything are separate things. An
 account on its own sees nothing at all; joining an organisation is what

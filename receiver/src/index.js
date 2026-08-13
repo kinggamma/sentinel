@@ -88,8 +88,10 @@ app.use(
 app.use("/api", authRouter);
 
 // Asking for access is the one thing someone not yet let in may do, so it
-// sits behind a weaker guard than everything else.
-app.use("/api", requireSignedIn, accessRouter);
+// sits behind a weaker guard than everything else — and on its own prefix,
+// because a guard mounted at /api runs for every /api request, refusing the
+// bearer-token calls that post reports.
+app.use("/api/access", requireSignedIn, accessRouter);
 
 app.use("/api", requireStaffToken, settingsRouter);
 app.use("/api", requireStaffToken, reportRouter);
