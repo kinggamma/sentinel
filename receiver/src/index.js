@@ -29,6 +29,18 @@ app.use(
         // we already trust as API origins may also frame it. Anything
         // else still can't (clickjacking).
         "frame-ancestors": ["'self'", ...ALLOWED_ORIGINS],
+        /**
+         * Only claim this when TLS is actually in front.
+         *
+         * helmet sets it by default, and it tells the browser to rewrite
+         * every http:// subresource to https://. On a plain-HTTP
+         * deployment that points the stylesheet and the script at a port
+         * with no TLS listener: the page itself loads, because a
+         * top-level navigation isn't upgraded, and then nothing else
+         * does. Browsers exempt localhost from the rule, so it looks
+         * perfect in development and breaks on the first real host.
+         */
+        "upgrade-insecure-requests": process.env.SECURE_COOKIES === "true" ? [] : null,
       },
     },
   })
