@@ -19,6 +19,28 @@
     <div id="gate" class="gate" hidden>
       <form id="gate-form" class="gate-card">
         <h1>Sentinel</h1>
+
+        <!-- Sentinel's form, GlitchTip's accounts. The credentials go to
+             GlitchTip's own login endpoint on this same origin, so the
+             session that comes back is the one everything else already
+             understands. -->
+        <div id="password-signin">
+          <input id="email-input" type="email" placeholder="Email" autocomplete="username" />
+          <input
+            id="password-input"
+            type="password"
+            placeholder="Password"
+            autocomplete="current-password"
+          />
+          <button type="button" id="password-submit">Sign in</button>
+          <p id="password-error" class="error" hidden></p>
+          <p class="gate-hint muted">
+            Or sign in with a personal auth token instead.
+            <button type="button" id="show-token" class="linky">Use a token</button>
+          </p>
+        </div>
+
+        <div id="token-signin" hidden>
         <p class="muted" id="gate-help">Sign in to read bug reports and session replays.</p>
         <input
           id="token-input"
@@ -38,6 +60,10 @@
             Create a token ↗
           </a>
         </p>
+        <p class="gate-hint muted">
+          <button type="button" id="show-password" class="linky">Back to email and password</button>
+        </p>
+        </div>
       </form>
     </div>
 
@@ -136,6 +162,31 @@
           <button type="button" id="issue-prev" class="ghost" aria-label="Previous page">‹</button>
           <button type="button" id="issue-next" class="ghost" aria-label="Next page">›</button>
         </div>
+
+        <!-- One issue: what threw, where, and everything the last event
+             carried. Replaces the list rather than opening elsewhere. -->
+        <section id="issue-detail" hidden>
+          <button id="issue-back" type="button" class="linky">← All issues</button>
+
+          <header class="detail-head">
+            <h2 id="detail-title"></h2>
+            <p id="detail-culprit" class="muted"></p>
+            <div class="detail-meta">
+              <span id="detail-project" class="tag"></span>
+              <span id="detail-status" class="tag"></span>
+              <span id="detail-seen" class="muted"></span>
+            </div>
+            <div class="detail-actions">
+              <button type="button" id="detail-resolve">Mark resolved</button>
+              <button type="button" id="detail-ignore" class="ghost">Mark ignored</button>
+              <a id="detail-glitchtip" class="button-link" target="_blank" rel="noreferrer noopener">
+                Open in GlitchTip ↗
+              </a>
+            </div>
+          </header>
+
+          <div id="detail-body"></div>
+        </section>
 
         <table class="issues-table">
           <thead>
