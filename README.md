@@ -133,6 +133,8 @@ STAFF_API_TOKEN=$(openssl rand -hex 32)
 SESSION_SECRET=$(openssl rand -hex 32)
 GLITCHTIP_DOMAIN=http://<server-ip>:8000
 SENTINEL_URL=http://<server-ip>:4000
+GLITCHTIP_PORT=8000
+SENTINEL_PORT=4000
 ALLOWED_ORIGINS=http://<an-app-host>:<port>
 EMAIL_URL=consolemail://
 DEFAULT_FROM_EMAIL=errors@example.org
@@ -192,6 +194,14 @@ before any of the above:
 ```bash
 sudo ss -tlnp | grep -E ':(4000|8000)'
 ```
+
+If either is taken, don't move the other service — publish this one
+elsewhere. `GLITCHTIP_PORT` and `SENTINEL_PORT` change only what is
+published on the host; inside the network everything still talks on 8000
+and 4000, so the Caddyfile is untouched. Change the matching
+`GLITCHTIP_DOMAIN` / `SENTINEL_URL` at the same time: GlitchTip builds
+DSNs from the domain, so a mismatch hands apps a DSN that resolves to
+nothing.
 
 `EMAIL_URL=consolemail://` prints invitation emails to the container log
 instead of sending them, which is enough to get started — but inviting
