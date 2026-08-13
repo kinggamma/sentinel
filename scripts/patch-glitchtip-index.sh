@@ -27,7 +27,10 @@ MODE="${1:-patch}"
 
 # Where staff reach Sentinel. Baked in at patch time, since GlitchTip renders
 # this template and knows nothing about our environment.
-SENTINEL_URL="$(grep -E '^SENTINEL_URL=' .env 2>/dev/null | cut -d= -f2- || true)"
+# An explicit SENTINEL_URL=... in front of the command wins, then .env, then
+# the local default. Reading .env unconditionally made the variable
+# impossible to override, which is awkward to test and surprising to use.
+SENTINEL_URL="${SENTINEL_URL:-$(grep -E '^SENTINEL_URL=' .env 2>/dev/null | cut -d= -f2- || true)}"
 : "${SENTINEL_URL:=http://localhost:4000}"
 
 # `docker compose config --images <service>` ignores the service filter on
@@ -267,3 +270,18 @@ else
 fi
 
 echo "Re-run after every GlitchTip upgrade (./scripts/patch-glitchtip-index.sh --check tells you)."
+
+# The file this writes is tracked, because a fresh clone needs *something*
+# there — Docker would otherwise create a directory at that mount path and
+# GlitchTip wouldn't start. That makes it easy to commit a deployment's own
+# address by accident, which is worth avoiding when the repository is
+# public.
+case "$SENTINEL_URL" in
+  *localhost*|*127.0.0.1*) ;;
+  *)
+    echo
+    echo "Note: glitchtip/index.html now contains ${SENTINEL_URL} and is a tracked file."
+    echo "      Don't commit it from a deployment — that publishes this address."
+    echo "      Undo the local edit with: git checkout -- glitchtip/index.html"
+    ;;
+esac
