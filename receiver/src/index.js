@@ -98,16 +98,31 @@ app.get("/sentinel", (req, res, next) => {
 app.use("/sentinel", express.static(PUBLIC_DIR, staticOptions));
 app.use(express.static(PUBLIC_DIR, staticOptions));
 
+/**
+ * The viewer's own API lives under /sentinel/api, out of GlitchTip's way.
+ *
+ * Sharing an origin means sharing a URL space, and /api/settings/ is
+ * GlitchTip's too — the first call its frontend makes. Anything only this
+ * viewer calls therefore moved; /api/reports stayed, because every app's SDK
+ * is already configured to post there and that contract isn't ours to break.
+ */
+const VIEWER_API = "/sentinel/api";
+
 // Sign-in lives outside the guard — it's how you get past it.
+app.use(VIEWER_API, authRouter);
 app.use("/api", authRouter);
 
 // Asking for access is the one thing someone not yet let in may do, so it
 // sits behind a weaker guard than everything else — and on its own prefix,
 // because a guard mounted at /api runs for every /api request, refusing the
 // bearer-token calls that post reports.
+app.use(`${VIEWER_API}/access`, requireSignedIn, accessRouter);
 app.use("/api/access", requireSignedIn, accessRouter);
 
-app.use("/api", requireStaffToken, settingsRouter);
+app.use(VIEWER_API, requireStaffToken, settingsRouter);
+app.use(VIEWER_API, requireStaffToken, reportRouter);
+
+// The path apps' SDKs post to, and the embedded viewer reads from.
 app.use("/api", requireStaffToken, reportRouter);
 
 await initSettings();

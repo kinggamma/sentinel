@@ -18,6 +18,8 @@
  * embedded gets a fresh token from its host on every load.
  */
 
+import { initIssues, showIssues } from "./issues.js";
+
 /** Left over from when the viewer kept a bearer token here. Clear it out. */
 try {
   localStorage.removeItem("incident-viewer-token");
@@ -183,7 +185,7 @@ function showGate(message) {
 async function describeSignIn() {
   let config = {};
   try {
-    const res = await fetch("/api/auth/config", { credentials: "same-origin" });
+    const res = await fetch("/sentinel/api/auth/config", { credentials: "same-origin" });
     if (res.ok) config = await res.json();
   } catch {
     // Receiver unreachable — the sign-in attempt itself will say so.
@@ -234,7 +236,7 @@ el("gate-form").addEventListener("submit", async (event) => {
   const button = el("gate-form").querySelector("button[type=submit]");
   button.disabled = true;
   try {
-    const res = await fetch("/api/auth/login", {
+    const res = await fetch("/sentinel/api/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
       credentials: "same-origin",
@@ -266,7 +268,7 @@ el("gate-form").addEventListener("submit", async (event) => {
  * way back in, which is what you'd want it to be.
  */
 el("forget").addEventListener("click", async () => {
-  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+  await fetch("/sentinel/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
   projects = [];
   reports = [];
   selectedId = null;
@@ -300,7 +302,7 @@ function requestTokenFromHost() {
 // ------------------------------------------------------------------ data
 
 async function loadData() {
-  const [projectsRes, reportsRes] = await Promise.all([api("/api/projects"), api("/api/reports")]);
+  const [projectsRes, reportsRes] = await Promise.all([api("/sentinel/api/projects"), api("/sentinel/api/reports")]);
 
   if (projectsRes.status === 401 || reportsRes.status === 401) {
     showGate(
@@ -607,7 +609,7 @@ async function selectReport(id) {
   releaseObjectUrls();
   detail.innerHTML = "<p class='empty'>Loading…</p>";
 
-  const res = await api(`/api/reports/${encodeURIComponent(id)}`);
+  const res = await api(`/sentinel/api/reports/${encodeURIComponent(id)}`);
   if (res.status === 401) return showGate("Your session has expired.");
   if (!res.ok) {
     detail.innerHTML = `<p class="error">Could not load report (${res.status}).</p>`;
@@ -703,7 +705,7 @@ async function renderReplay(report) {
   detail.appendChild(mount);
 
   try {
-    const res = await api(`/api/reports/${encodeURIComponent(report.id)}/replay`);
+    const res = await api(`/sentinel/api/reports/${encodeURIComponent(report.id)}/replay`);
     if (!res.ok) throw new Error(`replay unavailable (${res.status})`);
     const events = await res.json();
     if (events.length < 2) throw new Error("replay too short to play");
@@ -752,7 +754,7 @@ function renderDangerZone(report) {
     }
 
     button.disabled = true;
-    const res = await api(`/api/reports/${encodeURIComponent(report.id)}`, { method: "DELETE" });
+    const res = await api(`/sentinel/api/reports/${encodeURIComponent(report.id)}`, { method: "DELETE" });
     if (!res.ok && res.status !== 204) {
       button.disabled = false;
       button.textContent = `Delete failed (${res.status})`;
@@ -820,7 +822,7 @@ function renderScreenshots(report) {
     button.addEventListener("click", () => openLightbox(index));
     wrap.appendChild(button);
 
-    api(`/api/reports/${encodeURIComponent(report.id)}/screenshots/${encodeURIComponent(filename)}`)
+    api(`/sentinel/api/reports/${encodeURIComponent(report.id)}/screenshots/${encodeURIComponent(filename)}`)
       .then((res) => (res.ok ? res.blob() : Promise.reject(new Error(String(res.status)))))
       .then((blob) => {
         const url = URL.createObjectURL(blob);
@@ -887,7 +889,7 @@ async function showWaiting(identity) {
 }
 
 async function paintWaiting() {
-  const res = await fetch("/api/access/me", { credentials: "same-origin" });
+  const res = await fetch("/sentinel/api/access/me", { credentials: "same-origin" });
   if (!res.ok) return;
   const body = await res.json();
 
@@ -931,7 +933,7 @@ async function paintWaiting() {
 el("waiting-request").addEventListener("click", async () => {
   const err = el("waiting-error");
   err.hidden = true;
-  const res = await fetch("/api/access/request", {
+  const res = await fetch("/sentinel/api/access/request", {
     method: "POST",
     headers: { "content-type": "application/json" },
     credentials: "same-origin",
@@ -947,7 +949,7 @@ el("waiting-request").addEventListener("click", async () => {
 });
 
 el("waiting-signout").addEventListener("click", async () => {
-  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+  await fetch("/sentinel/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
   waiting.hidden = true;
   showGate();
 });
@@ -1026,7 +1028,7 @@ function renderRequests(requests, organisations) {
 async function loadRequests() {
   const err = el("requests-error");
   err.hidden = true;
-  const res = await api("/api/access/requests");
+  const res = await api("/sentinel/api/access/requests");
   if (!res.ok) {
     err.hidden = false;
     err.textContent = `Could not load requests (${res.status}).`;
@@ -1039,7 +1041,7 @@ async function loadRequests() {
 async function decideRequest(id, action, organisation) {
   const err = el("requests-error");
   err.hidden = true;
-  const res = await api(`/api/access/requests/${encodeURIComponent(id)}/${action}`, {
+  const res = await api(`/sentinel/api/access/requests/${encodeURIComponent(id)}/${action}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ organisation }),
@@ -1067,7 +1069,7 @@ requestsPanel.addEventListener("click", (event) => {
 /** Only worth offering when there's something to decide. */
 async function refreshRequestCount() {
   if (embedded) return;
-  const res = await api("/api/access/requests");
+  const res = await api("/sentinel/api/access/requests");
   if (!res.ok) return;
   const body = await res.json().catch(() => ({}));
   const pending = (body.requests || []).filter((r) => r.status === "pending").length;
@@ -1075,6 +1077,41 @@ async function refreshRequestCount() {
   button.hidden = pending === 0;
   button.textContent = pending === 1 ? "1 request" : `${pending} requests`;
 }
+
+
+// ------------------------------------------------------------- sections
+
+/**
+ * Issues and Reports are two views of the same incident, so they're tabs
+ * rather than two applications. Issues reads GlitchTip's API directly;
+ * Reports is this receiver's own data.
+ */
+let section = "reports";
+
+function showSection(next) {
+  section = next;
+  const onIssues = next === "issues";
+
+  el("tab-issues").classList.toggle("selected", onIssues);
+  el("tab-reports").classList.toggle("selected", !onIssues);
+  el("issues-view").hidden = !onIssues;
+
+  // The reports side owns three of its own elements; hide the lot together.
+  if (onIssues) {
+    projectsView.hidden = true;
+    el("reports-view").hidden = true;
+    el("search").hidden = true;
+    el("source-filter").hidden = true;
+    el("crumb").hidden = true;
+    void showIssues();
+  } else {
+    paintChrome();
+    render();
+  }
+}
+
+el("tab-issues").addEventListener("click", () => showSection("issues"));
+el("tab-reports").addEventListener("click", () => showSection("reports"));
 
 // ---------------------------------------------------------- settings
 
@@ -1131,7 +1168,7 @@ function settingsError(message) {
 
 async function loadOrigins() {
   settingsError("");
-  const res = await api("/api/settings/origins");
+  const res = await api("/sentinel/api/settings/origins");
   if (!res.ok) return settingsError(`Could not load settings (${res.status}).`);
   const body = await res.json();
   fixedOrigins = body.fixed || [];
@@ -1140,7 +1177,7 @@ async function loadOrigins() {
 
 async function saveOrigins(origins) {
   settingsError("");
-  const res = await api("/api/settings/origins", {
+  const res = await api("/sentinel/api/settings/origins", {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ origins }),
@@ -1175,7 +1212,7 @@ function openAppOrigins(appName, origins) {
 
 async function saveAppOrigins(origins) {
   settingsError("");
-  const res = await api(`/api/settings/apps/${encodeURIComponent(editingApp)}`, {
+  const res = await api(`/sentinel/api/settings/apps/${encodeURIComponent(editingApp)}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ origins }),
@@ -1195,7 +1232,7 @@ async function saveAppOrigins(origins) {
  * the receiver won't return it, so there's nothing here to leak.
  */
 async function loadIntegration() {
-  const res = await api("/api/settings/integration");
+  const res = await api("/sentinel/api/settings/integration");
   if (!res.ok) return;
   const status = await res.json();
 
@@ -1227,7 +1264,7 @@ el("integration-form").addEventListener("submit", async (event) => {
   // doesn't wipe a token that's already set.
   if (token) payload.serviceToken = token;
 
-  const res = await api("/api/settings/integration", {
+  const res = await api("/sentinel/api/settings/integration", {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -1253,7 +1290,7 @@ el("add-app-form").addEventListener("submit", async (event) => {
 
   // Created with no addresses: an app that reports from its own server
   // never needs one, and the card is where you'd add them if it does.
-  const res = await api(`/api/settings/apps/${encodeURIComponent(name)}`, {
+  const res = await api(`/sentinel/api/settings/apps/${encodeURIComponent(name)}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ origins: [] }),
@@ -1378,6 +1415,20 @@ async function enter() {
   app.hidden = false;
   if (!(await loadData())) return;
   void refreshRequestCount();
+
+  // Issues live under an organisation, so they can't be set up until we know
+  // which one this person belongs to.
+  const me = await fetch("/sentinel/api/auth/me", { credentials: "same-origin" })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+  const organisation = (me?.orgs || [])[0];
+  if (organisation) {
+    initIssues({ organisation });
+    el("tab-issues").hidden = false;
+  } else {
+    // Nothing to browse errors under — the staff token, typically.
+    el("tab-issues").hidden = true;
+  }
   // Arrived from GlitchTip's "Requests" item: open the queue rather than
   // making them find it.
   if (params.get("view") === "requests") {
@@ -1419,7 +1470,7 @@ async function boot() {
   // Standalone: our own session cookie may already be good.
   const config = await describeSignIn();
   try {
-    const res = await fetch("/api/auth/me", { credentials: "same-origin" });
+    const res = await fetch("/sentinel/api/auth/me", { credentials: "same-origin" });
     if (res.ok) {
       const me = await res.json().catch(() => ({}));
       if (me.pending) return showWaiting(me);
@@ -1433,7 +1484,7 @@ async function boot() {
   // in this browser — in which case there's nothing for them to type.
   if (config.glitchtipEnabled) {
     try {
-      const res = await fetch("/api/auth/sso", { method: "POST", credentials: "same-origin" });
+      const res = await fetch("/sentinel/api/auth/sso", { method: "POST", credentials: "same-origin" });
       if (res.ok) {
         const body = await res.json().catch(() => ({}));
         if (body.pending) return showWaiting(body);

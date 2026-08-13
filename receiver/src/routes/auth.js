@@ -40,6 +40,8 @@ authRouter.get("/auth/me", (req, res) => {
     name: session.name,
     source: session.source,
     pending: Boolean(session.pending),
+    // Which organisation to browse issues under.
+    orgs: session.orgs || [],
   });
 });
 

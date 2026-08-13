@@ -738,3 +738,206 @@ button.danger:hover {
   font-size: 12.5px;
   margin: 0 0 10px;
 }
+
+/* --- sections ----------------------------------------------------- */
+
+.sections {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 14px;
+}
+
+.tab:hover {
+  filter: none;
+  color: var(--text);
+}
+
+.tab.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+/* --- issues ------------------------------------------------------- */
+
+.issues-view {
+  padding: 20px;
+}
+
+.issues-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.issues-toolbar #issue-search {
+  flex: 1;
+  min-width: 240px;
+}
+
+/* Two buttons acting as one control, the way a range picker reads. */
+.issue-range {
+  display: flex;
+}
+
+.issue-range button {
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  padding: 8px 14px;
+}
+
+.issue-range button:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.issue-range button:last-child {
+  border-radius: 0 8px 8px 0;
+  border-left: none;
+}
+
+.issue-range button.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.issue-bulk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+}
+
+.issue-bulk button {
+  font-size: 13px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.issue-bulk button:not(:disabled) {
+  color: var(--text);
+}
+
+.issue-bulk button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bulk-spacer {
+  flex: 1;
+}
+
+.issues-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0 0 10px 10px;
+  overflow: hidden;
+}
+
+.issues-table th {
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.issues-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.issues-table tr:last-child td {
+  border-bottom: none;
+}
+
+.issues-table .pick,
+.issues-table td:first-child {
+  width: 36px;
+}
+
+.issues-table .trend-col,
+.issues-table .count-col {
+  width: 120px;
+}
+
+.issues-table .count-col,
+.issue-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Unresolved issues carry a marker, the way the list people know does. */
+.issues-table tbody tr {
+  border-left: 3px solid var(--accent);
+}
+
+.issues-table tbody tr.resolved {
+  border-left-color: transparent;
+  opacity: 0.55;
+}
+
+.issue-title {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.issue-title:hover {
+  filter: none;
+  color: var(--accent);
+}
+
+.issue-sub {
+  font-size: 12.5px;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 24px;
+}
+
+.trend span {
+  flex: 1;
+  background: var(--accent);
+  border-radius: 1px;
+  min-width: 2px;
+}
+
+.trend span.empty {
+  background: var(--border);
+}

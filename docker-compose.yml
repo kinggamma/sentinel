@@ -26,6 +26,10 @@ x-glitchtip-env: &glitchtip-env
   # belongs to no organisation, which means GlitchTip shows them nothing
   # and Sentinel refuses them outright — membership is what grants access,
   # not having an account.
+  # The name GlitchTip calls itself where it can be told to — its admin
+  # header, and the settings its own frontend reads. Sentinel is the product
+  # people are using; GlitchTip is the engine underneath.
+  GLITCHTIP_INSTANCE_NAME: "${INSTANCE_NAME:-Sentinel}"
   ENABLE_OPEN_USER_REGISTRATION: "${ENABLE_OPEN_USER_REGISTRATION:-false}"
   ENABLE_USER_REGISTRATION: "${ENABLE_USER_REGISTRATION:-true}"
   REDIS_URL: redis://redis:6379/0
