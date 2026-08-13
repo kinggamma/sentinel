@@ -468,6 +468,81 @@ await test("a cleanup that throws does not strand the user", async () => {
   }
 });
 
+// ------------------------------------------------------- layered routes
+
+await test("a layered route tears down every view it mounted", async () => {
+  const { router, outlet } = await harness("/sentinel/requests");
+  const order = [];
+  const background = ({ outlet: node }) => {
+    paint(node, "landing");
+    return () => order.push("clean landing");
+  };
+  const dialog = () => {
+    order.push("mount dialog");
+    return () => order.push("clean dialog");
+  };
+  router.route("/requests", router.layer(background, dialog));
+  router.route("/elsewhere", ({ outlet: node }) => paint(node, "elsewhere"));
+
+  await router.start({ outlet });
+  await router.go("/elsewhere");
+  // Reverse order: the thing on top comes off first.
+  same(order, ["mount dialog", "clean dialog", "clean landing"], "teardown order");
+  router.stop();
+});
+
+await test("a layer whose later view throws cleans up the earlier one", async () => {
+  const { router, outlet } = await harness("/sentinel/requests");
+  const log = quiet();
+  try {
+    const cleaned = [];
+    const background = ({ outlet: node }) => {
+      paint(node, "landing");
+      return () => cleaned.push("landing");
+    };
+    const dialog = () => {
+      throw new Error("dialog could not mount");
+    };
+    router.route("/requests", router.layer(background, dialog));
+    await router.start({ outlet });
+
+    // The router never receives a cleanup for a render that threw, so if the
+    // layer doesn't do it here the landing's timers outlive it forever.
+    same(cleaned, ["landing"], "the mounted view was torn down");
+    assert(shown(outlet).includes("dialog could not mount"), "and the error still surfaced");
+  } finally {
+    log.restore();
+    router.stop();
+  }
+});
+
+await test("a layered route superseded mid-mount cleans up what it mounted", async () => {
+  const { router, outlet } = await harness("/sentinel/requests");
+  const cleaned = [];
+  const background = ({ outlet: node }) => {
+    paint(node, "landing");
+    return () => cleaned.push("landing");
+  };
+  const slowDialog = async () => {
+    await delay(30);
+    return () => cleaned.push("dialog");
+  };
+  router.route("/requests", router.layer(background, slowDialog));
+  router.route("/elsewhere", ({ outlet: node }) => paint(node, "elsewhere"));
+
+  const first = router.start({ outlet });
+  // Navigate away while the dialog half is still mounting.
+  await delay(5);
+  const second = router.go("/elsewhere");
+  await Promise.all([first, second]);
+
+  same(shown(outlet), "elsewhere", "the later navigation is the one showing");
+  // Both halves of the superseded render are accounted for: the router
+  // discards the layer's cleanup as one, and the layer runs both.
+  same(cleaned.sort(), ["dialog", "landing"], "both layers were torn down");
+  router.stop();
+});
+
 await test("stop() tears down the mounted view and stops listening", async () => {
   const { router, outlet, click, location } = await harness("/sentinel/issues");
   let cleaned = 0;
