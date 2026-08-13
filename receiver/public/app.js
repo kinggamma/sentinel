@@ -708,7 +708,7 @@ async function renderReplay(report) {
     const events = await res.json();
     if (events.length < 2) throw new Error("replay too short to play");
 
-    const { default: Player } = await import("/vendor/rrweb-player.js");
+    const { default: Player } = await import("./vendor/rrweb-player.js");
     // eslint-disable-next-line no-new
     new Player({
       target: mount,

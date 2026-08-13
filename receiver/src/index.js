@@ -67,22 +67,36 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // Viewer UI. Static assets only — every byte of report data still comes
 // from the token-gated /api routes below.
-app.use(
-  express.static(PUBLIC_DIR, {
+/**
+ * Served at two paths on purpose. Behind the shared origin the viewer lives
+ * under /sentinel, alongside GlitchTip; on its own port it's still at the
+ * root. Asset references are relative so the same files work from either.
+ */
+const staticOptions = {
     setHeaders(res, filePath) {
       // The viewer is a handful of small files that change when the
       // pipeline is upgraded. Without this, browsers serve a stale copy
       // after a rebuild and staff see an old UI against new data.
       // "no-cache" still allows 304s — it just forces revalidation.
-      res.setHeader(
-        "Cache-Control",
-        filePath.includes(`${path.sep}vendor${path.sep}`)
-          ? "public, max-age=604800, immutable" // bundled player, changes with the image
-          : "no-cache"
-      );
-    },
-  })
-);
+    res.setHeader(
+      "Cache-Control",
+      filePath.includes(`${path.sep}vendor${path.sep}`)
+        ? "public, max-age=604800, immutable" // bundled player, changes with the image
+        : "no-cache"
+    );
+  },
+};
+
+// The trailing slash isn't cosmetic: asset paths are relative, so at
+// /sentinel they'd resolve against the root and land on GlitchTip. Express
+// treats /sentinel and /sentinel/ as one route, so the check is on the URL
+// as it actually arrived — otherwise this redirects to itself.
+app.get("/sentinel", (req, res, next) => {
+  if (req.originalUrl.split("?")[0].endsWith("/sentinel")) return res.redirect("/sentinel/");
+  return next();
+});
+app.use("/sentinel", express.static(PUBLIC_DIR, staticOptions));
+app.use(express.static(PUBLIC_DIR, staticOptions));
 
 // Sign-in lives outside the guard — it's how you get past it.
 app.use("/api", authRouter);
