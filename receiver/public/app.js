@@ -204,8 +204,14 @@ function paintSignIn(config) {
     el("gate-help").textContent =
       "Sign in to GlitchTip in this browser and reload, or paste a GlitchTip auth token.";
     hint.hidden = false;
+    // Only claim a specific organisation when one is actually required —
+    // normally any organisation you belong to will do.
+    const orgNote = el("gate-org-note");
     if (config.glitchtipOrg) {
       el("gate-org").textContent = config.glitchtipOrg;
+      orgNote.hidden = false;
+    } else {
+      orgNote.hidden = true;
     }
     if (config.glitchtipUrl) {
       link.href = `${config.glitchtipUrl.replace(/\/+$/, "")}/profile/auth-tokens`;

@@ -28,6 +28,54 @@ try {
 let learned = {};
 let loaded = false;
 
+/**
+ * GlitchTip project slug -> organisation slug.
+ *
+ * Links into GlitchTip are per-organisation (`/<org>/issues`), so building
+ * one needs to know which organisation a project belongs to. Nothing here is
+ * configured: every sign-in already lists the projects that person can see,
+ * each carrying its organisation, so the answer arrives as a side effect of
+ * people using the viewer. Kept in its own file so an older projects.json
+ * needs no migration.
+ */
+const ORGS_PATH = path.join(DATA_DIR, "project-orgs.json");
+let projectOrgs = {};
+let orgsLoaded = false;
+
+async function loadOrgs() {
+  if (orgsLoaded) return;
+  try {
+    projectOrgs = JSON.parse(await readFile(ORGS_PATH, "utf8"));
+  } catch {
+    projectOrgs = {};
+  }
+  orgsLoaded = true;
+}
+
+/** Record project->organisation pairs seen during a sign-in. */
+export async function rememberProjectOrgs(pairs) {
+  await loadOrgs();
+  let changed = false;
+  for (const { slug, org } of pairs) {
+    if (!slug || !org || projectOrgs[slug] === org) continue;
+    projectOrgs[slug] = org;
+    changed = true;
+  }
+  if (!changed) return;
+
+  await mkdir(DATA_DIR, { recursive: true });
+  const tmp = `${ORGS_PATH}.tmp`;
+  await writeFile(tmp, JSON.stringify(projectOrgs, null, 2));
+  await rename(tmp, ORGS_PATH);
+}
+
+/** Which organisation a project belongs to, if anyone has told us. */
+export async function orgForProject(slug) {
+  if (!slug) return null;
+  await loadOrgs();
+  return projectOrgs[slug] || null;
+}
+
 async function load() {
   if (loaded) return;
   try {

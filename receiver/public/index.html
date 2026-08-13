@@ -31,9 +31,9 @@
         <p id="gate-error" class="error" hidden></p>
         <p class="gate-hint muted" id="gate-hint" hidden>
           Create one in GlitchTip under <strong>Profile → Auth Tokens</strong>, with the
-          <strong>org:read</strong> scope ticked — that's what lets us check your membership.
-          Your account must belong to the <strong id="gate-org">organisation</strong>
-          organisation.
+          <strong>org:read</strong> and <strong>project:read</strong> scopes ticked — the first proves your membership, the second decides which apps you see.
+          <span id="gate-org-note" hidden>Your account must belong to the
+          <strong id="gate-org">organisation</strong> organisation.</span>
           <a id="gate-glitchtip-link" href="#" target="_blank" rel="noreferrer noopener" hidden>
             Create a token ↗
           </a>

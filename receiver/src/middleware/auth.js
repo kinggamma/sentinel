@@ -46,12 +46,15 @@ export function fingerprint(sessionId) {
   return crypto.createHash("sha256").update(String(sessionId)).digest("base64url").slice(0, 22);
 }
 
-export function issueSession(res, { email, name, source, boundTo = null }) {
+export function issueSession(res, { email, name, source, boundTo = null, projects = null }) {
   const payload = {
     email: email || null,
     name: name || null,
     source, // "glitchtip" | "glitchtip-sso" | "staff-token"
     boundTo, // fingerprint of the GlitchTip session, for SSO sessions
+    // GlitchTip project slugs this person can see. null means unrestricted,
+    // which is the staff token and nothing else.
+    projects,
     exp: Date.now() + SESSION_HOURS * 60 * 60 * 1000,
   };
   res.cookie?.(SESSION_COOKIE, sign(payload), {

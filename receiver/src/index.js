@@ -68,13 +68,15 @@ app.use("/api", requireStaffToken, reportRouter);
 
 app.listen(PORT, () => {
   console.log(`Sentinel receiver listening on :${PORT}`);
-  if (glitchtipConfigured) {
+  if (glitchtipConfigured && glitchtipInfo().org) {
+    console.log(`sign-in: GlitchTip accounts in the "${glitchtipInfo().org}" organisation`);
+  } else if (glitchtipConfigured) {
     console.log(
-      `sign-in: GlitchTip accounts in the "${glitchtipInfo().org}" org, or the shared staff token`
+      "sign-in: GlitchTip accounts — the organisation will be taken from the first person to sign in"
     );
   } else {
     console.warn(
-      "GLITCHTIP_URL / GLITCHTIP_ORG are unset — sign-in falls back to the shared staff token only."
+      "GLITCHTIP_URL is unset — sign-in falls back to the shared staff token only."
     );
   }
   startRetentionSweeps();

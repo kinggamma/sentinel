@@ -304,8 +304,13 @@ Admin role in full.
 
 ## Who can read reports
 
-There is no user database to administer. GlitchTip holds the accounts, and
-Sentinel asks it who you are. **Most of the time there is nothing to sign
+There is no user database to administer, and no organisation to name in
+configuration. GlitchTip holds the accounts, and Sentinel asks it who you
+are — including **which projects you can see**. You get the apps belonging
+to your organisations and nobody else's, so one pipeline serves an
+organisation per product or client without being told about any of them.
+Someone in two organisations sees both; removing them from a team in
+GlitchTip removes their access here on the next request. **Most of the time there is nothing to sign
 in to:** if you're already signed in to GlitchTip in that browser, opening
 Sentinel signs you in silently — GlitchTip's session cookie is host-only,
 and cookies ignore ports, so it reaches the receiver on `:4000` too.
@@ -331,14 +336,14 @@ that isn't signed in there. Do this once:
 
 1. In GlitchTip, click your avatar → **Profile**.
 2. Go to **Auth Tokens** → **Create New Token**.
-3. Tick **`org:read`** and create it. GlitchTip's `/api/0/organizations/`
-   requires that scope, and a token without it is refused no matter who
-   owns it — this is the one step worth getting right.
+3. Tick **`org:read`** and **`project:read`**, then create it. The first
+   proves your membership — a token without it is refused outright. The
+   second is how Sentinel knows which apps are yours; without it you get in
+   but see every app rather than only your organisations'.
 4. Copy the token and **save it somewhere you'll find again** (a password
    manager). GlitchTip shows it once.
 
-From then on, open Sentinel, paste the token, and you're in — the account
-behind it still has to belong to `GLITCHTIP_ORG`. The session lasts
+From then on, open Sentinel, paste the token, and you're in. The session lasts
 `SESSION_HOURS`, so it's not something you paste daily.
 
 Keep GlitchTip's `ENABLE_OPEN_USER_REGISTRATION=false` (the default here)
