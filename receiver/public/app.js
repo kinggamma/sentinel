@@ -454,6 +454,20 @@ function renderProjects() {
     }
     if (dsnButton) actions.appendChild(dsnButton);
 
+    // Where this app runs. Kept on the card because that's where you are
+    // when you notice an app has moved, or that a new one can't report yet.
+    const where = document.createElement("button");
+    where.type = "button";
+    where.className = "ghost";
+    where.textContent = project.origins?.length
+      ? `Runs at ${project.origins.length === 1 ? project.origins[0] : `${project.origins.length} addresses`}`
+      : "Set where it runs";
+    where.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openAppOrigins(project.appName, project.origins || []);
+    });
+    actions.appendChild(where);
+
     card.append(heading, stats, foot, actions);
     card.addEventListener("click", (event) => {
       if (event.target.closest("a")) return;
@@ -852,6 +866,145 @@ function renderBreadcrumbs(report) {
   }
   detail.appendChild(box);
 }
+
+// ---------------------------------------------------------- settings
+
+const settings = el("settings");
+/** Origins fixed in the environment: shown, but not removable from here. */
+let fixedOrigins = [];
+
+function renderOrigins(origins) {
+  const list = el("origin-list");
+  list.innerHTML = "";
+
+  if (!origins.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "No app may report yet.";
+    list.appendChild(li);
+    return;
+  }
+
+  for (const origin of origins) {
+    const li = document.createElement("li");
+    const label = document.createElement("span");
+    label.className = "mono";
+    label.textContent = origin;
+    li.appendChild(label);
+
+    if (fixedOrigins.includes(origin)) {
+      // Set in the deployment's own configuration, so removing it here would
+      // last until the next restart and no longer — say so instead.
+      const note = document.createElement("span");
+      note.className = "muted";
+      note.textContent = "from .env";
+      li.appendChild(note);
+    } else {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "ghost danger";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", () => {
+        const next = origins.filter((o) => o !== origin && !fixedOrigins.includes(o));
+        void (editingApp ? saveAppOrigins(next) : saveOrigins(next));
+      });
+      li.appendChild(remove);
+    }
+    list.appendChild(li);
+  }
+}
+
+function settingsError(message) {
+  const box = el("settings-error");
+  box.hidden = !message;
+  box.textContent = message || "";
+}
+
+async function loadOrigins() {
+  settingsError("");
+  const res = await api("/api/settings/origins");
+  if (!res.ok) return settingsError(`Could not load settings (${res.status}).`);
+  const body = await res.json();
+  fixedOrigins = body.fixed || [];
+  renderOrigins(body.origins || []);
+}
+
+async function saveOrigins(origins) {
+  settingsError("");
+  const res = await api("/api/settings/origins", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ origins }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return settingsError(body.error || `Could not save (${res.status}).`);
+  fixedOrigins = body.fixed || [];
+  renderOrigins(body.origins || []);
+}
+
+/**
+ * One app's addresses, opened from its card. Deliberately separate from the
+ * global list: this answers "where does this app run", which is the question
+ * you have when an app moves or a new one won't report.
+ */
+let editingApp = null;
+
+function openAppOrigins(appName, origins) {
+  editingApp = appName;
+  settings.hidden = false;
+  el("settings-title").textContent = `Where ${appName} runs`;
+  el("settings-note").textContent =
+    "Its browser code may only post reports from these addresses. An app that reports " +
+    "from its own server doesn't need one.";
+  el("origin-form").hidden = false;
+  settingsError("");
+  fixedOrigins = [];
+  renderOrigins(origins);
+}
+
+async function saveAppOrigins(origins) {
+  settingsError("");
+  const res = await api(`/api/settings/apps/${encodeURIComponent(editingApp)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ origins }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return settingsError(body.error || `Could not save (${res.status}).`);
+
+  const app = (body.apps || []).find((a) => a.appName === editingApp);
+  renderOrigins(app?.origins || []);
+  // The card's label is now stale.
+  void refresh();
+}
+
+el("settings-open").addEventListener("click", async () => {
+  editingApp = null;
+  el("settings-title").textContent = "Apps allowed to report";
+  el("settings-note").textContent =
+    "An app's browser code can only send reports from an address listed here. " +
+    "Server-side reporting doesn't need an entry — only pages running in a browser do.";
+  el("origin-form").hidden = false;
+  settings.hidden = false;
+  await loadOrigins();
+});
+
+el("settings-close").addEventListener("click", () => (settings.hidden = true));
+settings.addEventListener("click", (event) => {
+  if (event.target === settings) settings.hidden = true;
+});
+
+el("origin-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = el("origin-input");
+  const value = input.value.trim();
+  if (!value) return;
+
+  const current = [...el("origin-list").querySelectorAll(".mono")].map((n) => n.textContent);
+  const next = [...current.filter((o) => !fixedOrigins.includes(o)), value];
+  await (editingApp ? saveAppOrigins(next) : saveOrigins(next));
+  if (el("settings-error").hidden) input.value = "";
+});
 
 // ---------------------------------------------------------- lightbox
 

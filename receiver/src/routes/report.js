@@ -17,6 +17,7 @@ import {
   all as allMappings,
   orgForProject,
 } from "../project-map.js";
+import { registeredApps, originsForApp } from "../settings.js";
 import path from "node:path";
 
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 8);
@@ -216,6 +217,21 @@ reportRouter.get("/projects", async (req, res) => {
     byApp.set(report.appName, entry);
   }
 
+  // An app registered but not yet reporting still gets a card: that's where
+  // its address is set, and it can't report from a browser until that's
+  // done. A card reading "no reports yet" is the point.
+  for (const { appName } of registeredApps()) {
+    if (byApp.has(appName)) continue;
+    byApp.set(appName, {
+      appName,
+      total: 0,
+      staffReports: 0,
+      autoErrors: 0,
+      withReplay: 0,
+      lastReportAt: null,
+    });
+  }
+
   const mappings = await allMappings();
   const projects = [];
   for (const entry of byApp.values()) {
@@ -234,6 +250,9 @@ reportRouter.get("/projects", async (req, res) => {
       // Present only for projects we created, which is exactly when
       // whoever is integrating the app still needs it.
       dsn: mapping.dsn || null,
+      // Where this app is allowed to report from, shown on its own card so
+      // the answer sits next to the app it belongs to.
+      origins: originsForApp(entry.appName),
     });
   }
   projects.sort((a, b) => String(b.lastReportAt).localeCompare(String(a.lastReportAt)));
