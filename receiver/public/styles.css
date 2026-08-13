@@ -215,6 +215,20 @@ button.linky:disabled {
   color: inherit;
 }
 
+/* The same control where it's a real link — "← All issues" is an address
+   now, not a mode change. Styled here rather than under the rules above,
+   which are all scoped to button.linky and quietly skipped an <a>. */
+a.linky {
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+a.linky:hover {
+  color: var(--accent);
+}
+
 .breadcrumb {
   color: var(--muted);
   font-weight: 400;
@@ -724,6 +738,9 @@ button.danger:hover {
   gap: 4px;
 }
 
+/* Links that read as tabs. They were <button>s, which inherited none of
+   this from the page — an anchor needs the underline taken off and the box
+   given back. */
 .tab {
   background: transparent;
   color: var(--muted);
@@ -731,6 +748,11 @@ button.danger:hover {
   border-radius: 8px;
   padding: 6px 14px;
   font-size: 14px;
+  font-family: inherit;
+  line-height: 1.4;
+  text-decoration: none;
+  display: inline-block;
+  cursor: pointer;
 }
 
 .tab:hover {
@@ -758,7 +780,7 @@ button.danger:hover {
   margin-bottom: 12px;
 }
 
-.issues-toolbar #issue-search {
+.issues-toolbar .issue-search {
   flex: 1;
   min-width: 240px;
 }
@@ -823,6 +845,22 @@ button.danger:hover {
   flex: 1;
 }
 
+/* The pager reads as the buttons it replaced. A page with nowhere to go has
+   no href at all, which is what tells a browser and a screen reader it isn't
+   clickable — so it can't be styled on :disabled the way a button is. */
+.issue-bulk .button-link {
+  font-size: 13px;
+  padding: 6px 10px;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.issue-bulk .button-link[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
 .issues-table {
   width: 100%;
   border-collapse: collapse;
@@ -879,6 +917,8 @@ button.danger:hover {
   opacity: 0.55;
 }
 
+/* An issue's own address, so this is a link. It reads as the title it always
+   was — an underline on every row turns the list into a wall of blue. */
 .issue-title {
   background: none;
   border: none;
@@ -889,6 +929,8 @@ button.danger:hover {
   text-align: left;
   cursor: pointer;
   overflow-wrap: anywhere;
+  text-decoration: none;
+  display: inline-block;
 }
 
 .issue-title:hover {
@@ -922,7 +964,7 @@ button.danger:hover {
 
 /* --- one issue ---------------------------------------------------- */
 
-#issue-detail {
+.issue-detail {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;

@@ -108,6 +108,11 @@ async function shellServed() {
     // Reports, the last screen to stop being a mode of "/" — one app's list,
     // and one report inside it. Both are two segments deep or more, which is
     // where the <base> assertion below earns its place.
+    // Issues, with its filters and page cursor in the query string — the
+    // deep one is what a reload of page two of a filtered list asks for.
+    "/sentinel/issues",
+    "/sentinel/issues?q=is%3Aresolved&sort=-count&cursor=abc",
+    "/sentinel/issues/123456",
     "/sentinel/reports/e-library-admin",
     "/sentinel/reports/e-library-admin/2f8a1c",
   ]) {
@@ -140,7 +145,6 @@ async function shellServed() {
   for (const asset of [
     "styles.css",
     "app.js",
-    "issues.js",
     "lib/api.js",
     "lib/dom.js",
     "lib/router.js",
@@ -149,6 +153,7 @@ async function shellServed() {
     "views/settings.js",
     "views/projects.js",
     "views/reports.js",
+    "views/issues.js",
   ]) {
     await check(`${asset} is served`, async () => {
       assertStatus(await get(`/sentinel/${asset}`), 200, asset);

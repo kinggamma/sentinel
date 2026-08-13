@@ -121,10 +121,13 @@
         </h1>
 
         <!-- The two halves of an incident: what broke, and what someone said
-             about it. One app, so they're tabs rather than two addresses. -->
+             about it. They look like tabs and are ordinary links — each half
+             is an address, so either can be bookmarked, opened in a new tab
+             and come back the same on reload. The hrefs are rewritten with
+             the mount at boot; these are the standalone spellings. -->
         <nav class="sections" aria-label="Sections">
-          <button id="tab-issues" type="button" class="tab">Issues</button>
-          <button id="tab-reports" type="button" class="tab selected">Reports</button>
+          <a id="tab-issues" href="/issues" class="tab">Issues</a>
+          <a id="tab-reports" href="/" class="tab">Reports</a>
         </nav>
         <!-- Reports' search and source filter used to live here, in the
              shell, shown and hidden by whichever screen was up. They belong
@@ -151,74 +154,6 @@
           <button id="forget" type="button" class="ghost" title="Sign out">Sign out</button>
         </div>
       </header>
-
-      <!-- Errors, read straight from GlitchTip's API with the session this
-           browser already holds. Laid out like the list people already know. -->
-      <main id="issues-view" class="issues-view" hidden aria-label="Issues">
-        <div class="issues-toolbar">
-          <select id="issue-env" aria-label="Environment">
-            <option value="">All environments</option>
-          </select>
-          <input
-            id="issue-search"
-            type="search"
-            value="is:unresolved"
-            aria-label="Search issues"
-            placeholder="is:unresolved"
-          />
-          <div class="issue-range" role="group" aria-label="Time range"></div>
-          <select id="issue-sort" aria-label="Sort by"></select>
-          <button id="issue-refresh" type="button" class="ghost">Refresh</button>
-        </div>
-
-        <div class="issue-bulk">
-          <input type="checkbox" id="issue-all" aria-label="Select all" />
-          <button type="button" data-status="resolved" disabled>Mark resolved</button>
-          <button type="button" data-status="unresolved" disabled>Mark unresolved</button>
-          <button type="button" data-status="ignored" disabled>Mark ignored</button>
-          <button type="button" id="issue-delete" class="ghost danger" disabled>Delete</button>
-          <span class="bulk-spacer"></span>
-          <button type="button" id="issue-prev" class="ghost" aria-label="Previous page">‹</button>
-          <button type="button" id="issue-next" class="ghost" aria-label="Next page">›</button>
-        </div>
-
-        <!-- One issue: what threw, where, and everything the last event
-             carried. Replaces the list rather than opening elsewhere. -->
-        <section id="issue-detail" hidden>
-          <button id="issue-back" type="button" class="linky">← All issues</button>
-
-          <header class="detail-head">
-            <h2 id="detail-title"></h2>
-            <p id="detail-culprit" class="muted"></p>
-            <div class="detail-meta">
-              <span id="detail-project" class="tag"></span>
-              <span id="detail-status" class="tag"></span>
-              <span id="detail-seen" class="muted"></span>
-            </div>
-            <div class="detail-actions">
-              <button type="button" id="detail-resolve">Mark resolved</button>
-              <button type="button" id="detail-ignore" class="ghost">Mark ignored</button>
-              <a id="detail-glitchtip" class="button-link" target="_blank" rel="noreferrer noopener">
-                Open in GlitchTip ↗
-              </a>
-            </div>
-          </header>
-
-          <div id="detail-body"></div>
-        </section>
-
-        <table class="issues-table">
-          <thead>
-            <tr>
-              <th class="pick"></th>
-              <th>Issue</th>
-              <th class="trend-col">Trend</th>
-              <th class="count-col">Events</th>
-            </tr>
-          </thead>
-          <tbody id="issue-rows"></tbody>
-        </table>
-      </main>
 
       <!-- Where every routed screen renders: the landing grid of app cards
            (views/projects.js), one app's reports and the report itself

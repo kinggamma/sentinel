@@ -18,7 +18,6 @@
  * embedded gets a fresh token from its host on every load.
  */
 
-import { initIssues, showIssues } from "./issues.js";
 import { useBearerToken, handleUnauthorized } from "./lib/api.js";
 import { h, fill } from "./lib/dom.js";
 import {
@@ -34,6 +33,7 @@ import { requestsView } from "./views/requests.js";
 import { settingsView } from "./views/settings.js";
 import { projectsView } from "./views/projects.js";
 import { reportsView } from "./views/reports.js";
+import { issuesListView, issueDetailView } from "./views/issues.js";
 
 /** Left over from when the viewer kept a bearer token here. Clear it out. */
 try {
@@ -123,6 +123,18 @@ const reportsRoute = (ctx) => {
     lockedTo: scopedApp,
   });
 };
+/**
+ * Errors, from GlitchTip, under whichever organisation this account belongs
+ * to. The org is discovered at sign-in (enter(), below) rather than known at
+ * module load, so the routes read it when they run.
+ */
+const issuesRoute = (view) => (ctx) => {
+  paintChrome();
+  return view(ctx, { org: organisation });
+};
+route("/issues", issuesRoute(issuesListView));
+route("/issues/:id", issuesRoute(issueDetailView));
+
 route("/reports/:app", reportsRoute);
 route("/reports/:app/:id", reportsRoute);
 
@@ -201,6 +213,13 @@ const viewOutlet = el("view");
 
 /** Only set when embedded: the shared staff token, from the host page. */
 let bearerToken = "";
+
+/**
+ * The GlitchTip organisation this account browses errors under. Discovered at
+ * sign-in, read by the issue routes when they run — they're registered at
+ * module load, long before anyone has signed in.
+ */
+let organisation = null;
 
 let projects = [];
 let reports = [];
@@ -515,11 +534,13 @@ function routedApp() {
 /** The topbar, for whatever the route is showing. */
 function paintChrome() {
   const appName = routedApp();
-  const onIssues = section === "issues";
+  const onIssues = currentPath().startsWith("/issues");
 
-  // The routed screen and the issues list are the only two things that can
-  // be showing, and the tab decides which.
-  viewOutlet.hidden = onIssues;
+  // Which half of the app is showing is a fact about the path now, not a
+  // variable a click handler had to remember to set. There is nothing left
+  // to hide either: both halves render into the same outlet.
+  el("tab-issues").classList.toggle("selected", onIssues);
+  el("tab-reports").classList.toggle("selected", !onIssues);
 
   const crumb = el("crumb");
   crumb.hidden = onIssues || !appName;
@@ -653,31 +674,11 @@ async function refreshRequestCount() {
 
 
 // ------------------------------------------------------------- sections
-
-/**
- * Issues and Reports are two views of the same incident, so they're tabs
- * rather than two applications. Issues reads GlitchTip's API directly;
- * Reports is this receiver's own data.
- */
-let section = "reports";
-
-function showSection(next) {
-  section = next;
-  const onIssues = next === "issues";
-
-  el("tab-issues").classList.toggle("selected", onIssues);
-  el("tab-reports").classList.toggle("selected", !onIssues);
-  el("issues-view").hidden = !onIssues;
-
-  // Coming back from Issues doesn't re-render: the routed screen is still
-  // mounted underneath, just hidden, and asking the router to run it again
-  // would refetch on every tab switch for data that hasn't changed.
-  paintChrome();
-  if (onIssues) void showIssues();
-}
-
-el("tab-issues").addEventListener("click", () => showSection("issues"));
-el("tab-reports").addEventListener("click", () => showSection("reports"));
+//
+// Issues and Reports were tabs toggling two <main> elements by hand, with a
+// `section` variable deciding which. They're two routes now — the tabs are
+// ordinary links in index.html, and paintChrome() reads which one is current
+// off the path. showSection() is gone rather than moved.
 
 // ---------------------------------------------------------- settings
 //
@@ -733,14 +734,9 @@ async function enter() {
   const me = await fetch("/sentinel/api/auth/me", { credentials: "same-origin" })
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
-  const organisation = (me?.orgs || [])[0];
-  if (organisation) {
-    initIssues({ organisation });
-    el("tab-issues").hidden = false;
-  } else {
-    // Nothing to browse errors under — the staff token, typically.
-    el("tab-issues").hidden = true;
-  }
+  organisation = (me?.orgs || [])[0] || null;
+  // Nothing to browse errors under — the staff token, typically.
+  el("tab-issues").hidden = !organisation;
   // The router runs in both modes now. It used to be skipped when embedded,
   // on the grounds that an iframe has no address bar to route within — but
   // embedded is nothing *but* Reports, and Reports is a route. The iframe
@@ -759,6 +755,12 @@ async function enter() {
   // nothing and blank the screen.
   el("requests-open").href = routeHref("/requests");
   el("settings-open").href = routeHref("/settings");
+  el("tab-issues").href = routeHref("/issues");
+  // A scoped session has no "all projects" to go home to, so its Reports tab
+  // points at the one app it is allowed to show.
+  el("tab-reports").href = routeHref(
+    scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/"
+  );
 
   if (!embedded) {
     // Arrived from GlitchTip's "Requests" nav item (glitchtip/index.html),
