@@ -11,6 +11,10 @@
  * Run:  npm run smoke            (from receiver/)
  *       BASE_URL=http://host:8100 npm run smoke
  *
+ * Also checks the standalone port (no /sentinel prefix) at STANDALONE_URL,
+ * default http://localhost:4000 — skipped rather than failed if it can't be
+ * reached, since a remote BASE_URL may have no route to it at all.
+ *
  * The staff token is read from ../.env unless STAFF_API_TOKEN is set. A
  * GlitchTip session can be seeded with scripts/seed-smoke-session.sh and
  * passed as GLITCHTIP_SESSION to unlock the session and CSRF checks; without
@@ -73,6 +77,13 @@ function assertStatus(response, expected, context = "") {
 const get = (path, init) => fetch(`${BASE}${path}`, { redirect: "manual", ...init });
 const bearer = { authorization: `Bearer ${TOKEN}` };
 
+// Its own port, no /sentinel prefix — a second root the shell has to work
+// from, not just the proxied one BASE points at. Optional: a remote BASE
+// may have no way to reach this port at all, so unreachable skips rather
+// than fails.
+const STANDALONE = (process.env.STANDALONE_URL || "http://localhost:4000").replace(/\/+$/, "");
+const getStandalone = (path, init) => fetch(`${STANDALONE}${path}`, { redirect: "manual", ...init });
+
 // --------------------------------------------------------------- the shell
 
 async function shellServed() {
@@ -87,12 +98,32 @@ async function shellServed() {
     );
   });
 
-  for (const route of ["/sentinel/", "/sentinel/issues", "/sentinel/settings/teams"]) {
+  for (const route of [
+    "/sentinel/",
+    "/sentinel/issues",
+    "/sentinel/settings/teams",
+    "/sentinel/requests",
+    "/sentinel/settings",
+    "/sentinel/settings/apps/e-library-admin",
+  ]) {
     await check(`${route} serves the shell`, async () => {
       const res = await get(route, { headers: { accept: "text/html" } });
       assertStatus(res, 200, route);
       const body = await res.text();
       assert(body.includes("<title>Sentinel</title>"), `${route} did not return the shell`);
+      // Every asset reference in the shell is relative, so a wrong or
+      // unfilled <base> is invisible here (this suite has no browser to
+      // resolve URLs against) but breaks every route two segments deep —
+      // it did, in exactly this form, before this check existed.
+      assert(body.includes('<base href="/sentinel/" />'), `${route}: <base> is missing or wrong`);
+      // app.js reads this instead of recomputing it from location.pathname —
+      // one rule, on the server, not two copies of the same rule drifting.
+      assert(
+        body.includes('<meta name="sentinel-mount" content="/sentinel" />'),
+        `${route}: mount meta tag is missing or wrong`
+      );
+      assert(!body.includes("__SENTINEL_BASE__"), `${route}: <base> placeholder was never filled in`);
+      assert(!body.includes("__SENTINEL_MOUNT__"), `${route}: mount placeholder was never filled in`);
     });
   }
 
@@ -101,11 +132,82 @@ async function shellServed() {
     assertStatus(res, 404);
   });
 
-  for (const asset of ["styles.css", "app.js", "issues.js", "lib/api.js", "lib/dom.js"]) {
+  for (const asset of [
+    "styles.css",
+    "app.js",
+    "issues.js",
+    "lib/api.js",
+    "lib/dom.js",
+    "lib/router.js",
+    "lib/abort.js",
+    "views/requests.js",
+    "views/settings.js",
+  ]) {
     await check(`${asset} is served`, async () => {
       assertStatus(await get(`/sentinel/${asset}`), 200, asset);
     });
   }
+}
+
+// --------------------------------------------------- standalone (no /sentinel)
+
+/**
+ * The same shell, at its other root. This is where the deep-route bug
+ * actually lived: BASE (proxied, under /sentinel) happened to still work
+ * for a one-segment route by the accident of relative paths dropping only
+ * the last path segment, which made it easy to believe the fix was done
+ * after testing only that root. The bare root has no such accident — a
+ * wrong <base> here is wrong from the very first asset.
+ */
+async function standaloneMode() {
+  process.stdout.write("\nStandalone, at its own port with no /sentinel prefix\n");
+
+  const reachable = await getStandalone("/health")
+    .then((res) => res.ok)
+    .catch(() => false);
+  if (!reachable) {
+    process.stdout.write(`  (${STANDALONE} not reachable — standalone checks will skip)\n`);
+  }
+
+  await check('root serves the shell with <base href="/"> and an empty mount', async () => {
+    if (!reachable) return "skip";
+    const res = await getStandalone("/", { headers: { accept: "text/html" } });
+    assertStatus(res, 200);
+    const body = await res.text();
+    assert(body.includes("<title>Sentinel</title>"), "did not return the shell");
+    assert(body.includes('<base href="/" />'), "<base> is missing or wrong at the bare root");
+    assert(
+      body.includes('<meta name="sentinel-mount" content="" />'),
+      "mount meta tag should be empty at the bare root, not \"/sentinel\""
+    );
+  });
+
+  await check("styles.css and app.js resolve at the bare root", async () => {
+    if (!reachable) return "skip";
+    assertStatus(await getStandalone("/styles.css"), 200, "styles.css");
+    assertStatus(await getStandalone("/app.js"), 200, "app.js");
+  });
+
+  // The actual bug this file exists to catch: a route two segments deep,
+  // reloaded or bookmarked, used to serve a blank page — app.js itself
+  // 404'd, resolved against the wrong root, and nothing after it ran.
+  await check("a deep client route serves the shell at the bare root too", async () => {
+    if (!reachable) return "skip";
+    const res = await getStandalone("/settings/apps/mewaka-lms", { headers: { accept: "text/html" } });
+    assertStatus(res, 200);
+    const body = await res.text();
+    assert(body.includes("<title>Sentinel</title>"), "deep standalone route did not return the shell");
+    assert(body.includes('<base href="/" />'), "deep standalone route: <base> is missing or wrong");
+    assert(
+      body.includes('<meta name="sentinel-mount" content="" />'),
+      "deep standalone route: mount meta tag is missing or wrong"
+    );
+  });
+
+  await check("a missing asset 404s at the bare root too", async () => {
+    if (!reachable) return "skip";
+    assertStatus(await getStandalone("/definitely-not-here.js"), 404);
+  });
 }
 
 // ------------------------------------------------- which backend answers
@@ -253,6 +355,7 @@ async function main() {
   if (!SESSION) process.stdout.write("  (no GLITCHTIP_SESSION set — CSRF checks will skip)\n");
 
   await shellServed();
+  await standaloneMode();
   await backendsOwnTheirPaths();
   await authBoundaries();
   await csrfIsEnforced();

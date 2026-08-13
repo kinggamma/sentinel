@@ -11,6 +11,13 @@
  * Everything callers used to repeat lives here now: parsing the body,
  * throwing on failure with the server's own message, attaching CSRF to
  * session writes, and handling 401 once rather than at a dozen call sites.
+ *
+ * With one exception, and it matters: allauth answers 401 as a normal part
+ * of a conversation, not as a refusal. `GET auth/session` returns 401 with
+ * the available flows when nobody is signed in, and an MFA challenge or a
+ * reauthentication prompt is a 401 carrying the pending flow. Treating those
+ * as "your session has gone" would throw someone out of the app at the exact
+ * moment they were signing into it, so the allauth client never signals.
  */
 
 /** Thrown for any non-2xx, carrying enough to decide what to say. */
@@ -48,12 +55,20 @@ export function useBearerToken(token) {
   bearerToken = token || "";
 }
 
-async function request(base, path, { method = "GET", body, headers = {}, raw = false } = {}) {
+async function request(
+  base,
+  path,
+  { method = "GET", body, headers = {}, raw = false, signalUnauthorized = true, signal } = {}
+) {
   const url = `${base}${path}`;
   const init = {
     method,
     credentials: "same-origin",
     headers: { ...headers },
+    // A view's own AbortSignal, passed through so a superseded navigation
+    // cancels the request in flight rather than leaving it to resolve into
+    // nothing. fetch throws AbortError for us when this fires.
+    ...(signal ? { signal } : {}),
   };
 
   if (bearerToken) init.headers.authorization = `Bearer ${bearerToken}`;
@@ -77,10 +92,15 @@ async function request(base, path, { method = "GET", body, headers = {}, raw = f
   try {
     response = await fetch(url, init);
   } catch (cause) {
+    // A cancelled request throws AbortError, and it means "the caller moved
+    // on," not "the network failed" — let it through as itself so a view's
+    // throwIfAborted (and the router's own AbortError handling) recognise
+    // it, instead of it arriving disguised as a generic connectivity error.
+    if (cause?.name === "AbortError") throw cause;
     throw new ApiError("Couldn't reach the server.", { status: 0, url, body: null });
   }
 
-  if (response.status === 401 && onUnauthorized) onUnauthorized();
+  if (response.status === 401 && signalUnauthorized && onUnauthorized) onUnauthorized();
 
   if (raw) return response;
   if (response.status === 204) return null;
@@ -109,15 +129,22 @@ async function request(base, path, { method = "GET", body, headers = {}, raw = f
   return parsed;
 }
 
-function client(base) {
+/**
+ * @param {string} base
+ * @param {object} [defaults] - signalUnauthorized false for backends that use
+ *   401 to mean something other than "sign in again". A single call can still
+ *   override it either way.
+ */
+function client(base, defaults = {}) {
+  const send = (path, options, extra) => request(base, path, { ...defaults, ...options, ...extra });
   return {
     base,
-    get: (path, options) => request(base, path, { ...options, method: "GET" }),
-    post: (path, body, options) => request(base, path, { ...options, method: "POST", body }),
-    put: (path, body, options) => request(base, path, { ...options, method: "PUT", body }),
-    del: (path, options) => request(base, path, { ...options, method: "DELETE" }),
+    get: (path, options) => send(path, options, { method: "GET" }),
+    post: (path, body, options) => send(path, options, { method: "POST", body }),
+    put: (path, body, options) => send(path, options, { method: "PUT", body }),
+    del: (path, options) => send(path, options, { method: "DELETE" }),
     /** For responses whose headers matter — cursor pagination reads Link. */
-    raw: (path, options) => request(base, path, { ...options, raw: true }),
+    raw: (path, options) => send(path, options, { raw: true }),
   };
 }
 
@@ -127,5 +154,10 @@ export const sentinel = client("/sentinel/api");
 /** GlitchTip's API: errors, projects, organisations, members, teams. */
 export const glitchtip = client("/api/0");
 
-/** GlitchTip's auth, which is allauth rather than its API. */
-export const allauth = client("/_allauth/browser/v1");
+/**
+ * GlitchTip's auth, which is allauth rather than its API.
+ *
+ * Exempt from the 401 handler by construction: every one of its 401s is a
+ * state to read, not a session to abandon.
+ */
+export const allauth = client("/_allauth/browser/v1", { signalUnauthorized: false });

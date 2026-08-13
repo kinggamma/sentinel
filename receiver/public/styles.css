@@ -654,28 +654,9 @@ button.danger:hover {
 }
 
 /* --- settings ----------------------------------------------------- */
-
-.settings-card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  padding: 24px;
-  width: min(560px, 100%);
-  grid-column: 2;
-  max-height: 86vh;
-  overflow-y: auto;
-}
-
-.settings-card h2 {
-  margin: 0 0 6px;
-  font-size: 17px;
-}
-
-.settings-card > .muted {
-  margin: 0 0 16px;
-  font-size: 13px;
-}
+/* .settings-card and .settings-actions used to own the lightbox chrome
+   here; both screens that used them now render inside modal()'s own
+   .modal-card, so the rest of this block is what they still share. */
 
 .origin-list {
   list-style: none;
@@ -709,12 +690,6 @@ button.danger:hover {
 
 .origin-add input {
   flex: 1;
-}
-
-.settings-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
 }
 
 .integration {
