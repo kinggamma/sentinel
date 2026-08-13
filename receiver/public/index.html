@@ -57,6 +57,9 @@
           <a id="glitchtip-link" class="button-link" target="_blank" rel="noreferrer noopener" hidden>
             Errors in GlitchTip ↗
           </a>
+          <button id="settings-open" type="button" class="ghost" title="Which apps may report">
+            Settings
+          </button>
           <button id="refresh" type="button" title="Reload">Refresh</button>
           <button
             id="theme-toggle"
@@ -80,6 +83,33 @@
           <p class="empty">Select a report.</p>
         </section>
       </main>
+    </div>
+
+    <!-- Which browser origins may post reports and embed this viewer. Kept
+         here rather than only in .env so adding an app doesn't need a shell. -->
+    <div id="settings" class="lightbox" hidden>
+      <section class="settings-card">
+        <h2 id="settings-title">Apps allowed to report</h2>
+        <p class="muted" id="settings-note">
+          An app's browser code can only send reports from an address listed here. Server-side
+          reporting doesn't need an entry — only pages running in a browser do.
+        </p>
+        <ul id="origin-list" class="origin-list"></ul>
+        <form id="origin-form" class="origin-add">
+          <input
+            id="origin-input"
+            type="url"
+            placeholder="http://your-app-host:5173"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button type="submit">Add</button>
+        </form>
+        <p id="settings-error" class="error" hidden></p>
+        <div class="settings-actions">
+          <button id="settings-close" type="button" class="ghost">Done</button>
+        </div>
+      </section>
     </div>
 
     <div id="lightbox" class="lightbox" hidden>

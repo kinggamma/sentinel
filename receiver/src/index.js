@@ -8,6 +8,8 @@ import { authRouter } from "./routes/auth.js";
 import { requireStaffToken } from "./middleware/auth.js";
 import { glitchtipConfigured, glitchtipInfo } from "./glitchtip.js";
 import { startRetentionSweeps } from "./retention.js";
+import { initSettings, allowedOrigins } from "./settings.js";
+import { settingsRouter } from "./routes/settings.js";
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 const PORT = process.env.PORT || 4000;
@@ -28,7 +30,10 @@ app.use(
         // Each app embeds the viewer in its own admin area, so the apps
         // we already trust as API origins may also frame it. Anything
         // else still can't (clickjacking).
-        "frame-ancestors": ["'self'", ...ALLOWED_ORIGINS],
+        // Evaluated per response, not at boot: origins can be added from the
+        // viewer, and a browser that has to be told to trust an app is no
+        // use if the answer is a restart old.
+        "frame-ancestors": ["'self'", () => allowedOrigins().join(" ")],
         /**
          * Only claim this when TLS is actually in front.
          *
@@ -47,7 +52,12 @@ app.use(
 );
 app.use(
   cors({
-    origin: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : false,
+    // Same reason as frame-ancestors above: consulted on each request,
+    // including the preflight that decides whether an app may report.
+    origin(origin, callback) {
+      const allowed = allowedOrigins();
+      callback(null, allowed.length ? allowed : false);
+    },
   })
 );
 app.use(express.json({ limit: "1mb" }));
@@ -76,7 +86,10 @@ app.use(
 // Sign-in lives outside the guard — it's how you get past it.
 app.use("/api", authRouter);
 
+app.use("/api", requireStaffToken, settingsRouter);
 app.use("/api", requireStaffToken, reportRouter);
+
+await initSettings();
 
 app.listen(PORT, () => {
   console.log(`Sentinel receiver listening on :${PORT}`);
@@ -92,7 +105,9 @@ app.listen(PORT, () => {
     );
   }
   startRetentionSweeps();
-  if (!ALLOWED_ORIGINS.length) {
-    console.warn("ALLOWED_ORIGINS is empty — no browser origin will be able to call this API.");
+  if (!allowedOrigins().length) {
+    console.warn(
+      "No allowed origins — no browser can post reports yet. Add them in the viewer under Settings."
+    );
   }
 });
