@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { reportRouter } from "./routes/report.js";
 import { authRouter } from "./routes/auth.js";
@@ -87,6 +88,52 @@ const staticOptions = {
   },
 };
 
+/**
+ * The shell, with its <base> and its mount meta tag filled in for whichever
+ * root actually matched — "/sentinel" behind the shared origin, "" at the
+ * bare standalone root, in router.js's own vocabulary (no trailing slash).
+ *
+ * Every asset reference in index.html is relative, so the browser needs to
+ * be told which of the two roots it's resolving against — and once routes
+ * could nest (settings/apps/:app, two segments deep), only telling it via
+ * <base> at all was enough; the naive fix, a plain relative href, silently
+ * broke past one segment. The meta tag is the same fact, for app.js: it
+ * used to work this out itself from location.pathname, a second copy of
+ * this same rule that could drift from this one. Now there's one rule, here,
+ * and app.js just reads what it decided. Read once at boot: this file only
+ * changes on a rebuild, which restarts the process anyway.
+ */
+const BASE_PLACEHOLDER = "__SENTINEL_BASE__";
+const MOUNT_PLACEHOLDER = "__SENTINEL_MOUNT__";
+const INDEX_TEMPLATE = readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+
+// Checked once, at boot, rather than trusted: a second mention anywhere in
+// the file — a comment referring to it by name, a copy-pasted tag — makes
+// String.replace() patch the FIRST occurrence and leave the real one
+// untouched, with no error, just a page that's wrong every time it's
+// served. It happened once already, to BASE_PLACEHOLDER, in this file's own
+// comment, while writing this. Failing to boot is loud; a wrong <base> or
+// mount in production is not.
+for (const placeholder of [BASE_PLACEHOLDER, MOUNT_PLACEHOLDER]) {
+  const count = INDEX_TEMPLATE.split(placeholder).length - 1;
+  if (count !== 1) {
+    throw new Error(
+      `index.html must contain exactly one ${placeholder} — found ${count}. ` +
+        "Check for a stray mention in a comment, or a duplicated tag."
+    );
+  }
+}
+
+function renderShell(mount) {
+  return INDEX_TEMPLATE.replace(BASE_PLACEHOLDER, mount ? `${mount}/` : "/").replace(
+    MOUNT_PLACEHOLDER,
+    mount
+  );
+}
+function sendShell(mount) {
+  return (_req, res) => res.type("html").send(renderShell(mount));
+}
+
 // The trailing slash isn't cosmetic: asset paths are relative, so at
 // /sentinel they'd resolve against the root and land on GlitchTip. Express
 // treats /sentinel and /sentinel/ as one route, so the check is on the URL
@@ -95,13 +142,18 @@ app.get("/sentinel", (req, res, next) => {
   if (req.originalUrl.split("?")[0].endsWith("/sentinel")) return res.redirect("/sentinel/");
   return next();
 });
+// Ahead of the static middleware below, so its own auto-index behaviour
+// never gets a chance to serve index.html untemplated for these two exact
+// paths. Every other file under /sentinel — styles.css, app.js, lib/*,
+// views/* — still falls through to static exactly as before.
+app.get("/sentinel/", sendShell("/sentinel"));
 app.use("/sentinel", express.static(PUBLIC_DIR, staticOptions));
 
 /**
  * Anything else under /sentinel is a client-side route — /sentinel/issues,
- * /sentinel/settings/teams — so it has to serve the shell rather than 404.
- * Without this, a bookmark or a reload anywhere but the root is a dead end,
- * which is the whole reason the viewer had no routing before.
+ * /sentinel/settings/apps/:app — so it has to serve the shell rather than
+ * 404. Without this, a bookmark or a reload anywhere but the root is a dead
+ * end, which is the whole reason the viewer had no routing before.
  *
  * Only for navigations: a missing asset should still 404 rather than
  * silently returning HTML, which is a confusing failure to debug.
@@ -110,9 +162,25 @@ app.get("/sentinel/*", (req, res, next) => {
   if (req.method !== "GET") return next();
   if (!String(req.headers.accept || "").includes("text/html")) return next();
   if (path.extname(req.path)) return next();
-  return res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+  return sendShell("/sentinel")(req, res);
 });
+// Standalone: the same shell, at the root this port serves it from.
+app.get("/", sendShell(""));
 app.use(express.static(PUBLIC_DIR, staticOptions));
+
+/**
+ * Standalone's version of the fallback above. The router starts the same
+ * way regardless of which root served it (app.js, gated only on `embedded`,
+ * not on which port it's running behind) — so a bookmark or reload of
+ * :4000/settings/apps/foo needs the same answer :8000/sentinel/settings/apps/foo
+ * already gets. Same guards, same reasoning, one root lower.
+ */
+app.get("/*", (req, res, next) => {
+  if (req.method !== "GET") return next();
+  if (!String(req.headers.accept || "").includes("text/html")) return next();
+  if (path.extname(req.path)) return next();
+  return sendShell("")(req, res);
+});
 
 /**
  * The viewer's own API lives under /sentinel/api, out of GlitchTip's way.

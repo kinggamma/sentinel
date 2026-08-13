@@ -4,6 +4,28 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sentinel</title>
+    <!-- This page is served at two roots on purpose (src/index.js) — under
+         /sentinel behind the shared origin, and at the bare root standalone
+         on its own port — which is why every asset reference below is
+         relative rather than hardcoded to one or the other.
+         That stopped being enough once routes could nest: relative
+         resolution drops only the last path segment, so it works by
+         accident at /sentinel/issues (one segment) and breaks at
+         /sentinel/settings/apps/:app (two) — silently for a stylesheet, as a
+         blank page with no error for app.js, since nothing after a failed
+         module load ever runs.
+
+         Both values below are filled in by src/index.js's renderShell()
+         with whichever root actually matched — the meta tag is app.js's
+         copy, read once at boot instead of recomputed from location.pathname
+         with its own separate rule. Two implementations of "which root is
+         this" is how they drift; one that only the server decides, and the
+         client only reads, cannot. The href needs no script to run before it
+         takes effect either way — a client-side fix would have needed one,
+         and this app's own CSP (script-src 'self', no unsafe-inline) refuses
+         to run an inline one. -->
+    <meta name="sentinel-mount" content="__SENTINEL_MOUNT__" />
+    <base href="__SENTINEL_BASE__" />
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="vendor/rrweb-player.css" />
     <link
@@ -114,12 +136,12 @@
           <a id="glitchtip-link" class="button-link" target="_blank" rel="noreferrer noopener" hidden>
             Errors in GlitchTip ↗
           </a>
-          <button id="requests-open" type="button" class="ghost" title="People asking for access" hidden>
+          <a id="requests-open" href="/sentinel/requests" class="button-link" title="People asking for access" hidden>
             Requests
-          </button>
-          <button id="settings-open" type="button" class="ghost" title="Which apps may report">
+          </a>
+          <a id="settings-open" href="/sentinel/settings" class="button-link" title="Which apps may report">
             Settings
-          </button>
+          </a>
           <button id="refresh" type="button" title="Reload">Refresh</button>
           <button
             id="theme-toggle"
@@ -201,103 +223,19 @@
         </table>
       </main>
 
-      <!-- Landing: one card per app that has reported. -->
-      <main id="projects-view" class="projects" aria-label="Projects"></main>
+      <!-- Where routed screens render. The landing grid of app cards is the
+           first of them (views/projects.js); dialogs like requests and
+           settings layer over whatever is here rather than replacing it.
+           Reports is next to move, and takes #reports-view below with it. -->
+      <main id="view" hidden></main>
 
-      <!-- Drill-down: reports for one app. -->
+      <!-- Drill-down: reports for one app. Still legacy, still toggled. -->
       <main id="reports-view" class="layout" hidden>
         <ul id="list" class="list" aria-label="Reports"></ul>
         <section id="detail" class="detail">
           <p class="empty">Select a report.</p>
         </section>
       </main>
-    </div>
-
-    <!-- Which browser origins may post reports and embed this viewer. Kept
-         here rather than only in .env so adding an app doesn't need a shell. -->
-    <div id="settings" class="lightbox" hidden>
-      <section class="settings-card">
-        <h2 id="settings-title">Apps allowed to report</h2>
-        <p class="muted" id="settings-note">
-          An app's browser code can only send reports from an address listed here. Server-side
-          reporting doesn't need an entry — only pages running in a browser do.
-        </p>
-        <ul id="origin-list" class="origin-list"></ul>
-        <form id="origin-form" class="origin-add">
-          <input
-            id="origin-input"
-            type="url"
-            placeholder="http://your-app-host:5173"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <button type="submit">Add</button>
-        </form>
-        <p id="settings-error" class="error" hidden></p>
-
-        <!-- An app has to exist before it can be given an address, and it
-             can't report until it has one — so it must be possible to add
-             one here rather than waiting for a first report. -->
-        <div id="add-app" class="integration">
-          <h3>Add an app</h3>
-          <p class="muted">
-            Gives it a card straight away, so you can set where it runs before it has reported.
-            The name must match the <code>appName</code> the app sends.
-          </p>
-          <form id="add-app-form" class="origin-add">
-            <input id="add-app-name" type="text" placeholder="e.g. admin-panel" autocomplete="off" />
-            <button type="submit">Add</button>
-          </form>
-          <p id="add-app-error" class="error" hidden></p>
-        </div>
-
-        <!-- Lets Sentinel act in GlitchTip on your behalf: inviting people
-             who ask for access, and creating a project for a new app. -->
-        <div id="integration" class="integration">
-          <h3>GlitchTip service token</h3>
-          <p class="muted">
-            Lets Sentinel invite people you approve, and create a GlitchTip project the first
-            time a new app reports. Create it in GlitchTip under
-            <strong>Profile → Auth Tokens</strong> with <strong>member:write</strong> and
-            <strong>project:write</strong>, on an account with the Admin role. Leave
-            <strong>project:admin</strong> unticked so it can never delete a project.
-          </p>
-          <p id="integration-status" class="muted"></p>
-          <form id="integration-form" class="origin-add">
-            <input
-              id="integration-token"
-              type="password"
-              placeholder="Paste a token to set it"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <input id="integration-team" type="text" placeholder="Team slug" />
-            <button type="submit">Save</button>
-          </form>
-          <p id="integration-error" class="error" hidden></p>
-        </div>
-
-        <div class="settings-actions">
-          <button id="settings-close" type="button" class="ghost">Done</button>
-        </div>
-      </section>
-    </div>
-
-    <!-- The queue of people asking to be let in. Approving one asks GlitchTip
-         to invite them, which is what actually grants the access. -->
-    <div id="requests" class="lightbox" hidden>
-      <section class="settings-card">
-        <h2>People asking for access</h2>
-        <p class="muted">
-          Approving someone invites them to one of your organisations in GlitchTip. They see the
-          apps that organisation's projects allow, and nothing else.
-        </p>
-        <ul id="request-list" class="origin-list"></ul>
-        <p id="requests-error" class="error" hidden></p>
-        <div class="settings-actions">
-          <button id="requests-close" type="button" class="ghost">Done</button>
-        </div>
-      </section>
     </div>
 
     <div id="lightbox" class="lightbox" hidden>
@@ -308,6 +246,10 @@
       <p id="lightbox-caption" class="lightbox-caption"></p>
     </div>
 
+    <!-- Relative, resolved by the <base> tag in <head> like the stylesheets.
+         Its own imports (./lib/router.js and so on) are fine either way —
+         module specifiers resolve against this script's own URL, not the
+         page's, so they'd have worked even without the fix above. -->
     <script src="app.js" type="module"></script>
   </body>
 </html>

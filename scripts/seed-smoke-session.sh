@@ -2,12 +2,18 @@
 # Mint a throwaway GlitchTip session so the smoke tests can exercise the
 # session and CSRF paths, which are otherwise unreachable without a password.
 #
+# Prefer ./scripts/run-smoke.sh, which wraps the three steps below in one
+# trap so the session is cleared even when the suite fails partway:
+#
 #   export GLITCHTIP_SESSION=$(./scripts/seed-smoke-session.sh)
 #   ( cd receiver && npm run smoke )
 #   ./scripts/seed-smoke-session.sh --clear "$GLITCHTIP_SESSION"
 #
 # It borrows the first active account rather than creating one: the point is
-# to test the plumbing, not to leave users lying around.
+# to test the plumbing, not to leave users lying around. That's still a real
+# account's identity, though — a dedicated smoke-test user would remove the
+# "which account did this touch" question entirely. Worth doing eventually;
+# not done here.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
