@@ -3,6 +3,7 @@ import { Router } from "express";
 import {
   verifyGlitchtipUser,
   verifyGlitchtipSession,
+  identifyGlitchtipUser,
   revokeGlitchtipSession,
   glitchtipConfigured,
   glitchtipInfo,
@@ -34,7 +35,12 @@ authRouter.get("/auth/config", (_req, res) => {
 authRouter.get("/auth/me", (req, res) => {
   const session = currentUser(req);
   if (!session) return res.status(401).json({ error: "unauthorized" });
-  res.json({ email: session.email, name: session.name, source: session.source });
+  res.json({
+    email: session.email,
+    name: session.name,
+    source: session.source,
+    pending: Boolean(session.pending),
+  });
 });
 
 /**
@@ -78,15 +84,27 @@ authRouter.post("/auth/login", async (req, res) => {
         ...user,
         source: "glitchtip",
         projects: user.projects ? user.projects.map((p) => p.slug) : null,
+        orgs: user.orgs || [],
       });
       return res.json({ email: session.email, name: session.name, source: session.source });
     }
-    // A valid token whose owner isn't in the org: say so plainly rather
-    // than implying the token was wrong.
+    // A real account that belongs to no organisation. Rather than a dead
+    // end, give them a session that can do exactly one thing: ask.
+    const identity = await identifyGlitchtipUser({ token });
+    if (identity) {
+      const session = issueSession(res, {
+        ...identity,
+        source: "glitchtip",
+        projects: [],
+        pending: true,
+      });
+      return res.json({ email: session.email, name: session.name, pending: true });
+    }
+
     return res.status(403).json({
       error: glitchtipInfo().org
-        ? `That GlitchTip account isn't a member of the ${glitchtipInfo().org} organisation. Ask an admin to invite it.`
-        : "That account doesn't belong to exactly one GlitchTip organisation, so there's nothing to grant access from. Create one, or name it in GLITCHTIP_ORG.",
+        ? `That GlitchTip account isn't a member of the ${glitchtipInfo().org} organisation.`
+        : "That account doesn't belong to any GlitchTip organisation.",
     });
   } catch (err) {
     // Worth separating, because the fixes are completely different: 403
@@ -134,10 +152,19 @@ authRouter.post("/auth/sso", async (req, res) => {
   try {
     const user = await verifyGlitchtipSession(sessionId);
     if (!user) {
+      const identity = await identifyGlitchtipUser({ sessionId });
+      if (identity) {
+        const session = issueSession(res, {
+          ...identity,
+          source: "glitchtip-sso",
+          boundTo: fingerprint(sessionId),
+          projects: [],
+          pending: true,
+        });
+        return res.json({ email: session.email, name: session.name, pending: true });
+      }
       return res.status(403).json({
-        error: glitchtipInfo().org
-          ? `You're signed in to GlitchTip, but not as a member of the ${glitchtipInfo().org} organisation.`
-          : "You're signed in to GlitchTip, but that account doesn't belong to exactly one organisation.",
+        error: "You're signed in to GlitchTip, but that account belongs to no organisation.",
       });
     }
     await rememberProjectOrgs(user.projects || []);
@@ -147,6 +174,7 @@ authRouter.post("/auth/sso", async (req, res) => {
       // Tie this session's life to the GlitchTip session it came from.
       boundTo: fingerprint(sessionId),
       projects: user.projects ? user.projects.map((p) => p.slug) : null,
+      orgs: user.orgs || [],
     });
     return res.json({ email: session.email, name: session.name, source: session.source });
   } catch (err) {

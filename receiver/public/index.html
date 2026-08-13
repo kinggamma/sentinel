@@ -41,6 +41,30 @@
       </form>
     </div>
 
+    <!-- A recognised GlitchTip account that belongs to no organisation. They
+         can't read anything, but they can ask — which GlitchTip itself has no
+         way to express. -->
+    <div id="waiting" class="gate" hidden>
+      <section class="gate-card">
+        <h1>Not in an organisation yet</h1>
+        <p class="muted">
+          You're signed in as <strong id="waiting-email"></strong>, but your GlitchTip account
+          doesn't belong to an organisation — so there are no reports it can show you.
+        </p>
+
+        <div id="waiting-ask">
+          <label class="muted" for="waiting-note">Anything to tell them? (optional)</label>
+          <input id="waiting-note" type="text" placeholder="Which team you're on, what you need" />
+          <button id="waiting-request" type="button">Request access</button>
+        </div>
+
+        <p id="waiting-status" class="muted" hidden></p>
+        <a id="waiting-accept" class="button-link" hidden>Accept your invitation ↗</a>
+        <p id="waiting-error" class="error" hidden></p>
+        <button id="waiting-signout" type="button" class="ghost">Sign out</button>
+      </section>
+    </div>
+
     <div id="app" hidden>
       <header class="topbar">
         <h1 id="app-title">
@@ -57,6 +81,9 @@
           <a id="glitchtip-link" class="button-link" target="_blank" rel="noreferrer noopener" hidden>
             Errors in GlitchTip ↗
           </a>
+          <button id="requests-open" type="button" class="ghost" title="People asking for access" hidden>
+            Requests
+          </button>
           <button id="settings-open" type="button" class="ghost" title="Which apps may report">
             Settings
           </button>
@@ -108,6 +135,23 @@
         <p id="settings-error" class="error" hidden></p>
         <div class="settings-actions">
           <button id="settings-close" type="button" class="ghost">Done</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- The queue of people asking to be let in. Approving one asks GlitchTip
+         to invite them, which is what actually grants the access. -->
+    <div id="requests" class="lightbox" hidden>
+      <section class="settings-card">
+        <h2>People asking for access</h2>
+        <p class="muted">
+          Approving someone invites them to one of your organisations in GlitchTip. They see the
+          apps that organisation's projects allow, and nothing else.
+        </p>
+        <ul id="request-list" class="origin-list"></ul>
+        <p id="requests-error" class="error" hidden></p>
+        <div class="settings-actions">
+          <button id="requests-close" type="button" class="ghost">Done</button>
         </div>
       </section>
     </div>

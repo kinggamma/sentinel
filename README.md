@@ -358,10 +358,26 @@ that isn't signed in there. Do this once:
 From then on, open Sentinel, paste the token, and you're in. The session lasts
 `SESSION_HOURS`, so it's not something you paste daily.
 
-**Adding someone** is one action: in GlitchTip, *Organization → Members →
-Invite Member*. There is no "request to join" — you invite, they accept,
-and they're in. Nothing comes back to you for approval afterwards, because
-you were the one who started it.
+**Adding someone** works from either end.
+
+You can invite them: in GlitchTip, *Organization → Members → Invite
+Member*. Or they can ask. Someone who signs in to Sentinel with a GlitchTip
+account that belongs to no organisation isn't turned away at a blank wall —
+they get a screen saying so, and a button to request access. Their request
+appears in Sentinel for anyone already inside, and in GlitchTip's own
+sidebar under *Requests*.
+
+Approving one asks GlitchTip to invite them, so GlitchTip remains the thing
+that actually grants access — and you can only approve someone into an
+organisation you belong to yourself. Sentinel then shows them their
+invitation link directly, which matters because with email disabled that
+link is otherwise only in a container log. Until they accept it they can
+see nothing: a pending session can ask for access and read nothing else.
+
+Approving needs `GLITCHTIP_SERVICE_TOKEN` with the `member:write` scope,
+since Sentinel has your session rather than your GlitchTip token. Without
+it the request still queues, and Sentinel says to invite them in GlitchTip
+by hand instead.
 
 Creating an account and being able to read anything are separate things. An
 account on its own sees nothing at all; joining an organisation is what

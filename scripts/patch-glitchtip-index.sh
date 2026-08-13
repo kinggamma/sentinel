@@ -124,8 +124,13 @@ snippet = """
     <script nonce="{{ csp_nonce }}">
       (function () {
         var URL_ = "%(url)s";
-        var LABEL = "Sentinel";
-        var ICON = "bug_report";
+        /* Two entries: the reports themselves, and the queue of people
+           asking to be let in — which GlitchTip has no way to express, so
+           it has to be reachable from somewhere its administrators look. */
+        var ITEMS = [
+          { label: "Sentinel", icon: "bug_report", href: URL_ },
+          { label: "Requests", icon: "group_add", href: URL_ + "/?view=requests" },
+        ];
 
         /* Three ways to find the sidebar, cheapest first. The last one asks
            "where does GlitchTip's own Issues link live?" and uses whatever
@@ -169,26 +174,34 @@ snippet = """
           }
           if (!source) return false;
 
+          ITEMS.forEach(function (item) {
+            addItem(nav, source, before, item);
+          });
+          return true;
+        }
+
+        function addItem(nav, source, before, item) {
           var clone = source.cloneNode(true);
           clone.setAttribute("data-sentinel-link", "");
+          clone.setAttribute("data-sentinel-item", item.label);
           /* Whatever marked the copied item as the current page. */
           clone.removeAttribute("aria-current");
           clone.classList.remove("mdc-list-item--activated", "active", "is-active");
 
           if (clone.tagName === "A") {
-            clone.setAttribute("href", URL_);
+            clone.setAttribute("href", item.href);
             clone.removeAttribute("target");
           } else {
             clone.setAttribute("type", "button");
             clone.addEventListener("click", function (event) {
               event.preventDefault();
               event.stopPropagation();
-              window.location.assign(URL_);
+              window.location.assign(item.href);
             });
           }
 
           var icon = clone.querySelector("mat-icon, .mat-icon, .material-symbols-outlined");
-          if (icon) icon.textContent = ICON;
+          if (icon) icon.textContent = item.icon;
 
           /* .nav-text is GlitchTip's own label span — it hides it when the
              sidebar is collapsed, so using it keeps that behaviour. */
@@ -196,20 +209,19 @@ snippet = """
             clone.querySelector(".nav-text") ||
             clone.querySelector(".mdc-list-item__primary-text");
           if (text) {
-            text.textContent = LABEL;
+            text.textContent = item.label;
           } else {
             var walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT);
             var node, last = null;
             while ((node = walker.nextNode())) {
               if (node.nodeValue.trim() && (!icon || !icon.contains(node))) last = node;
             }
-            if (last) last.nodeValue = LABEL;
-            else clone.appendChild(document.createTextNode(LABEL));
+            if (last) last.nodeValue = item.label;
+            else clone.appendChild(document.createTextNode(item.label));
           }
 
           if (before) nav.insertBefore(clone, before);
           else nav.appendChild(clone);
-          return true;
         }
 
         function pill() {

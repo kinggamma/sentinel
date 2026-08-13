@@ -5,11 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { reportRouter } from "./routes/report.js";
 import { authRouter } from "./routes/auth.js";
-import { requireStaffToken } from "./middleware/auth.js";
+import { requireStaffToken, requireSignedIn } from "./middleware/auth.js";
 import { glitchtipConfigured, glitchtipInfo } from "./glitchtip.js";
 import { startRetentionSweeps } from "./retention.js";
 import { initSettings, allowedOrigins } from "./settings.js";
 import { settingsRouter } from "./routes/settings.js";
+import { accessRouter } from "./routes/access.js";
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 const PORT = process.env.PORT || 4000;
@@ -85,6 +86,10 @@ app.use(
 
 // Sign-in lives outside the guard — it's how you get past it.
 app.use("/api", authRouter);
+
+// Asking for access is the one thing someone not yet let in may do, so it
+// sits behind a weaker guard than everything else.
+app.use("/api", requireSignedIn, accessRouter);
 
 app.use("/api", requireStaffToken, settingsRouter);
 app.use("/api", requireStaffToken, reportRouter);
