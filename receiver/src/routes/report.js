@@ -8,9 +8,15 @@ import {
   glitchtipLink,
   glitchtipInfo,
   createProjectForApp,
-  provisioningConfigured,
+  provisioningReady,
 } from "../glitchtip.js";
-import { slugForApp, isKnown, remember, all as allMappings } from "../project-map.js";
+import {
+  slugForApp,
+  isKnown,
+  remember,
+  all as allMappings,
+  orgForProject,
+} from "../project-map.js";
 import path from "node:path";
 
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 8);
@@ -28,6 +34,28 @@ const upload = multer({
 export const reportRouter = Router();
 
 /**
+ * What this viewer may see.
+ *
+ * A session that came from GlitchTip carries the projects that person can
+ * see there, so the answer is simply: apps whose GlitchTip project is one of
+ * them. Two cases deliberately see everything — the shared staff token,
+ * which is an app rather than a person and is how the embedded viewer reads
+ * its own reports, and a sign-in whose projects couldn't be listed.
+ *
+ * An app with no known project is shown to everyone. It can't be attributed
+ * to an organisation, and quietly hiding reports would be worse than showing
+ * one too many: nobody would know they existed to ask about.
+ */
+async function visibleTo(viewer, appName) {
+  const allowed = viewer?.projects;
+  if (!Array.isArray(allowed)) return true;
+  const projectSlug = await slugForApp(appName);
+  if (!projectSlug) return true;
+  return allowed.includes(projectSlug);
+}
+
+
+/**
  * An app that has never reported before doesn't have a GlitchTip project
  * yet, and asking someone to go and make one by hand is the step everybody
  * forgets — so the first report from a new app creates it.
@@ -40,7 +68,7 @@ export const reportRouter = Router();
 const provisioning = new Set();
 
 function provisionInBackground(appName) {
-  if (!provisioningConfigured || provisioning.has(appName)) return;
+  if (!provisioningReady() || provisioning.has(appName)) return;
 
   provisioning.add(appName);
   void (async () => {
@@ -59,6 +87,16 @@ function provisionInBackground(appName) {
       provisioning.delete(appName);
     }
   })();
+}
+
+
+/**
+ * Load a report only if this viewer is allowed to see it. Anything else
+ * answers 404 rather than 403: whether an id exists is itself information.
+ */
+async function readableReport(req, id) {
+  const report = await getReport(id);
+  return (await visibleTo(req.viewer, report.appName)) ? report : null;
 }
 
 // Accepts multipart/form-data:
@@ -137,9 +175,13 @@ reportRouter.post("/reports", upload, async (req, res) => {
   }
 });
 
-reportRouter.get("/reports", async (_req, res) => {
+reportRouter.get("/reports", async (req, res) => {
   const reports = await listReports();
-  res.json(reports);
+  const visible = [];
+  for (const report of reports) {
+    if (await visibleTo(req.viewer, report.appName)) visible.push(report);
+  }
+  res.json(visible);
 });
 
 /** So the viewer can tell staff how long reports stick around. */
@@ -150,7 +192,7 @@ reportRouter.get("/retention", (_req, res) => res.json(retentionPolicy));
  * with enough to decide where to look, and a link across to the same
  * project's errors in GlitchTip.
  */
-reportRouter.get("/projects", async (_req, res) => {
+reportRouter.get("/projects", async (req, res) => {
   const reports = await listReports();
   const byApp = new Map();
 
@@ -175,29 +217,35 @@ reportRouter.get("/projects", async (_req, res) => {
   }
 
   const mappings = await allMappings();
-  const projects = [...byApp.values()]
-    .map((entry) => {
-      const mapping = mappings[entry.appName] || {};
-      const projectSlug = mapping.slug || null;
-      return {
-        ...entry,
-        glitchtipProject: projectSlug,
-        // Only when we know which project this app reports to. Without a
-        // mapping the link would land on every project's errors, which is
-        // not what "this app's errors" means.
-        glitchtipUrl: projectSlug ? glitchtipLink({ projectSlug }) : null,
-        // Present only for projects we created, which is exactly when
-        // whoever is integrating the app still needs it.
-        dsn: mapping.dsn || null,
-      };
-    })
-    .sort((a, b) => String(b.lastReportAt).localeCompare(String(a.lastReportAt)));
+  const projects = [];
+  for (const entry of byApp.values()) {
+    if (!(await visibleTo(req.viewer, entry.appName))) continue;
+
+    const mapping = mappings[entry.appName] || {};
+    const projectSlug = mapping.slug || null;
+    const org = projectSlug ? await orgForProject(projectSlug) : null;
+    projects.push({
+      ...entry,
+      glitchtipProject: projectSlug,
+      // Only when we know which project this app reports to, and which
+      // organisation owns it. Without both, the link would either cover
+      // every project's errors or point into somebody else's organisation.
+      glitchtipUrl: projectSlug ? glitchtipLink({ projectSlug, org }) : null,
+      // Present only for projects we created, which is exactly when
+      // whoever is integrating the app still needs it.
+      dsn: mapping.dsn || null,
+    });
+  }
+  projects.sort((a, b) => String(b.lastReportAt).localeCompare(String(a.lastReportAt)));
 
   res.json({ projects, glitchtip: glitchtipInfo().url ? glitchtipLink({}) : null });
 });
 
 reportRouter.delete("/reports/:id", async (req, res) => {
   try {
+    if (!(await readableReport(req, req.params.id))) {
+      return res.status(404).json({ error: "not found" });
+    }
     await deleteReport(req.params.id);
     res.status(204).end();
   } catch {
@@ -208,6 +256,13 @@ reportRouter.delete("/reports/:id", async (req, res) => {
 reportRouter.get("/reports/:id/replay", async (req, res) => {
   const { id } = req.params;
   if (id.includes("..") || id.includes("/")) return res.status(400).end();
+  // A replay is a recording of somebody's session — the most sensitive thing
+  // stored here, and the least excusable to serve to the wrong organisation.
+  try {
+    if (!(await readableReport(req, id))) return res.status(404).json({ error: "not found" });
+  } catch {
+    return res.status(404).json({ error: "not found" });
+  }
   res.type("application/json");
   res.sendFile(path.join(reportDir(id), "replay.json"), (err) => {
     if (err) res.status(404).json({ error: "not found" });
@@ -219,13 +274,20 @@ reportRouter.get("/reports/:id", async (req, res) => {
     const report = await getReport(req.params.id);
     // Link straight to the matching error in GlitchTip when this report was
     // raised by one, so the two halves of an incident are one click apart.
+    if (!(await visibleTo(req.viewer, report.appName))) {
+      // Same answer as a report that doesn't exist: knowing an id belongs to
+      // another organisation's app is itself something to withhold.
+      return res.status(404).json({ error: "not found" });
+    }
+
     const projectSlug = await slugForApp(report.appName);
+    const org = projectSlug ? await orgForProject(projectSlug) : null;
     if (report.glitchtipEventId) {
-      report.glitchtipUrl = glitchtipLink({ projectSlug, eventId: report.glitchtipEventId });
+      report.glitchtipUrl = glitchtipLink({ projectSlug, org, eventId: report.glitchtipEventId });
     } else {
       // No event of its own, so the best we can offer is the project's
       // stream — and only if we know which project that is.
-      report.glitchtipUrl = projectSlug ? glitchtipLink({ projectSlug }) : null;
+      report.glitchtipUrl = projectSlug ? glitchtipLink({ projectSlug, org }) : null;
     }
     res.json(report);
   } catch {
@@ -237,6 +299,11 @@ reportRouter.get("/reports/:id/screenshots/:filename", async (req, res) => {
   const { id, filename } = req.params;
   if (filename.includes("..") || id.includes("..")) {
     return res.status(400).end();
+  }
+  try {
+    if (!(await readableReport(req, id))) return res.status(404).json({ error: "not found" });
+  } catch {
+    return res.status(404).json({ error: "not found" });
   }
   res.sendFile(path.join(reportDir(id), filename), (err) => {
     if (err) res.status(404).json({ error: "not found" });

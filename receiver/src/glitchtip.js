@@ -21,12 +21,35 @@ import fetch from "node-fetch";
  */
 const GLITCHTIP_URL = (process.env.GLITCHTIP_URL || "").replace(/\/+$/, "");
 const GLITCHTIP_API_URL = (process.env.GLITCHTIP_API_URL || GLITCHTIP_URL).replace(/\/+$/, "");
-const GLITCHTIP_ORG = process.env.GLITCHTIP_ORG || "";
+/**
+ * There is deliberately no "the organisation" here.
+ *
+ * GlitchTip already knows which organisations a person belongs to and which
+ * projects they can see, so naming one in configuration would either be
+ * wrong the moment a second organisation exists, or would hand whoever it
+ * named the right to read every other organisation's reports. Instead each
+ * sign-in asks GlitchTip, and what someone sees follows from that.
+ *
+ * GLITCHTIP_ORG remains as an optional narrowing, for a GlitchTip that
+ * serves more than this pipeline. Unset — the normal case — membership of
+ * any organisation gets you in, and you see that organisation's apps.
+ */
+const CONFIGURED_ORG = process.env.GLITCHTIP_ORG || "";
+/** Guards the session cookie against an install with hundreds of projects. */
+const PROJECT_LIMIT = 200;
 
-export const glitchtipConfigured = Boolean(GLITCHTIP_URL && GLITCHTIP_ORG);
+export function orgSlug() {
+  return CONFIGURED_ORG;
+}
+
+/**
+ * Sign-in is available as soon as we know where GlitchTip is. The
+ * organisation can arrive later, so it isn't required here.
+ */
+export const glitchtipConfigured = Boolean(GLITCHTIP_URL);
 
 export function glitchtipInfo() {
-  return { url: GLITCHTIP_URL, org: GLITCHTIP_ORG };
+  return { url: GLITCHTIP_URL, org: orgSlug() };
 }
 
 /**
@@ -70,8 +93,40 @@ async function resolveMember(credential) {
   if (!glitchtipConfigured) return null;
 
   const orgs = await callGlitchtip("/api/0/organizations/", credential);
-  const member = (Array.isArray(orgs) ? orgs : []).some((org) => org.slug === GLITCHTIP_ORG);
-  if (!member) return null;
+  const memberOf = (Array.isArray(orgs) ? orgs : []).map((o) => o.slug).filter(Boolean);
+  if (!memberOf.length) return null;
+
+  // GLITCHTIP_ORG is optional and only ever narrows: set it when one
+  // GlitchTip serves more than this pipeline and you want a single
+  // organisation to be the gate.
+  const restrictTo = orgSlug();
+  if (restrictTo && !memberOf.includes(restrictTo)) return null;
+
+  /**
+   * Which projects this person can see, straight from GlitchTip, with the
+   * organisation each belongs to. This is what makes a shared GlitchTip work
+   * without anything here having to be told about it: someone in two
+   * organisations sees both organisations' apps, someone in one sees one,
+   * and taking them off a team in GlitchTip takes their access away here
+   * too.
+   */
+  let projects = [];
+  try {
+    const visible = await callGlitchtip("/api/0/projects/", credential);
+    projects = (Array.isArray(visible) ? visible : [])
+      .map((p) => ({ slug: p.slug, org: p.organization?.slug || null }))
+      .filter((p) => p.slug);
+  } catch (err) {
+    // A token without project:read still identifies its owner, and org
+    // membership already decided that they may be here — so let them in and
+    // fall back to showing everything, rather than an empty viewer with no
+    // explanation.
+    console.warn(
+      `couldn't list projects for this sign-in (${err.status || err.message}) — ` +
+        "reports won't be narrowed to their projects."
+    );
+    projects = null;
+  }
 
   let email = null;
   let name = null;
@@ -84,7 +139,7 @@ async function resolveMember(credential) {
     // the decision, the identity is only for display.
   }
 
-  return { email, name };
+  return { email, name, orgs: memberOf, projects };
 }
 
 /** A personal auth token, pasted into the sign-in screen. */
@@ -116,9 +171,13 @@ export function verifyGlitchtipSession(sessionId) {
 const SERVICE_TOKEN = process.env.GLITCHTIP_SERVICE_TOKEN || "";
 const GLITCHTIP_TEAM = process.env.GLITCHTIP_TEAM || "";
 
-export const provisioningConfigured = Boolean(
-  glitchtipConfigured && SERVICE_TOKEN && GLITCHTIP_TEAM
-);
+/**
+ * A function rather than a constant: the organisation may not be known when
+ * this module loads, since it can be learned at the first sign-in.
+ */
+export function provisioningReady() {
+  return Boolean(glitchtipConfigured && SERVICE_TOKEN && GLITCHTIP_TEAM && orgSlug());
+}
 
 /** GlitchTip slugs are lowercase, dashed, and have to be unique in the org. */
 export function slugify(appName) {
@@ -137,14 +196,14 @@ export function slugify(appName) {
  * that slug, which is the state we wanted anyway.
  */
 export async function createProjectForApp(appName) {
-  if (!provisioningConfigured) return null;
+  if (!provisioningReady()) return null;
 
   const slug = slugify(appName);
   if (!slug) throw new Error(`"${appName}" has no usable slug`);
 
   try {
     const project = await callGlitchtip(
-      `/api/0/teams/${GLITCHTIP_ORG}/${GLITCHTIP_TEAM}/projects/`,
+      `/api/0/teams/${orgSlug()}/${GLITCHTIP_TEAM}/projects/`,
       { token: SERVICE_TOKEN },
       { method: "POST", body: { name: appName, slug, platform: null } }
     );
@@ -161,9 +220,9 @@ export async function createProjectForApp(appName) {
 
 /** The public DSN of a project, which is what an app's SDK needs. */
 export async function fetchProjectDsn(projectSlug) {
-  if (!provisioningConfigured) return null;
+  if (!provisioningReady()) return null;
   const keys = await callGlitchtip(
-    `/api/0/projects/${GLITCHTIP_ORG}/${projectSlug}/keys/`,
+    `/api/0/projects/${orgSlug()}/${projectSlug}/keys/`,
     { token: SERVICE_TOKEN }
   );
   const key = (Array.isArray(keys) ? keys : [])[0];
@@ -205,9 +264,14 @@ export async function revokeGlitchtipSession({ sessionId, csrfToken }) {
 }
 
 /** Link to a project's issue stream, or to a single event when we have one. */
-export function glitchtipLink({ projectSlug, eventId } = {}) {
+export function glitchtipLink({ projectSlug, org, eventId } = {}) {
   if (!glitchtipConfigured) return null;
-  const base = `${GLITCHTIP_URL}/${GLITCHTIP_ORG}/issues`;
+  // Without an organisation there is no URL to build: GlitchTip's issue
+  // stream lives under /<org>/issues, and guessing would send people to
+  // somebody else's.
+  const owner = org || orgSlug();
+  if (!owner) return null;
+  const base = `${GLITCHTIP_URL}/${owner}/issues`;
   if (eventId) return `${base}?query=${encodeURIComponent(eventId)}`;
   if (projectSlug) return `${base}?project=${encodeURIComponent(projectSlug)}`;
   return base;
