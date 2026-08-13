@@ -189,9 +189,7 @@ function renderIssues() {
     title.type = "button";
     title.className = "issue-title";
     title.textContent = issue.title || issue.metadata?.value || "(no title)";
-    // Until the detail screen exists, GlitchTip's own page is the answer —
-    // better than a dead link on every row.
-    title.addEventListener("click", () => window.open(issue.permalink, "_blank", "noopener"));
+    title.addEventListener("click", () => void openDetail(issue.id));
 
     const sub = document.createElement("div");
     sub.className = "issue-sub muted";
@@ -278,6 +276,228 @@ function paintEnvironments() {
   }
 }
 
+
+// ----------------------------------------------------------- one issue
+
+let openIssue = null;
+
+function section(title) {
+  const wrap = document.createElement("section");
+  wrap.className = "detail-section";
+  const h = document.createElement("h3");
+  h.textContent = title;
+  wrap.appendChild(h);
+  return wrap;
+}
+
+/**
+ * The stack, innermost call first — which is the order these arrive in and
+ * the opposite of what you want to read, so it's reversed here the way every
+ * error tracker does.
+ */
+function stacktrace(frames) {
+  const list = document.createElement("ol");
+  list.className = "frames";
+  for (const frame of [...frames].reverse()) {
+    const li = document.createElement("li");
+
+    const where = document.createElement("div");
+    where.className = "frame-where";
+    const fn = document.createElement("span");
+    fn.className = "frame-fn";
+    fn.textContent = frame.function || "?";
+    const file = document.createElement("span");
+    file.className = "frame-file mono";
+    // file:line:column, the form every editor and stack trace already uses.
+    const position = [frame.lineNo, frame.colNo].filter((n) => n != null).join(":");
+    file.textContent = [frame.filename || frame.absPath || "?", position].filter(Boolean).join(":");
+    where.append(fn, file);
+    li.appendChild(where);
+
+    // Source context only exists when the app uploaded source maps; without
+    // it a frame is still worth showing, just shorter.
+    if (Array.isArray(frame.context) && frame.context.length) {
+      const pre = document.createElement("pre");
+      pre.className = "frame-context mono";
+      for (const [lineNo, code] of frame.context) {
+        const line = document.createElement("div");
+        if (lineNo === frame.lineNo) line.className = "current";
+        line.textContent = `${String(lineNo).padStart(5)}  ${code}`;
+        pre.appendChild(line);
+      }
+      li.appendChild(pre);
+    }
+    list.appendChild(li);
+  }
+  return list;
+}
+
+function keyValues(pairs) {
+  const dl = document.createElement("dl");
+  dl.className = "kv";
+  for (const [key, value] of pairs) {
+    if (value === null || value === undefined || value === "") continue;
+    const dt = document.createElement("dt");
+    dt.textContent = key;
+    const dd = document.createElement("dd");
+    dd.className = "mono";
+    dd.textContent = typeof value === "object" ? JSON.stringify(value) : String(value);
+    dl.append(dt, dd);
+  }
+  return dl;
+}
+
+function breadcrumbs(values) {
+  const box = document.createElement("div");
+  box.className = "crumbs";
+  for (const crumb of values) {
+    const row = document.createElement("div");
+    row.className = "crumb";
+    const time = document.createElement("span");
+    time.className = "t mono";
+    time.textContent = crumb.timestamp ? new Date(crumb.timestamp).toLocaleTimeString() : "—";
+    const category = document.createElement("span");
+    category.className = "c";
+    category.textContent = crumb.category || crumb.type || "—";
+    const message = document.createElement("span");
+    message.className = "m";
+    message.textContent = crumb.message || (crumb.data ? JSON.stringify(crumb.data) : "") || "—";
+    row.append(time, category, message);
+    box.appendChild(row);
+  }
+  return box;
+}
+
+function renderEvent(event) {
+  const body = el("detail-body");
+  body.innerHTML = "";
+
+  for (const entry of event.entries || []) {
+    if (entry.type === "exception") {
+      for (const value of entry.data?.values || []) {
+        const wrap = section(`${value.type || "Exception"}`);
+        const message = document.createElement("p");
+        message.className = "exception-value";
+        message.textContent = value.value || "";
+        wrap.appendChild(message);
+        if (value.stacktrace?.frames?.length) {
+          wrap.appendChild(stacktrace(value.stacktrace.frames));
+        }
+        body.appendChild(wrap);
+      }
+    } else if (entry.type === "breadcrumbs") {
+      const values = entry.data?.values || [];
+      if (!values.length) continue;
+      const wrap = section(`Breadcrumbs (${values.length})`);
+      wrap.appendChild(breadcrumbs(values));
+      body.appendChild(wrap);
+    } else if (entry.type === "request") {
+      const wrap = section("Request");
+      const data = entry.data || {};
+      wrap.appendChild(
+        keyValues([
+          ["URL", data.url],
+          ["Method", data.method],
+          ["Query", data.query],
+        ])
+      );
+      body.appendChild(wrap);
+    } else if (entry.type === "message") {
+      const wrap = section("Message");
+      const p = document.createElement("p");
+      p.textContent = entry.data?.formatted || entry.data?.message || "";
+      wrap.appendChild(p);
+      body.appendChild(wrap);
+    }
+  }
+
+  if (event.tags?.length) {
+    const wrap = section("Tags");
+    wrap.appendChild(keyValues(event.tags.map((tag) => [tag.key, tag.value])));
+    body.appendChild(wrap);
+  }
+
+  const details = section("Event");
+  details.appendChild(
+    keyValues([
+      ["Event ID", event.eventID],
+      ["Received", event.dateCreated ? new Date(event.dateCreated).toLocaleString() : null],
+      ["Platform", event.platform],
+      ["SDK", event.sdk ? `${event.sdk.name} ${event.sdk.version || ""}`.trim() : null],
+      ["User", event.user ? event.user.email || event.user.username || event.user.id : null],
+    ])
+  );
+  body.appendChild(details);
+}
+
+async function openDetail(id) {
+  openIssue = id;
+  el("issue-detail").hidden = false;
+  document.querySelector(".issues-table").hidden = true;
+  document.querySelector(".issue-bulk").hidden = true;
+  document.querySelector(".issues-toolbar").hidden = true;
+  el("detail-body").innerHTML = '<p class="empty">Loading…</p>';
+
+  const base = `/api/0/organizations/${encodeURIComponent(org)}/issues/${encodeURIComponent(id)}`;
+  const [issueRes, eventRes] = await Promise.all([
+    fetch(`${base}/`, { credentials: "same-origin" }),
+    fetch(`${base}/events/latest/`, { credentials: "same-origin" }),
+  ]);
+
+  if (!issueRes.ok) {
+    el("detail-body").innerHTML = `<p class="error">Couldn't load that issue (${issueRes.status}).</p>`;
+    return;
+  }
+
+  const issue = await issueRes.json();
+  el("detail-title").textContent = issue.title || "(no title)";
+  el("detail-culprit").textContent = issue.culprit || issue.metadata?.filename || "";
+  el("detail-project").textContent = issue.project?.slug || "";
+  el("detail-status").textContent = issue.status;
+  // Offer the action that isn't already true.
+  const resolved = issue.status === "resolved";
+  el("detail-resolve").textContent = resolved ? "Mark unresolved" : "Mark resolved";
+  el("detail-resolve").dataset.next = resolved ? "unresolved" : "resolved";
+  el("detail-seen").textContent =
+    `${issue.count} event${issue.count === "1" ? "" : "s"} · first seen ${ago(issue.firstSeen)} ago · last ${ago(issue.lastSeen)} ago`;
+  el("detail-glitchtip").href = issue.permalink;
+
+  if (!eventRes.ok) {
+    el("detail-body").innerHTML =
+      '<p class="empty">No event body stored for this issue.</p>';
+    return;
+  }
+  renderEvent(await eventRes.json());
+}
+
+function closeDetail() {
+  openIssue = null;
+  el("issue-detail").hidden = true;
+  document.querySelector(".issues-table").hidden = false;
+  document.querySelector(".issue-bulk").hidden = false;
+  document.querySelector(".issues-toolbar").hidden = false;
+}
+
+async function setOpenIssueStatus(status) {
+  if (!openIssue) return;
+  const res = await fetch(
+    `/api/0/organizations/${encodeURIComponent(org)}/issues/?id=${encodeURIComponent(openIssue)}`,
+    {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json", "x-csrftoken": csrfToken() },
+      body: JSON.stringify({ status }),
+    }
+  );
+  if (res.ok) {
+    el("detail-status").textContent = status;
+    const resolved = status === "resolved";
+    el("detail-resolve").textContent = resolved ? "Mark unresolved" : "Mark resolved";
+    el("detail-resolve").dataset.next = resolved ? "unresolved" : "resolved";
+    await load(currentUrl);
+  }
+}
+
 export function initIssues({ organisation }) {
   org = organisation;
 
@@ -326,11 +546,17 @@ export function initIssues({ organisation }) {
   }
   el("issue-delete").onclick = () => void updateSelected("delete");
 
+  el("issue-back").onclick = closeDetail;
+  el("detail-resolve").onclick = () =>
+    void setOpenIssueStatus(el("detail-resolve").dataset.next || "resolved");
+  el("detail-ignore").onclick = () => void setOpenIssueStatus("ignored");
+
   el("issue-prev").onclick = () => cursorLinks.previous && load(cursorLinks.previous);
   el("issue-next").onclick = () => cursorLinks.next && load(cursorLinks.next);
 }
 
 export async function showIssues() {
+  closeDetail();
   await load(issuesUrl());
   paintEnvironments();
 }

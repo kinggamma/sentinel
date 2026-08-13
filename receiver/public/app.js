@@ -174,7 +174,10 @@ function showGate(message) {
   const err = el("gate-error");
   err.hidden = !message;
   err.textContent = message || "";
-  el("token-input").focus();
+  // Password is the way in most people will use; the token form is a click
+  // away for anyone who needs it.
+  if (!el("token-signin").hidden) el("token-input").focus();
+  else el("email-input").focus();
 }
 
 /**
@@ -227,6 +230,97 @@ function paintSignIn(config) {
     hint.hidden = true;
   }
 }
+
+
+/**
+ * Email and password, against GlitchTip's own accounts.
+ *
+ * Sentinel shows the form; GlitchTip decides. Its login endpoint is on this
+ * same origin, so the session it sets is the one everything else here
+ * already understands — the viewer, the issue stream, and GlitchTip's own
+ * screens all follow from it. Nothing about the password touches this
+ * receiver.
+ */
+function readCsrf() {
+  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+async function passwordSignIn() {
+  const error = el("password-error");
+  error.hidden = true;
+
+  const email = el("email-input").value.trim();
+  const password = el("password-input").value;
+  if (!email || !password) {
+    error.hidden = false;
+    error.textContent = "Enter your email and password.";
+    return;
+  }
+
+  const button = el("password-submit");
+  button.disabled = true;
+  try {
+    // Django won't accept the login without a CSRF token, and a fresh
+    // browser has no reason to have one yet — this GET is what mints it.
+    if (!readCsrf()) {
+      await fetch("/_allauth/browser/v1/auth/session", { credentials: "same-origin" });
+    }
+
+    const res = await fetch("/_allauth/browser/v1/auth/login", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json", "x-csrftoken": readCsrf() },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (res.ok || res.status === 200) {
+      el("password-input").value = "";
+      // GlitchTip has set its session; ours follows from it.
+      const sso = await fetch("/sentinel/api/auth/sso", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const body = await sso.json().catch(() => ({}));
+      if (sso.ok) return body.pending ? showWaiting(body) : enter();
+      error.hidden = false;
+      error.textContent = body.error || "Signed in to GlitchTip, but this viewer refused.";
+      return;
+    }
+
+    const body = await res.json().catch(() => ({}));
+    error.hidden = false;
+    error.textContent =
+      body.errors?.[0]?.message || `That didn't work (${res.status}).`;
+  } catch (err) {
+    error.hidden = false;
+    error.textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+el("password-submit").addEventListener("click", () => void passwordSignIn());
+for (const id of ["email-input", "password-input"]) {
+  el(id).addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void passwordSignIn();
+    }
+  });
+}
+
+el("show-token").addEventListener("click", () => {
+  el("password-signin").hidden = true;
+  el("token-signin").hidden = false;
+  el("token-input").focus();
+});
+
+el("show-password").addEventListener("click", () => {
+  el("token-signin").hidden = true;
+  el("password-signin").hidden = false;
+  el("email-input").focus();
+});
 
 el("gate-form").addEventListener("submit", async (event) => {
   event.preventDefault();

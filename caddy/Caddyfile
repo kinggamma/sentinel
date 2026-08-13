@@ -37,6 +37,12 @@
 		reverse_proxy feedback-receiver:4000
 	}
 
+	# The address people type lands in Sentinel, not GlitchTip. GlitchTip's
+	# own screens stay reachable at their own routes — /<org>/issues,
+	# /profile, /login — because Sentinel doesn't replace all of them yet,
+	# and a UI you can't reach is worse than one you rarely open.
+	redir / /sentinel/ 302
+
 	handle /sentinel* {
 		reverse_proxy feedback-receiver:4000
 	}

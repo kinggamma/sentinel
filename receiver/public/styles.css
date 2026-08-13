@@ -941,3 +941,110 @@ button.danger:hover {
 .trend span.empty {
   background: var(--border);
 }
+
+/* --- one issue ---------------------------------------------------- */
+
+#issue-detail {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.detail-head h2 {
+  margin: 10px 0 2px;
+  font-size: 19px;
+  overflow-wrap: anywhere;
+}
+
+#detail-culprit {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-section {
+  margin-top: 22px;
+}
+
+.detail-section h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.exception-value {
+  margin: 0 0 12px;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.frames {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.frames li {
+  border-bottom: 1px solid var(--border);
+}
+
+.frames li:last-child {
+  border-bottom: none;
+}
+
+.frame-where {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 12px;
+  background: var(--bg);
+  flex-wrap: wrap;
+}
+
+.frame-fn {
+  font-weight: 600;
+}
+
+.frame-file {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.frame-context {
+  margin: 0;
+  padding: 8px 0;
+  font-size: 12.5px;
+  overflow-x: auto;
+}
+
+.frame-context div {
+  padding: 1px 12px;
+  white-space: pre;
+}
+
+.frame-context div.current {
+  background: var(--accent-soft);
+}

@@ -251,6 +251,22 @@ travelling over TLS, so they stop being sent over plain HTTP at all:
 echo 'SECURE_COOKIES=true' >> .env && docker compose up -d feedback-receiver
 ```
 
+## One face, GlitchTip underneath
+
+Sentinel is what people open. It signs them in, lists errors, and shows bug
+reports; GlitchTip stores all of it and remains the thing that decides who
+may see what.
+
+Signing in is Sentinel's form and GlitchTip's accounts — the password goes
+to GlitchTip's own login endpoint on the same origin, so the session that
+comes back is the one everything else already understands, and the receiver
+never sees it. Anyone who is already signed in to GlitchTip skips the form
+entirely.
+
+The screens Sentinel hasn't taken over yet — projects, teams, alerts,
+uptime — are still GlitchTip's own, reachable at their usual addresses. The
+root address lands in Sentinel.
+
 ## Issues, in Sentinel
 
 Errors are read straight from GlitchTip's API and listed under **Issues**,
