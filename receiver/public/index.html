@@ -134,6 +134,22 @@
         </form>
         <p id="settings-error" class="error" hidden></p>
 
+        <!-- An app has to exist before it can be given an address, and it
+             can't report until it has one — so it must be possible to add
+             one here rather than waiting for a first report. -->
+        <div id="add-app" class="integration">
+          <h3>Add an app</h3>
+          <p class="muted">
+            Gives it a card straight away, so you can set where it runs before it has reported.
+            The name must match the <code>appName</code> the app sends.
+          </p>
+          <form id="add-app-form" class="origin-add">
+            <input id="add-app-name" type="text" placeholder="e.g. admin-panel" autocomplete="off" />
+            <button type="submit">Add</button>
+          </form>
+          <p id="add-app-error" class="error" hidden></p>
+        </div>
+
         <!-- Lets Sentinel act in GlitchTip on your behalf: inviting people
              who ask for access, and creating a project for a new app. -->
         <div id="integration" class="integration">

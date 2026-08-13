@@ -1162,6 +1162,7 @@ function openAppOrigins(appName, origins) {
   editingApp = appName;
   settings.hidden = false;
   el("integration").hidden = true;
+  el("add-app").hidden = true;
   el("settings-title").textContent = `Where ${appName} runs`;
   el("settings-note").textContent =
     "Its browser code may only post reports from these addresses. An app that reports " +
@@ -1241,6 +1242,33 @@ el("integration-form").addEventListener("submit", async (event) => {
   await loadIntegration();
 });
 
+
+el("add-app-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const err = el("add-app-error");
+  err.hidden = true;
+
+  const name = el("add-app-name").value.trim();
+  if (!name) return;
+
+  // Created with no addresses: an app that reports from its own server
+  // never needs one, and the card is where you'd add them if it does.
+  const res = await api(`/api/settings/apps/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ origins: [] }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    err.hidden = false;
+    err.textContent = body.error || `Could not add that (${res.status}).`;
+    return;
+  }
+  el("add-app-name").value = "";
+  settings.hidden = true;
+  await refresh();
+});
+
 el("settings-open").addEventListener("click", async () => {
   editingApp = null;
   el("settings-title").textContent = "Apps allowed to report";
@@ -1249,6 +1277,7 @@ el("settings-open").addEventListener("click", async () => {
     "Server-side reporting doesn't need an entry — only pages running in a browser do.";
   el("origin-form").hidden = false;
   el("integration").hidden = false;
+  el("add-app").hidden = false;
   void loadIntegration();
   settings.hidden = false;
   await loadOrigins();
