@@ -176,7 +176,7 @@ function detailRows(report) {
   return rows;
 }
 
-async function renderReplay(report, into, signal) {
+async function renderReplay(report, into, signal, { onPlayer }) {
   if (!report.hasReplay) return;
 
   into.append(h("h3", { text: "Session replay" }));
@@ -202,27 +202,42 @@ async function renderReplay(report, into, signal) {
 
     const { default: Player } = await import("../vendor/rrweb-player.js");
     throwIfAborted(signal);
-    // eslint-disable-next-line no-new
-    new Player({
-      target: mount,
-      props: {
-        events,
-        width: mount.clientWidth || 720,
-        height: Math.round((mount.clientWidth || 720) * 0.56),
-        autoPlay: false,
-        showController: true,
-        // The recording is masked, but don't let a replayed page make
-        // network requests of its own.
-        UNSAFE_replayCanvas: false,
-      },
-    });
+
+    // The player is sized once, from a number, and never resizes itself — so
+    // that number has to be the width this really ends up. Read straight
+    // after the detail is built it isn't: on a cold load of a report's own
+    // URL the grid column hasn't settled and it measured a third of the
+    // width, which is exactly the case a linkable report creates. One frame
+    // is enough for layout to be final.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    throwIfAborted(signal);
+    const width = mount.clientWidth || 720;
+    // Handed straight up rather than dropped on the floor. It's a Svelte
+    // component with its own timers, rAF loop and iframe, and removing the
+    // element it rendered into doesn't stop any of them — a replay left
+    // playing kept ticking behind whatever screen came next.
+    onPlayer(
+      new Player({
+        target: mount,
+        props: {
+          events,
+          width,
+          height: Math.round(width * 0.56),
+          autoPlay: false,
+          showController: true,
+          // The recording is masked, but don't let a replayed page make
+          // network requests of its own.
+          UNSAFE_replayCanvas: false,
+        },
+      })
+    );
   } catch (error) {
     if (error?.name === "AbortError") throw error;
     fill(mount, h("p", { className: "empty", text: `Could not load replay: ${error.message}` }));
   }
 }
 
-function renderScreenshots(report, into, { onFrames, openFrame, track }) {
+function renderScreenshots(report, into, { onFrames, openFrame, track, signal }) {
   const files = report.screenshots || [];
   // Replay supersedes screenshots; only older reports have both or neither.
   if (!files.length && report.hasReplay) return;
@@ -250,16 +265,25 @@ function renderScreenshots(report, into, { onFrames, openFrame, track }) {
       h("button", { type: "button", on: { click: () => openFrame(index) } }, img, label)
     );
 
+    // These are the one set of requests that outlive the render that starts
+    // them: a screenshot is a few hundred kilobytes and nobody awaits it. On
+    // the signal, so a navigation cancels them — and checked again on the
+    // way out, because a response already in flight when the signal fires
+    // still arrives, and would mint an object URL nothing is left to revoke.
     sentinel
-      .raw(`/reports/${encodeURIComponent(report.id)}/screenshots/${encodeURIComponent(filename)}`)
+      .raw(`/reports/${encodeURIComponent(report.id)}/screenshots/${encodeURIComponent(filename)}`, {
+        signal,
+      })
       .then((res) => (res.ok ? res.blob() : Promise.reject(new Error(String(res.status)))))
       .then((blob) => {
+        if (signal?.aborted) return;
         const url = URL.createObjectURL(blob);
         track(url);
         frames[index] = { url, label: label.textContent };
         img.src = url;
       })
-      .catch(() => {
+      .catch((error) => {
+        if (error?.name === "AbortError" || signal?.aborted) return;
         label.textContent = `frame ${index + 1} — failed to load`;
       });
   });
@@ -340,19 +364,30 @@ function renderDangerZone(report, into, { onDeleted, track }) {
  * @param {() => void} [deps.onChanged] - something was deleted; the landing
  *   counts and the app's own state are stale.
  */
-export async function reportsView({ outlet, params, signal }, { hueFor, onChanged } = {}) {
+export async function reportsView(
+  { outlet, params, signal, onCleanup },
+  { hueFor, onChanged } = {}
+) {
   const appName = params.app || "";
   const openId = params.id || null;
 
   const objectUrls = [];
   const timers = [];
   let frames = { open: () => {}, cleanup: () => {} };
+  let player = null;
 
-  const cleanup = () => {
+  // Registered before the first fetch, not returned after the last one.
+  // Everything below this line allocates something — object URLs, a keydown
+  // listener, a replay player — and any of the awaits between here and the
+  // end can throw, most often an AbortError from the navigation that
+  // superseded this render. A returned cleanup is only reached when nothing
+  // goes wrong, which is the case that didn't need it.
+  onCleanup(() => {
     objectUrls.forEach((url) => URL.revokeObjectURL(url));
     timers.forEach((timer) => clearTimeout(timer));
     frames.cleanup();
-  };
+    player?.$destroy?.();
+  });
 
   let all;
   try {
@@ -360,7 +395,7 @@ export async function reportsView({ outlet, params, signal }, { hueFor, onChange
   } catch (error) {
     throwIfAborted(signal);
     fill(outlet, h("p", { className: "error", text: error.message || "Could not load reports." }));
-    return cleanup;
+    return;
   }
   throwIfAborted(signal);
 
@@ -442,7 +477,7 @@ export async function reportsView({ outlet, params, signal }, { hueFor, onChange
     h("div", { className: "layout" }, list, detail)
   );
 
-  if (!openId) return cleanup;
+  if (!openId) return;
 
   // ------------------------------------------------------------- detail
   fill(detail, emptyState("Loading…"));
@@ -453,7 +488,7 @@ export async function reportsView({ outlet, params, signal }, { hueFor, onChange
   } catch (error) {
     throwIfAborted(signal);
     fill(detail, h("p", { className: "error", text: `Could not load report (${error.message}).` }));
-    return cleanup;
+    return;
   }
   throwIfAborted(signal);
 
@@ -477,6 +512,7 @@ export async function reportsView({ outlet, params, signal }, { hueFor, onChange
     onFrames: (list_) => (frames = { ...lightbox(list_), list: list_ }),
     openFrame: (index) => frames.open(index),
     track: (url) => objectUrls.push(url),
+    signal,
   });
   renderBreadcrumbs(report, detail);
   renderDangerZone(report, detail, {
@@ -490,7 +526,5 @@ export async function reportsView({ outlet, params, signal }, { hueFor, onChange
 
   // Awaited last so a navigation during the bundle load can cancel it, but
   // painted into the slot above.
-  await renderReplay(report, replaySlot, signal);
-
-  return cleanup;
+  await renderReplay(report, replaySlot, signal, { onPlayer: (instance) => (player = instance) });
 }

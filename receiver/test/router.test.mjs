@@ -537,9 +537,70 @@ await test("a layered route superseded mid-mount cleans up what it mounted", asy
   await Promise.all([first, second]);
 
   same(shown(outlet), "elsewhere", "the later navigation is the one showing");
-  // Both halves of the superseded render are accounted for: the router
-  // discards the layer's cleanup as one, and the layer runs both.
+  // Both halves of the superseded render are accounted for: each registered
+  // its cleanup as it mounted, so the router unwinds them itself.
   same(cleaned.sort(), ["dialog", "landing"], "both layers were torn down");
+  router.stop();
+});
+
+await test("a view that throws after allocating still has its cleanup run", async () => {
+  const { router, outlet } = await harness("/sentinel/reports");
+  const log = quiet();
+  try {
+    const cleaned = [];
+    router.route("/reports", ({ onCleanup }) => {
+      // The shape every real view has: open something, then go and fetch.
+      onCleanup(() => cleaned.push("lightbox listener"));
+      onCleanup(() => cleaned.push("object urls"));
+      throw new Error("could not load reports");
+    });
+    await router.start({ outlet });
+
+    same(cleaned, ["object urls", "lightbox listener"], "unwound in reverse, none missed");
+    assert(shown(outlet).includes("could not load reports"), "and the error still surfaced");
+  } finally {
+    log.restore();
+    router.stop();
+  }
+});
+
+await test("an aborted view's registered cleanups run, quietly", async () => {
+  const { router, outlet } = await harness("/sentinel/reports");
+  const cleaned = [];
+  router.route("/reports", async ({ signal, onCleanup }) => {
+    onCleanup(() => cleaned.push("player"));
+    await delay(30);
+    // What throwIfAborted does, and what fetch does on a cancelled request:
+    // the view never reaches its own return, so this is the only teardown
+    // anyone is ever going to be handed.
+    if (signal.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    return () => cleaned.push("unreachable");
+  });
+  router.route("/elsewhere", ({ outlet: node }) => paint(node, "elsewhere"));
+
+  const first = router.start({ outlet });
+  await delay(5);
+  const second = router.go("/elsewhere");
+  await Promise.all([first, second]);
+
+  same(cleaned, ["player"], "the replay player was destroyed");
+  same(shown(outlet), "elsewhere", "and the abort was not reported as a failure");
+  router.stop();
+});
+
+await test("a returned cleanup runs before the ones the view registered", async () => {
+  const { router, outlet } = await harness("/sentinel/reports");
+  const order = [];
+  router.route("/reports", ({ onCleanup }) => {
+    onCleanup(() => order.push("registered first"));
+    onCleanup(() => order.push("registered second"));
+    return () => order.push("returned");
+  });
+  router.route("/elsewhere", ({ outlet: node }) => paint(node, "elsewhere"));
+
+  await router.start({ outlet });
+  await router.go("/elsewhere");
+  same(order, ["returned", "registered second", "registered first"], "teardown order");
   router.stop();
 });
 

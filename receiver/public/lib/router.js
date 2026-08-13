@@ -125,6 +125,20 @@ function safely(fn, label) {
  * object URL to revoke. It runs before the next view mounts, which is the
  * bit hand-rolled switching kept forgetting.
  *
+ * Returning it is not enough on its own, and this is the trap: a view opens
+ * a dialog, appends a listener to document, starts a fetch — and only then
+ * awaits. If that await throws, or is aborted by the navigation that
+ * superseded it, the view never reaches its `return cleanup` and the router
+ * is handed nothing. The dialog stays on screen over the next screen, the
+ * listener stays on document, and nothing knows they exist. So a view can
+ * also register cleanups the moment it allocates, through ctx.onCleanup(),
+ * and the router honours those on every exit — returned, thrown, aborted or
+ * superseded.
+ *
+ * Both are run, in reverse order of registration, with the returned one
+ * first: it's the view's own summary of its teardown, and whatever it
+ * registered on the way up is unwound behind it.
+ *
  * @param {object} [options]
  * @param {boolean} [options.force] - render even if the URL matches the last
  *   one, for refresh() and for the first render at boot.
@@ -150,6 +164,11 @@ async function render({ force = false, scroll = false } = {}) {
   const view = found ? found.entry.view : notFound;
   if (!view) return;
 
+  const cleanups = [];
+  const unwind = (label) => {
+    while (cleanups.length) safely(cleanups.pop(), label);
+  };
+
   const context = {
     params: found?.params || {},
     query: Object.fromEntries(new URLSearchParams(location.search)),
@@ -158,19 +177,28 @@ async function render({ force = false, scroll = false } = {}) {
     outlet,
     // Pass to fetch, or check before touching the DOM after an await.
     signal: controller.signal,
+    /**
+     * Hand back a teardown at the moment the thing needing it is created,
+     * rather than at the end of a render that may never be reached.
+     */
+    onCleanup(fn) {
+      if (typeof fn === "function") cleanups.push(fn);
+    },
   };
 
   try {
     const cleanup = await view(context);
+    if (typeof cleanup === "function") cleanups.push(cleanup);
     // Lost the race: the outlet belongs to someone else now. Still honour
     // whatever this view opened, or it leaks.
-    if (token !== generation) {
-      if (typeof cleanup === "function") safely(cleanup, "superseded view cleanup");
-      return;
-    }
-    current = { view, cleanup: typeof cleanup === "function" ? cleanup : null };
+    if (token !== generation) return unwind("superseded view cleanup");
+    current = { view, cleanup: cleanups.length ? () => unwind("view cleanup") : null };
     if (scroll) window.scrollTo?.(0, 0);
   } catch (error) {
+    // Whatever it managed to open before it failed still has to close. This
+    // is the whole reason onCleanup exists: a view that throws mid-mount
+    // never returns its own teardown.
+    unwind(token === generation ? "failed view cleanup" : "superseded view cleanup");
     if (token !== generation) return;
     // An aborted view isn't a failure, it's a view that was told to stop.
     if (error?.name === "AbortError") return;
@@ -192,28 +220,17 @@ async function render({ force = false, scroll = false } = {}) {
  * silently drops whichever cleanup isn't the one returned, and the screen
  * underneath keeps its timers and listeners for the rest of the session.
  *
- * Here every view that mounted is torn down, in reverse order, so the thing
- * on top goes first. If one throws on the way up, whatever already mounted
- * is torn down before the error is rethrown — the router never sees a
- * cleanup for a view that failed, so nobody else can do it.
+ * Each one's cleanup is registered as it mounts, so they unwind in reverse
+ * and the thing on top goes first. This used to keep its own list and its
+ * own try/catch to unwind it, which was the same job render() above now does
+ * for every view — including the case that list couldn't see, a view that
+ * throws before returning anything at all.
  */
 export function layer(...views) {
   return async (ctx) => {
-    const mounted = [];
-    const teardown = () => {
-      while (mounted.length) safely(mounted.pop(), "layered view cleanup");
-    };
-
-    try {
-      for (const view of views) {
-        const cleanup = await view(ctx);
-        if (typeof cleanup === "function") mounted.push(cleanup);
-      }
-    } catch (error) {
-      teardown();
-      throw error;
+    for (const view of views) {
+      ctx.onCleanup(await view(ctx));
     }
-    return teardown;
   };
 }
 
