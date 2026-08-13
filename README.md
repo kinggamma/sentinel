@@ -642,13 +642,40 @@ you want to track it there.
 
 ## Known limits
 
-- No automated test suite yet — changes are verified by hand against a
-  running stack.
+- The test suite is smoke-level: it checks routing, authentication
+  boundaries and CSRF against a running stack, not application logic.
+  Everything else is still verified by hand.
 - Replay needs a DOM, so mobile apps get error tracking only.
 - The receiver stores reports on the filesystem; there's no clustering or
   object-storage backend.
 - Plain HTTP by default; see `caddy/Caddyfile` for the automatic-HTTPS
   block once you have a domain.
+
+## Smoke tests
+
+```bash
+cd receiver && npm run smoke
+```
+
+They drive the running stack rather than mocking it, because the things
+that have actually broken here were never inside a function: a CSRF header
+nobody sent, a URL space two backends both claimed, a guard mounted where
+it intercepted every request. None of those are visible without the whole
+thing up.
+
+The session and CSRF checks need a GlitchTip session, which needs a
+password nobody should be typing into a test. Seed a throwaway one instead:
+
+```bash
+export GLITCHTIP_SESSION=$(./scripts/seed-smoke-session.sh)
+```
+
+```bash
+cd receiver && npm run smoke && cd .. && ./scripts/seed-smoke-session.sh --clear "$GLITCHTIP_SESSION"
+```
+
+Without it those two checks skip rather than fail. `BASE_URL` points the
+suite at another host.
 
 ## Contributing
 
