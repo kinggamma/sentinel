@@ -96,6 +96,22 @@ app.get("/sentinel", (req, res, next) => {
   return next();
 });
 app.use("/sentinel", express.static(PUBLIC_DIR, staticOptions));
+
+/**
+ * Anything else under /sentinel is a client-side route — /sentinel/issues,
+ * /sentinel/settings/teams — so it has to serve the shell rather than 404.
+ * Without this, a bookmark or a reload anywhere but the root is a dead end,
+ * which is the whole reason the viewer had no routing before.
+ *
+ * Only for navigations: a missing asset should still 404 rather than
+ * silently returning HTML, which is a confusing failure to debug.
+ */
+app.get("/sentinel/*", (req, res, next) => {
+  if (req.method !== "GET") return next();
+  if (!String(req.headers.accept || "").includes("text/html")) return next();
+  if (path.extname(req.path)) return next();
+  return res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+});
 app.use(express.static(PUBLIC_DIR, staticOptions));
 
 /**
