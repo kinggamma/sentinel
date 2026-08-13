@@ -1,4 +1,5 @@
 import fetch from "node-fetch";
+import { serviceTeam, serviceToken } from "./settings.js";
 
 /**
  * GlitchTip as the source of truth for who may read reports.
@@ -179,10 +180,10 @@ export async function identifyGlitchtipUser(credential) {
  */
 export async function inviteToOrg({ org, email, role = "member" }) {
   if (!glitchtipConfigured) throw new Error("GlitchTip isn't configured");
-  if (!SERVICE_TOKEN) {
+  if (!serviceToken()) {
     const err = new Error(
-      "No GLITCHTIP_SERVICE_TOKEN is set, so invitations can't be sent from here. " +
-        "Invite them in GlitchTip under Organization > Members instead."
+      "No GlitchTip service token is set, so invitations can't be sent from here. " +
+        "Add one in Settings, or invite them in GlitchTip under Organization > Members."
     );
     err.status = 501;
     throw err;
@@ -190,7 +191,7 @@ export async function inviteToOrg({ org, email, role = "member" }) {
 
   const created = await callGlitchtip(
     `/api/0/organizations/${org}/members/`,
-    { token: SERVICE_TOKEN },
+    { token: serviceToken() },
     { method: "POST", body: { email, orgRole: role, teamRoles: [] } }
   );
   return { inviteLink: created.inviteLink || created.invite_link || null };
@@ -217,15 +218,15 @@ export function verifyGlitchtipSession(sessionId) {
  * still has to be an organisation admin; that part GlitchTip checks by role
  * and no scope can soften it.
  */
-const SERVICE_TOKEN = process.env.GLITCHTIP_SERVICE_TOKEN || "";
-const GLITCHTIP_TEAM = process.env.GLITCHTIP_TEAM || "";
+// Read through settings so they can be set in the viewer as well as the
+// environment, and take effect without a restart.
 
 /**
  * A function rather than a constant: the organisation may not be known when
  * this module loads, since it can be learned at the first sign-in.
  */
 export function provisioningReady() {
-  return Boolean(glitchtipConfigured && SERVICE_TOKEN && GLITCHTIP_TEAM && orgSlug());
+  return Boolean(glitchtipConfigured && serviceToken() && serviceTeam() && orgSlug());
 }
 
 /** GlitchTip slugs are lowercase, dashed, and have to be unique in the org. */
@@ -252,8 +253,8 @@ export async function createProjectForApp(appName) {
 
   try {
     const project = await callGlitchtip(
-      `/api/0/teams/${orgSlug()}/${GLITCHTIP_TEAM}/projects/`,
-      { token: SERVICE_TOKEN },
+      `/api/0/teams/${orgSlug()}/${serviceTeam()}/projects/`,
+      { token: serviceToken() },
       { method: "POST", body: { name: appName, slug, platform: null } }
     );
     return { slug: project.slug || slug, dsn: await fetchProjectDsn(project.slug || slug) };
@@ -272,7 +273,7 @@ export async function fetchProjectDsn(projectSlug) {
   if (!provisioningReady()) return null;
   const keys = await callGlitchtip(
     `/api/0/projects/${orgSlug()}/${projectSlug}/keys/`,
-    { token: SERVICE_TOKEN }
+    { token: serviceToken() }
   );
   const key = (Array.isArray(keys) ? keys : [])[0];
   return key?.dsn?.public || null;

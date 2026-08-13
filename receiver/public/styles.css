@@ -716,3 +716,25 @@ button.danger:hover {
   justify-content: flex-end;
   margin-top: 16px;
 }
+
+.integration {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.integration h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.integration > .muted {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+#integration-status {
+  font-size: 12.5px;
+  margin: 0 0 10px;
+}

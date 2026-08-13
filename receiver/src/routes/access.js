@@ -15,7 +15,7 @@ export const accessRouter = Router();
  * Where the person asking stands. Answers for members too — they have no
  * request, which is how the viewer knows not to offer one.
  */
-accessRouter.get("/access/me", async (req, res) => {
+accessRouter.get("/me", async (req, res) => {
   const viewer = req.viewer || {};
   if (!viewer.email) return res.json({ pending: false, request: null, organisations: [] });
 
@@ -34,7 +34,7 @@ accessRouter.get("/access/me", async (req, res) => {
   });
 });
 
-accessRouter.post("/access/request", async (req, res) => {
+accessRouter.post("/request", async (req, res) => {
   const viewer = req.viewer || {};
   if (!viewer.email) {
     return res.status(400).json({ error: "we don't know who you are — sign in to GlitchTip first" });
@@ -61,7 +61,7 @@ accessRouter.post("/access/request", async (req, res) => {
  * this router refuses a pending session — and approving needs somewhere to
  * put them, which is one of the approver's own organisations.
  */
-accessRouter.get("/access/requests", async (req, res) => {
+accessRouter.get("/requests", async (req, res) => {
   if (req.viewer?.pending) return res.status(403).json({ error: "awaiting access" });
   res.json({
     requests: await listRequests(),
@@ -71,7 +71,7 @@ accessRouter.get("/access/requests", async (req, res) => {
   });
 });
 
-accessRouter.post("/access/requests/:id/approve", async (req, res) => {
+accessRouter.post("/requests/:id/approve", async (req, res) => {
   if (req.viewer?.pending) return res.status(403).json({ error: "awaiting access" });
 
   const org = String(req.body?.organisation || "").trim();
@@ -114,7 +114,7 @@ accessRouter.post("/access/requests/:id/approve", async (req, res) => {
   }
 });
 
-accessRouter.post("/access/requests/:id/decline", async (req, res) => {
+accessRouter.post("/requests/:id/decline", async (req, res) => {
   if (req.viewer?.pending) return res.status(403).json({ error: "awaiting access" });
 
   const request = await findById(req.params.id);

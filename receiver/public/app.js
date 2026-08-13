@@ -1161,6 +1161,7 @@ let editingApp = null;
 function openAppOrigins(appName, origins) {
   editingApp = appName;
   settings.hidden = false;
+  el("integration").hidden = true;
   el("settings-title").textContent = `Where ${appName} runs`;
   el("settings-note").textContent =
     "Its browser code may only post reports from these addresses. An app that reports " +
@@ -1187,6 +1188,59 @@ async function saveAppOrigins(origins) {
   void refresh();
 }
 
+
+/**
+ * The GlitchTip service credential. Shown as set-or-not, never read back —
+ * the receiver won't return it, so there's nothing here to leak.
+ */
+async function loadIntegration() {
+  const res = await api("/api/settings/integration");
+  if (!res.ok) return;
+  const status = await res.json();
+
+  const line = el("integration-status");
+  const token = el("integration-token");
+  const team = el("integration-team");
+
+  const parts = [];
+  parts.push(status.hasToken ? "A token is set." : "No token set — approving access and creating projects are unavailable.");
+  if (status.team) parts.push(`New projects go to the "${status.team}" team.`);
+  if (status.tokenFromEnv) parts.push("Set in this deployment's environment, so it can't be changed here.");
+  line.textContent = parts.join(" ");
+
+  token.disabled = status.tokenFromEnv;
+  team.disabled = status.teamFromEnv;
+  team.value = status.team || "";
+  token.placeholder = status.hasToken ? "Paste a new token to replace it" : "Paste a token to set it";
+}
+
+el("integration-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const err = el("integration-error");
+  err.hidden = true;
+
+  const token = el("integration-token").value.trim();
+  const team = el("integration-team").value.trim();
+  const payload = { team };
+  // Only send the token when one was typed, so saving the team alone
+  // doesn't wipe a token that's already set.
+  if (token) payload.serviceToken = token;
+
+  const res = await api("/api/settings/integration", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    err.hidden = false;
+    err.textContent = body.error || `Could not save (${res.status}).`;
+    return;
+  }
+  el("integration-token").value = "";
+  await loadIntegration();
+});
+
 el("settings-open").addEventListener("click", async () => {
   editingApp = null;
   el("settings-title").textContent = "Apps allowed to report";
@@ -1194,6 +1248,8 @@ el("settings-open").addEventListener("click", async () => {
     "An app's browser code can only send reports from an address listed here. " +
     "Server-side reporting doesn't need an entry — only pages running in a browser do.";
   el("origin-form").hidden = false;
+  el("integration").hidden = false;
+  void loadIntegration();
   settings.hidden = false;
   await loadOrigins();
 });
