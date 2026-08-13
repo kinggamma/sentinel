@@ -1048,3 +1048,91 @@ button.danger:hover {
 .frame-context div.current {
   background: var(--accent-soft);
 }
+
+/* --- kernel components -------------------------------------------- */
+/* Backing styles for the factories in lib/dom.js, so a new screen gets a
+   consistent card, table, form row and dialog without inventing its own. */
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.data-table th {
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.field-label {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* One dialog implementation, replacing three hand-rolled overlays. */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 12, 0.6);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 30;
+}
+
+.modal-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 24px;
+  width: min(560px, 100%);
+  max-height: 86vh;
+  overflow-y: auto;
+}
+
+.modal-card h2 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}

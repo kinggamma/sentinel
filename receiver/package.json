@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "build:player": "esbuild vendor/player-entry.js --bundle --format=esm --minify --outfile=public/vendor/rrweb-player.js && cp node_modules/rrweb-player/dist/style.css public/vendor/rrweb-player.css"
+    "build:player": "esbuild vendor/player-entry.js --bundle --format=esm --minify --outfile=public/vendor/rrweb-player.js && cp node_modules/rrweb-player/dist/style.css public/vendor/rrweb-player.css",
+    "smoke": "node test/smoke.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.23.0",

@@ -6,6 +6,10 @@
 #   docker compose up -d
 # ---------------------------------------------------------------------------
 
+# GlitchTip is pinned by digest, not by tag: Sentinel's UI reads its API
+# directly, so what we run has to be exactly what was tested. Upgrading is
+# deliberate — change the digest, run `npm run smoke` in receiver/, then merge.
+# Currently GlitchTip 6.2.6.
 x-glitchtip-env: &glitchtip-env
   DATABASE_URL: postgres://glitchtip:${POSTGRES_PASSWORD}@postgres:5432/glitchtip
   SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
@@ -62,7 +66,7 @@ services:
       retries: 5
 
   glitchtip-migrate:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip@sha256:a3d8eb1b36c1e1603d55ab32711ea3dd8115874742a781a57391a62a16e0dff6
     environment:
       <<: *glitchtip-env
     command: ./manage.py migrate
@@ -73,7 +77,7 @@ services:
         condition: service_healthy
 
   glitchtip-web:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip@sha256:a3d8eb1b36c1e1603d55ab32711ea3dd8115874742a781a57391a62a16e0dff6
     restart: unless-stopped
     environment:
       <<: *glitchtip-env
@@ -91,7 +95,7 @@ services:
       - ./glitchtip/index.html:/code/dist/index.html:ro
 
   glitchtip-worker:
-    image: glitchtip/glitchtip:latest
+    image: glitchtip/glitchtip@sha256:a3d8eb1b36c1e1603d55ab32711ea3dd8115874742a781a57391a62a16e0dff6
     restart: unless-stopped
     command: ./bin/run-celery-with-beat.sh
     environment:

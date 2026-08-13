@@ -32,7 +32,9 @@
 	# Only the path apps' SDKs post to. Everything else under /api is
 	# GlitchTip's — including /api/settings/, which its own frontend calls
 	# before anything else, and /api/<project-id>/ where events arrive.
-	@report_intake path /api/reports*
+	# Exact, not a prefix wildcard: /api/reports* would also capture anything
+	# GlitchTip might serve beginning with those letters.
+	@report_intake path /api/reports /api/reports/*
 	handle @report_intake {
 		reverse_proxy feedback-receiver:4000
 	}
