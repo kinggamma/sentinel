@@ -105,6 +105,11 @@ async function shellServed() {
     "/sentinel/requests",
     "/sentinel/settings",
     "/sentinel/settings/apps/e-library-admin",
+    // Reports, the last screen to stop being a mode of "/" — one app's list,
+    // and one report inside it. Both are two segments deep or more, which is
+    // where the <base> assertion below earns its place.
+    "/sentinel/reports/e-library-admin",
+    "/sentinel/reports/e-library-admin/2f8a1c",
   ]) {
     await check(`${route} serves the shell`, async () => {
       const res = await get(route, { headers: { accept: "text/html" } });
@@ -142,6 +147,8 @@ async function shellServed() {
     "lib/abort.js",
     "views/requests.js",
     "views/settings.js",
+    "views/projects.js",
+    "views/reports.js",
   ]) {
     await check(`${asset} is served`, async () => {
       assertStatus(await get(`/sentinel/${asset}`), 200, asset);
@@ -191,6 +198,19 @@ async function standaloneMode() {
   // The actual bug this file exists to catch: a route two segments deep,
   // reloaded or bookmarked, used to serve a blank page — app.js itself
   // 404'd, resolved against the wrong root, and nothing after it ran.
+  // The embedded viewer boots here, at ?app=&embed=1, and now navigates
+  // itself to /reports/:app — so a reload inside that iframe asks this root
+  // for a path it never used to be asked for.
+  await check("the embedded viewer's own route serves the shell standalone", async () => {
+    const res = await getStandalone("/reports/e-library-admin?app=e-library-admin&embed=1", {
+      headers: { accept: "text/html" },
+    });
+    assertStatus(res, 200);
+    const body = await res.text();
+    assert(body.includes("<title>Sentinel</title>"), "embedded reports route did not return the shell");
+    assert(body.includes('<base href="/" />'), "standalone <base> is missing or wrong");
+  });
+
   await check("a deep client route serves the shell at the bare root too", async () => {
     if (!reachable) return "skip";
     const res = await getStandalone("/settings/apps/mewaka-lms", { headers: { accept: "text/html" } });

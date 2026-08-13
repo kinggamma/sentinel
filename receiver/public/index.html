@@ -126,13 +126,10 @@
           <button id="tab-issues" type="button" class="tab">Issues</button>
           <button id="tab-reports" type="button" class="tab selected">Reports</button>
         </nav>
+        <!-- Reports' search and source filter used to live here, in the
+             shell, shown and hidden by whichever screen was up. They belong
+             to that screen, and moved into it (views/reports.js). -->
         <div class="topbar-controls">
-          <input id="search" type="search" placeholder="Search note, URL, reporter…" hidden />
-          <select id="source-filter" hidden>
-            <option value="">All sources</option>
-            <option value="staff-report">Staff reports</option>
-            <option value="auto-error">Auto-captured</option>
-          </select>
           <a id="glitchtip-link" class="button-link" target="_blank" rel="noreferrer noopener" hidden>
             Errors in GlitchTip ↗
           </a>
@@ -223,27 +220,17 @@
         </table>
       </main>
 
-      <!-- Where routed screens render. The landing grid of app cards is the
-           first of them (views/projects.js); dialogs like requests and
-           settings layer over whatever is here rather than replacing it.
-           Reports is next to move, and takes #reports-view below with it. -->
+      <!-- Where every routed screen renders: the landing grid of app cards
+           (views/projects.js), one app's reports and the report itself
+           (views/reports.js). Dialogs like requests and settings layer over
+           whatever is here rather than replacing it.
+
+           The reports list and detail had their own <main> beside this one,
+           swapped by hand; the screenshot lightbox was a third block down
+           here, filled in by whichever screen opened it. Both belong to the
+           screen that shows them, and now live there — the lightbox is
+           built and appended by the view, and goes away with it. -->
       <main id="view" hidden></main>
-
-      <!-- Drill-down: reports for one app. Still legacy, still toggled. -->
-      <main id="reports-view" class="layout" hidden>
-        <ul id="list" class="list" aria-label="Reports"></ul>
-        <section id="detail" class="detail">
-          <p class="empty">Select a report.</p>
-        </section>
-      </main>
-    </div>
-
-    <div id="lightbox" class="lightbox" hidden>
-      <button id="lightbox-close" class="lightbox-close" type="button" aria-label="Close">✕</button>
-      <button id="lightbox-prev" class="lightbox-nav prev" type="button" aria-label="Previous frame">‹</button>
-      <img id="lightbox-img" alt="" />
-      <button id="lightbox-next" class="lightbox-nav next" type="button" aria-label="Next frame">›</button>
-      <p id="lightbox-caption" class="lightbox-caption"></p>
     </div>
 
     <!-- Relative, resolved by the <base> tag in <head> like the stylesheets.

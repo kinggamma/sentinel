@@ -382,7 +382,8 @@ button.linky:disabled {
   overflow-y: auto;
 }
 
-.list li button {
+.list li button,
+.list li a.row {
   width: 100%;
   text-align: left;
   background: var(--panel);
@@ -395,12 +396,14 @@ button.linky:disabled {
   box-shadow: var(--shadow);
 }
 
-.list li button:hover {
+.list li button:hover,
+.list li a.row:hover {
   filter: none;
   border-color: var(--accent);
 }
 
-.list li button[aria-current="true"] {
+.list li button[aria-current="true"],
+.list li a.row[aria-current="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
@@ -1110,4 +1113,25 @@ button.danger:hover {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 18px;
+}
+
+/* Reports' own toolbar, matching the issue list's — filters belong on the
+   screen they filter, not in the shell's topbar. */
+.reports-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 20px 20px 0;
+}
+
+.reports-toolbar .reports-search {
+  flex: 1;
+  min-width: 220px;
+}
+
+/* A row is a link now; it still has to look and sit like the button it was. */
+.list li a.row {
+  display: grid;
+  text-decoration: none;
+  color: var(--text);
 }
