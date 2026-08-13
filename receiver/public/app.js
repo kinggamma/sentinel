@@ -114,7 +114,14 @@ route("/settings/apps/:app", layer(landing, (ctx) => settingsView(ctx, { onSaved
 // answer to "what is showing" and the URL is it.
 const reportsRoute = (ctx) => {
   paintChrome();
-  return reportsView(ctx, { hueFor: appHue, onChanged: () => void loadData() });
+  return reportsView(ctx, {
+    hueFor: appHue,
+    onChanged: () => void loadData(),
+    // Embedded and scoped sessions are pinned to the app their host page is
+    // about, so a report id from anywhere else is refused rather than
+    // followed.
+    lockedTo: scopedApp,
+  });
 };
 route("/reports/:app", reportsRoute);
 route("/reports/:app/:id", reportsRoute);

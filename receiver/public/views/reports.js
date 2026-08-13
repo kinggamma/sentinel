@@ -363,10 +363,13 @@ function renderDangerZone(report, into, { onDeleted, track }) {
  *   report's chip matches its card on the landing screen.
  * @param {() => void} [deps.onChanged] - something was deleted; the landing
  *   counts and the app's own state are stale.
+ * @param {string} [deps.lockedTo] - the one app a scoped or embedded session
+ *   may see. Set, this view will not send anyone to a different app's report
+ *   however the address asks it to.
  */
 export async function reportsView(
   { outlet, params, signal, onCleanup },
-  { hueFor, onChanged } = {}
+  { hueFor, onChanged, lockedTo } = {}
 ) {
   const appName = params.app || "";
   const openId = params.id || null;
@@ -400,6 +403,35 @@ export async function reportsView(
   throwIfAborted(signal);
 
   const mine = (all || []).filter((report) => !appName || report.appName === appName);
+
+  /**
+   * The id is the authoritative half of this address; the app segment is
+   * derivable from it, so the two can disagree — a hand-edited URL, a link
+   * kept from before an app was renamed. Nothing about the screen noticed:
+   * the breadcrumb, the title and the search placeholder all named the app
+   * in the URL while the detail showed a report from somewhere else, and the
+   * list had nothing highlighted because the report isn't in it.
+   *
+   * Answer to the id, and correct the address to match it. Replace rather
+   * than push, so Back still goes where the reader came from rather than to
+   * the wrong URL they just left.
+   */
+  const reconcile = (actualApp) => {
+    if (!actualApp || !appName || actualApp === appName) return false;
+    if (lockedTo) {
+      // Scoped to one app by its host. Sending them to another app's report
+      // is the one thing this session is not allowed to do.
+      fill(
+        detail,
+        emptyState(`That report belongs to ${actualApp}, and this view only shows ${appName}.`)
+      );
+      return true;
+    }
+    void go(`/reports/${encodeURIComponent(actualApp)}/${encodeURIComponent(openId)}`, {
+      replace: true,
+    });
+    return true;
+  };
 
   // Filters live on the screen they filter, the way the issue list's do.
   const search = h("input", {
@@ -480,6 +512,10 @@ export async function reportsView(
   if (!openId) return;
 
   // ------------------------------------------------------------- detail
+  // The list already knows which app this report belongs to, so a mismatch
+  // is caught before spending a request on it.
+  if (reconcile((all || []).find((report) => report.id === openId)?.appName)) return;
+
   fill(detail, emptyState("Loading…"));
 
   let report;
@@ -491,6 +527,10 @@ export async function reportsView(
     return;
   }
   throwIfAborted(signal);
+
+  // Checked again against the report itself: the list is what this account
+  // can see, and an id it didn't contain still resolves here.
+  if (reconcile(report.appName)) return;
 
   const chip = h("span", { className: "tag project", text: report.appName });
   if (hueFor) chip.style.setProperty("--project-hue", String(hueFor(report.appName)));
