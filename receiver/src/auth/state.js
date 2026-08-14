@@ -221,12 +221,33 @@ export function derive({
  * not establish must never open a door.
  */
 export function capabilities({ state, user = null, orgs = [] } = {}) {
-  const authenticated = state === STATES.AUTHENTICATED;
+  /**
+   * Two different questions, and conflating them produced a contradiction.
+   *
+   * `authorised` is "may this person see Sentinel's data", which needs an
+   * organisation. `signedIn` is "is there a real account behind this
+   * session", which does not — pending and denied are fully authenticated
+   * identities that simply have nowhere to go yet, and reauthentication is a
+   * live session being asked to prove itself again.
+   *
+   * Account-level abilities belong to the second. Gating them on the first
+   * told a pending user with a password that they could not change it while
+   * simultaneously telling them that changing it would sign their other
+   * sessions out.
+   */
+  const authorised = state === STATES.AUTHENTICATED;
+  const signedIn = [
+    STATES.AUTHENTICATED,
+    STATES.PENDING,
+    STATES.DENIED,
+    STATES.REAUTH_REQUIRED,
+  ].includes(state);
+
   // Explicitly true, not merely truthy: null means "we could not tell".
   const hasPassword = user?.hasPasswordAuth === true;
 
   return Object.freeze({
-    canRead: authenticated,
+    canRead: authorised,
 
     canRequestAccess: state === STATES.PENDING || state === STATES.DENIED,
 
@@ -238,14 +259,14 @@ export function capabilities({ state, user = null, orgs = [] } = {}) {
      * to need manager or above, this is the line that changes, and the lie
      * would have been telling the UI it already does.
      */
-    canManageAccess: authenticated && orgs.length > 0,
+    canManageAccess: authorised && orgs.length > 0,
 
     /**
      * Changing a password needs one to exist. A social-only or passkey-only
      * account is offered "set a password" instead, which is a different flow
      * with a different endpoint.
      */
-    canChangePassword: authenticated && hasPassword,
+    canChangePassword: signedIn && hasPassword,
 
     /**
      * Whether a password change would actually sign this account's other
@@ -255,8 +276,13 @@ export function capabilities({ state, user = null, orgs = [] } = {}) {
      * nothing invalidates its sessions until per-user session indexing
      * exists. This is why the flag is a conclusion and not a raw fact: it is
      * the difference between "we revoked your sessions" and "we did not".
+     *
+     * Identical to canChangePassword today, and deliberately not aliased to
+     * it: one is permission to perform an action, the other is what that
+     * action would achieve. A policy forbidding password changes without
+     * altering Django's invalidation would separate them again.
      */
-    canInvalidateSessionsByPasswordChange: hasPassword,
+    canInvalidateSessionsByPasswordChange: signedIn && hasPassword,
 
     // Routing, rather than authorisation. MFA and reauthentication are
     // mid-conversation and own their own screens; sending them to sign-in

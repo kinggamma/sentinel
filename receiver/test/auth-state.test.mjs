@@ -282,7 +282,18 @@ await test("a password can only be changed by an account that has one", () => {
     !of({ state: STATES.AUTHENTICATED, user: { hasPasswordAuth: false }, orgs }),
     "social-only account is offered 'set', not 'change'"
   );
-  assert(!of({ state: STATES.PENDING, user: { hasPasswordAuth: true } }), "not signed in enough");
+});
+
+await test("having nowhere to go is not the same as not being signed in", () => {
+  // Pending and denied are fully authenticated identities that happen to
+  // belong to no organisation. Account-level abilities are theirs; only
+  // Sentinel's data is not.
+  for (const state of [STATES.PENDING, STATES.DENIED, STATES.REAUTH_REQUIRED]) {
+    const can = capabilities({ state, user: { hasPasswordAuth: true }, orgs: [] });
+    assert(can.canChangePassword, `${state} may change its password`);
+    assert(!can.canRead, `${state} may not read`);
+    assert(!can.canManageAccess, `${state} may not manage access`);
+  }
 });
 
 await test("only a password account has its sessions invalidated by changing it", () => {
@@ -294,6 +305,25 @@ await test("only a password account has its sessions invalidated by changing it"
     .canInvalidateSessionsByPasswordChange;
   same(of({ hasPasswordAuth: true }), true, "password account");
   same(of({ hasPasswordAuth: false }), false, "social-only account");
+});
+
+await test("what a password change achieves never disagrees with being allowed one", () => {
+  // The invariant, across every state and every kind of account. Gating these
+  // two on different predicates told a pending user with a password both that
+  // they could not change it and that changing it would sign their other
+  // sessions out.
+  for (const state of Object.values(STATES)) {
+    for (const hasPasswordAuth of [true, false, null]) {
+      for (const orgs of [[], ["acme"]]) {
+        const can = capabilities({ state, user: { hasPasswordAuth }, orgs });
+        same(
+          can.canInvalidateSessionsByPasswordChange,
+          can.canChangePassword,
+          `${state} / hasPasswordAuth=${hasPasswordAuth} / orgs=${orgs.length}`
+        );
+      }
+    }
+  }
 });
 
 await test("a fact we could not establish never opens a door", () => {
