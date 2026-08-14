@@ -171,5 +171,60 @@ await test("only a resolved session gets a record", async () => {
   assert(idle.trackedCount() === 1, "a resolved session was not recorded");
 });
 
+await test("asking whether a stranger is idle does not record the stranger", async () => {
+  /**
+   * The other way in, and the one that survived closing the first.
+   *
+   * identify() asks isIdle() before it has established anything about the
+   * cookie it was handed — that is the point of asking early, so an expired
+   * session costs no lookups. But isIdle() seeded what it did not find, so
+   * the question itself created the record, and every guarded route became
+   * a way to fill the map with invented ids.
+   *
+   * Not finding a session is an answer — "not idle" — and answering does not
+   * require writing anything down. identify() records it a few lines later,
+   * once GlitchTip has confirmed there is somebody behind it.
+   */
+  const idle = await load(10);
+  assert(idle.trackedCount() === 0, "the map did not start empty");
+
+  for (let i = 0; i < 1200; i += 1) {
+    assert(!idle.isIdle(`unverified-${i}`), "an unknown session was called idle");
+  }
+
+  assert(
+    idle.trackedCount() === 0,
+    `asking created records: ${idle.trackedCount()} sessions tracked`
+  );
+});
+
+await test("begin() is the only thing that can add to the map", async () => {
+  /**
+   * The invariant, rather than one test per way of breaking it.
+   *
+   * Two creation paths were found one at a time — the activity report, then
+   * the idleness question — and each fix was written as though it were the
+   * last. This calls everything the module exports with an id nobody has
+   * heard of and insists that only one of them writes, so a third path
+   * fails here rather than in somebody's session.
+   */
+  const idle = await load(10);
+  const unknown = "nobody-has-heard-of-this";
+
+  for (const [name, call] of [
+    ["touch", () => idle.touch(unknown)],
+    ["isIdle", () => idle.isIdle(unknown)],
+    ["forgetIdle", () => idle.forgetIdle(unknown)],
+    ["idleWindowMs", () => idle.idleWindowMs()],
+    ["trackedCount", () => idle.trackedCount()],
+  ]) {
+    call();
+    assert(idle.trackedCount() === 0, `${name}() added a record for an unknown session`);
+  }
+
+  idle.begin(unknown);
+  assert(idle.trackedCount() === 1, "begin() did not add a record");
+});
+
 process.stdout.write(`\n${passed} passed, ${failures.length} failed\n`);
 if (failures.length) process.exit(1);

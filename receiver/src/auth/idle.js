@@ -16,13 +16,22 @@
  * frequently means "reading an issue". Activity is therefore reported by the
  * browser, which is the only party that knows.
  *
- * And that report arrives before anyone has established what it refers to.
- * The endpoint behind it reads a cookie; a cookie is whatever the sender
- * says it is. So the map below has one rule that everything else follows
- * from: **a report can refresh an entry, and can never create one.** Entries
- * are created only when a session has been resolved against GlitchTip and
- * found to be real. A stranger's invented session id touches nothing,
- * occupies nothing, and evicts nothing.
+ * And everything that reaches this module reaches it before anyone has
+ * established what the session id refers to — the endpoint that reports
+ * activity reads a cookie, identify() asks whether a session is idle before
+ * it spends a lookup on it, and a cookie is whatever the sender says it is.
+ *
+ * So the map has one invariant, and it is worth stating as an invariant
+ * rather than as a property of any particular function: **begin() is the
+ * only thing that can add to it.** Everything else reads, or updates what is
+ * already there. begin() is called from exactly one place, after GlitchTip
+ * has confirmed the session belongs to somebody.
+ *
+ * That was arrived at twice. Closing the reporting endpoint left isIdle()
+ * seeding what it did not find, so asking the question created the record
+ * and every guarded route was still a way to fill the map. One rule, checked
+ * by a test that calls everything exported here with an id nobody has heard
+ * of, is what stops there being a third.
  *
  * The signal is trustworthy only as far as the browser is: a script could
  * keep its own session alive indefinitely, and so could a person wiggling a
@@ -85,18 +94,26 @@ export function touch(sessionId) {
 /**
  * Whether this session has been left alone for too long.
  *
- * A session we have never seen before is not idle — it has just arrived,
- * from a browser signed in before this process started, or before idling was
- * switched on. Treating "unknown" as "expired" would sign everybody out on
- * every deploy.
+ * A pure question: it reads, and writes nothing.
+ *
+ * That matters because of who asks it. identify() asks before it has
+ * established anything about the cookie it was handed — deliberately, so an
+ * expired session costs no lookups — which means this is reached with
+ * whatever a caller put in a cookie. An earlier version recorded what it did
+ * not find, so the asking created the record, and every guarded route became
+ * a way to fill the map with invented ids. Not finding a session is an
+ * answer; giving it does not require writing anything down.
+ *
+ * A session we have never seen before is not idle. It has just arrived, from
+ * a browser signed in before this process started or before idling was
+ * switched on, and treating "unknown" as "expired" would sign everybody out
+ * on every deploy. Its clock starts a moment later, in identify(), once
+ * GlitchTip has confirmed there is somebody behind it.
  */
 export function isIdle(sessionId) {
   if (!idleEnabled || !sessionId) return false;
   const seen = lastSeen.get(sessionId);
-  if (seen === undefined) {
-    begin(sessionId);
-    return false;
-  }
+  if (seen === undefined) return false;
   return Date.now() - seen > IDLE_MS;
 }
 
