@@ -64,6 +64,9 @@ export async function requireStaffToken(req, res, next) {
   try {
     identity = await currentUser(req);
   } catch (error) {
+    // Refusing is the only safe answer. Everything this guard protects is
+    // narrowed by facts we just failed to establish, so proceeding would
+    // mean proceeding with fewer restrictions than the last request had.
     console.warn(`could not resolve the caller: ${error.message}`);
     return res.status(502).json({ error: "couldn't reach GlitchTip to check that session" });
   }

@@ -50,6 +50,25 @@ print('cleared')" 2>/dev/null | tail -1
   exit 0
 fi
 
+# Switch the smoke account off and on again, so a test can prove that a
+# disabled account really is refused. It is worth being able to prove: the
+# session of a deactivated user keeps working and GlitchTip keeps answering
+# 200 for it, with isActive false in the body being the only sign — which is
+# exactly how hardcoding that field left disabled accounts fully signed in.
+if [ "${1:-}" = "--disable" ] || [ "${1:-}" = "--enable" ]; then
+  WANT=$([ "${1:-}" = "--enable" ] && echo True || echo False)
+  SMOKE_EMAIL="$SMOKE_EMAIL" WANT="$WANT" gt -e SMOKE_EMAIL -e WANT glitchtip-web ./manage.py shell -c "
+import os
+from django.contrib.auth import get_user_model
+u = get_user_model().objects.filter(email=os.environ['SMOKE_EMAIL']).first()
+if not u:
+    raise SystemExit('no smoke account')
+u.is_active = os.environ['WANT'] == 'True'
+u.save()
+print('is_active=' + str(u.is_active))" 2>/dev/null | tail -1
+  exit 0
+fi
+
 if [ "${1:-}" = "--destroy" ]; then
   SMOKE_EMAIL="$SMOKE_EMAIL" gt -e SMOKE_EMAIL glitchtip-web ./manage.py shell -c "
 import os

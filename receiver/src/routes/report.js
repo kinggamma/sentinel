@@ -37,21 +37,31 @@ export const reportRouter = Router();
 /**
  * What this viewer may see.
  *
- * A session that came from GlitchTip carries the projects that person can
- * see there, so the answer is simply: apps whose GlitchTip project is one of
- * them. Two cases deliberately see everything — the shared staff token,
- * which is an app rather than a person and is how the embedded viewer reads
- * its own reports, and a sign-in whose projects couldn't be listed.
+ * Exactly one thing sees everything: the shared staff token. It is an app
+ * rather than a person — how SDKs post and how the embedded viewer reads its
+ * own app's reports — and it is checked by name here rather than falling out
+ * of some absent value, because "we could not work out what you may see" and
+ * "you may see all of it" must never be the same branch.
  *
- * An app with no known project is shown to everyone. It can't be attributed
- * to an organisation, and quietly hiding reports would be worse than showing
- * one too many: nobody would know they existed to ask about.
+ * They used to be. A person's project list fell back to null whenever
+ * GlitchTip refused or failed to answer, and null meant unrestricted — so a
+ * momentary fault handed one organisation's reports to another's for as long
+ * as it lasted. Now a person always has a list, a refusal makes it empty,
+ * and a fault refuses the request upstream rather than reaching here.
+ *
+ * An app whose GlitchTip project is unknown is no longer shown to everyone.
+ * It cannot be attributed to an organisation, and something unattributable
+ * is precisely what must not be handed out by default. It stays visible to
+ * the staff token, which is how anyone notices it exists.
  */
 async function visibleTo(viewer, appName) {
+  if (viewer?.source === "staff-token") return true;
+
   const allowed = viewer?.projects;
-  if (!Array.isArray(allowed)) return true;
+  if (!Array.isArray(allowed)) return false;
+
   const projectSlug = await slugForApp(appName);
-  if (!projectSlug) return true;
+  if (!projectSlug) return false;
   return allowed.includes(projectSlug);
 }
 

@@ -348,6 +348,95 @@ async function authBoundaries() {
     assert(Array.isArray(await res.json()), "reports did not come back as a list");
   });
 
+  await check("a disabled account is refused, on the session it already had", async () => {
+    if (!SESSION) return "skip";
+    /**
+     * The one that got through. Deactivating an account leaves its session
+     * working and GlitchTip still answering 200 for it — isActive in the body
+     * is the only sign — so a receiver that assumed "GlitchTip described this
+     * user, therefore they are active" kept a disabled person signed in and
+     * fully authorised until their session aged out. Nothing else notices.
+     */
+    const { execFileSync } = await import("node:child_process");
+    const toggle = (flag) =>
+      execFileSync("bash", ["scripts/seed-smoke-session.sh", flag], {
+        cwd: new URL("../..", import.meta.url).pathname,
+        encoding: "utf8",
+      }).trim();
+
+    toggle("--disable");
+    try {
+      /**
+       * Polled rather than asked once, because identity is cached for a few
+       * seconds and being switched off has to outlive that. The window is
+       * deliberate — it is what stops one page load costing six lookups —
+       * but it means a disabling takes effect within seconds rather than
+       * instantly, and a test that asked immediately would pass or fail
+       * depending on when in that window it ran. It failed exactly that way
+       * when it was written.
+       */
+      const deadline = Date.now() + 20_000;
+      let body;
+      do {
+        const me = await get("/sentinel/api/auth/me", {
+          headers: { cookie: `sessionid=${SESSION}` },
+        });
+        body = await me.json();
+        if (body.state === "disabled") break;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } while (Date.now() < deadline);
+
+      assert(body.state === "disabled", `state was ${body.state}, wanted disabled`);
+      assert(body.can.canRead === false, "a disabled account could still read");
+
+      const reports = await get("/sentinel/api/reports", {
+        headers: { cookie: `sessionid=${SESSION}` },
+      });
+      assert(reports.status === 401, `reports answered ${reports.status}, wanted 401`);
+    } finally {
+      // Always, including when an assertion above threw: leaving the shared
+      // account switched off would break every later run.
+      toggle("--enable");
+
+      // And wait until that is visible, for the same caching reason. Without
+      // this the next check inherited a cached "disabled" and failed with a
+      // 401 that had nothing to do with what it was testing.
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        const me = await get("/sentinel/api/auth/me", {
+          headers: { cookie: `sessionid=${SESSION}` },
+        });
+        if ((await me.json()).state !== "disabled") break;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+  });
+
+  await check("a person sees only the apps whose project they can see", async () => {
+    if (!SESSION || !TOKEN) return "skip";
+    /**
+     * The other one. A person's project list used to fall back to "no
+     * restriction" whenever GlitchTip refused or failed to answer, and an app
+     * with no known project was shown to everybody — so a momentary fault, or
+     * an unmapped app, handed one organisation's reports to another's.
+     */
+    const appsFor = async (headers) => {
+      const res = await get("/sentinel/api/reports", { headers });
+      assertStatus(res, 200);
+      return new Set((await res.json()).map((report) => report.appName));
+    };
+
+    const asStaff = await appsFor(bearer);
+    const asPerson = await appsFor({ cookie: `sessionid=${SESSION}` });
+
+    for (const app of asPerson) {
+      assert(asStaff.has(app), `a person saw ${app}, which the staff token does not`);
+    }
+    // The staff token is the one thing that sees everything, by name rather
+    // than by falling out of an absent value.
+    assert(asStaff.size >= asPerson.size, "the staff token saw fewer apps than a person");
+  });
+
   await check("a bearer write needs no CSRF token", async () => {
     if (!TOKEN) return "skip";
     // The exemption matters as much as the requirement: apps posting reports

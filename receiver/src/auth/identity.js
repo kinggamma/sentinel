@@ -67,16 +67,36 @@ async function askAllauth(sessionId) {
 }
 
 /**
- * A read that is allowed to come back empty-handed. Every one of these is a
- * question about the caller, and a refusal is part of the answer — a token
- * without project:read, a user GlitchTip will not describe — so none of them
- * should abort resolving the rest.
+ * Three outcomes, and collapsing them into two is how authorisation fails
+ * open.
+ *
+ *   answered    — GlitchTip told us something.
+ *   refused     — GlitchTip understood and said no (401/403/404). That is an
+ *                 answer: this caller may see none of it.
+ *   unavailable — we never got an answer. A network fault, a 5xx, a restart
+ *                 mid-request. We know nothing, and guessing in the
+ *                 permissive direction means showing one organisation's
+ *                 reports to another's for as long as the fault lasts.
  */
 async function askGlitchtip(path, sessionId) {
   try {
-    return await callGlitchtip(path, { sessionId });
-  } catch {
-    return null;
+    return { data: await callGlitchtip(path, { sessionId }) };
+  } catch (error) {
+    const status = error?.status || 0;
+    if (status === 401 || status === 403 || status === 404) return { refused: true, status };
+    return { unavailable: true, status };
+  }
+}
+
+/**
+ * Raised when the answer is unknown, so a caller turns it into a 502 rather
+ * than into a permission.
+ */
+export class IdentityUnavailable extends Error {
+  constructor(status) {
+    super("couldn't reach GlitchTip to establish who is asking");
+    this.name = "IdentityUnavailable";
+    this.status = status;
   }
 }
 
@@ -96,13 +116,13 @@ export async function identify(req, { accessRequestFor = null } = {}) {
 
   if (!glitchtipConfigured || !sessionId) {
     const state = derive({ sawCookie });
-    return { state, sessionId, user: null, orgs: [], projects: null, allauth: null };
+    return { state, sessionId, user: null, orgs: [], projects: [], allauth: null };
   }
 
   const hit = cache.get(sessionId);
   if (hit && hit.until > Date.now()) return hit.value;
 
-  const [allauth, me, organizations, visible] = await Promise.all([
+  const [allauth, meRes, orgsRes, projectsRes] = await Promise.all([
     askAllauth(sessionId),
     askGlitchtip("/api/0/users/me/", sessionId),
     askGlitchtip("/api/0/organizations/", sessionId),
@@ -112,19 +132,36 @@ export async function identify(req, { accessRequestFor = null } = {}) {
     askGlitchtip("/api/0/projects/", sessionId),
   ]);
 
+  /**
+   * If any of these never answered, we do not know who is asking — and every
+   * one of them narrows what this person may see. Answering anyway means
+   * answering with less information than the last request had, in the
+   * direction that grants more. So: no answer, no decision.
+   */
+  const unavailable = [meRes, orgsRes, projectsRes].find((result) => result?.unavailable);
+  if (unavailable) throw new IdentityUnavailable(unavailable.status);
+
+  const me = meRes.data;
   const user = me
     ? {
         email: me.email || me.username || null,
         name: me.name || null,
-        // GlitchTip only returns a user it considers usable, so reaching this
-        // at all means active. Kept explicit because the state machine treats
-        // "switched off" as outranking everything else, and a silent
-        // undefined would read as "not disabled" rather than "unknown".
-        isActive: true,
+        /**
+         * Taken from GlitchTip, not assumed.
+         *
+         * This was hardcoded true, reasoning that GlitchTip would not
+         * describe a user it considered unusable. It does: deactivating an
+         * account leaves its session working and /api/0/users/me/ answering
+         * 200, with isActive false in the body — the only place that fact
+         * appears. Hardcoding it left a disabled account signed in and fully
+         * authorised until its session aged out.
+         */
+        isActive: me.isActive,
         hasPasswordAuth: me.hasPasswordAuth ?? null,
       }
     : null;
 
+  const organizations = orgsRes.data;
   const memberOf = (Array.isArray(organizations) ? organizations : [])
     .map((org) => org.slug)
     .filter(Boolean);
@@ -144,15 +181,19 @@ export async function identify(req, { accessRequestFor = null } = {}) {
   const orgs = restrictTo ? memberOf.filter((slug) => slug === restrictTo) : memberOf;
 
   /**
-   * null means "not narrowed", and that is not the same as an empty list.
-   * A failed or refused project listing has to stay unrestricted, because
-   * the alternative is an empty viewer with no explanation — organisation
-   * membership has already decided this person may be here. An empty array
-   * would silently hide everything.
+   * The list of projects this person may see, and for a person it is always
+   * a list.
+   *
+   * It used to fall back to null on any failure, and null meant "not
+   * narrowed" — which report.js read as "sees everything". A refusal or a
+   * momentary fault therefore widened someone's access instead of narrowing
+   * it, across organisations. A refusal is now an empty list, which is what
+   * GlitchTip actually said, and a fault has already thrown above.
    */
+  const visible = projectsRes.data;
   const projects = Array.isArray(visible)
     ? visible.map((project) => project.slug).filter(Boolean)
-    : null;
+    : [];
 
   /**
    * Which organisation each project belongs to, learned from whoever happens
