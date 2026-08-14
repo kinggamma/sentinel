@@ -604,6 +604,105 @@ await test("a returned cleanup runs before the ones the view registered", async 
   router.stop();
 });
 
+// ------------------------------------------------- where sign-in returns you
+
+await test("a return address that leaves this app is refused", async () => {
+  const { safeNext } = await import("../public/lib/next.js");
+
+  // Every one of these is a way to write "somewhere else" that still passes
+  // a careless check. The protocol-relative one is the usual miss: it starts
+  // with a slash, and a browser reads it as another origin.
+  for (const hostile of [
+    "//evil.example",
+    "///evil.example",
+    "/\\evil.example",
+    // A backslash further in, which a leading-character check waves
+    // through and a browser then reads as a separator.
+    "/a\\..\\..\\admin",
+    "/issues\\..\\..\\admin",
+    "/a\\b",
+    "https://evil.example",
+    "http://evil.example",
+    "javascript:alert(1)",
+    "data:text/html,<script>",
+    "",
+  ]) {
+    same(safeNext({ next: hostile }), "/", `refused ${JSON.stringify(hostile)}`);
+  }
+
+  // Climbing out. These look harmless — they start with a slash, name no
+  // host and carry no scheme — and the router prepends the mount, at which
+  // point the browser resolves "/sentinel/../admin" to "/admin": GlitchTip's
+  // Django admin, outside this app entirely.
+  for (const climbing of [
+    "/../admin",
+    "/./../admin",
+    "/a/../../admin",
+    "/a\\..\\..\\admin",
+    "/issues\\..\\..\\admin",
+    "/issues/../../admin",
+    "/..",
+    "/%2e%2e/admin",
+    "/%2E%2E/admin",
+    ".%2e/admin".replace(/^/, "/"),
+  ]) {
+    same(safeNext({ next: climbing }), "/", `refused ${climbing}`);
+  }
+
+  /**
+   * And the property behind all of them, rather than a list of spellings I
+   * happened to think of: whatever survives, prefixed with the mount and
+   * resolved the way a browser resolves it, must still be inside the app.
+   *
+   * This is the check that would have caught "/../admin" without anyone
+   * having to imagine it first — and it caught ".%2e/admin", which the
+   * literal-spelling version missed.
+   */
+  const MOUNT = "/sentinel";
+  for (const candidate of [
+    "/../admin",
+    "/%2e%2e/admin",
+    "/%2E%2E/admin",
+    "/.%2e/admin",
+    "/..%2e/admin",
+    "/..%2f/admin",
+    "/issues/../../admin",
+    "/issues",
+    "/reports/an-app/an-id",
+    "/settings/apps/an-app",
+  ]) {
+    const kept = safeNext({ next: candidate });
+    const resolved = new URL(MOUNT + kept, "http://sentinel.invalid").pathname;
+    assert(
+      resolved === MOUNT || resolved.startsWith(`${MOUNT}/`),
+      `${candidate} resolved to ${resolved}, which is outside ${MOUNT}`
+    );
+  }
+
+  // And nothing at all, or something that isn't a string.
+  for (const missing of [undefined, null, 42, {}, ["/issues"]]) {
+    same(safeNext({ next: missing }), "/", `refused ${JSON.stringify(missing) ?? "undefined"}`);
+  }
+  same(safeNext(undefined), "/", "refused a missing query");
+});
+
+await test("a return address inside this app survives intact", async () => {
+  const { safeNext } = await import("../public/lib/next.js");
+  for (const path of [
+    "/",
+    "/issues",
+    "/issues?q=is%3Aunresolved&range=14d",
+    "/reports/an-app/a-report-id",
+    "/settings/apps/an-app",
+    // A query may say whatever a person typed into a search box, including
+    // two dots. Only the path is a route.
+    "/issues?q=..&range=14d",
+    "/reports/an-app?note=a..b",
+  ]) {
+    same(safeNext({ next: path }), path, `kept ${path}`);
+  }
+});
+
 await test("stop() tears down the mounted view and stops listening", async () => {
   const { router, outlet, click, location } = await harness("/sentinel/issues");
   let cleaned = 0;

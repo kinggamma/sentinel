@@ -1,24 +1,14 @@
-import crypto from "node:crypto";
 import { Router } from "express";
 import {
-  verifyGlitchtipUser,
-  verifyGlitchtipSession,
-  identifyGlitchtipUser,
   revokeGlitchtipSession,
   glitchtipConfigured,
   glitchtipInfo,
   GLITCHTIP_SESSION_COOKIE,
 } from "../glitchtip.js";
-import { rememberProjectOrgs } from "../project-map.js";
-import {
-  issueSession,
-  clearSession,
-  currentUser,
-  readCookie,
-  fingerprint,
-} from "../middleware/auth.js";
-
-const STAFF_API_TOKEN = process.env.STAFF_API_TOKEN;
+import { currentUser, readCookie, presentsStaffToken } from "../middleware/auth.js";
+import { STATES } from "../auth/state.js";
+import { describe as describeState } from "../auth/state.js";
+import { present, forget } from "../auth/identity.js";
 
 export const authRouter = Router();
 
@@ -32,162 +22,77 @@ authRouter.get("/auth/config", (_req, res) => {
   });
 });
 
-authRouter.get("/auth/me", (req, res) => {
-  const session = currentUser(req);
-  if (!session) return res.status(401).json({ error: "unauthorized" });
-  res.json({
-    email: session.email,
-    name: session.name,
-    source: session.source,
-    pending: Boolean(session.pending),
-    // Which organisation to browse issues under.
-    orgs: session.orgs || [],
-  });
-});
-
 /**
- * Sign in with either a personal GlitchTip auth token (preferred — it's a
- * person, and membership of the organisation is the approval) or the shared
- * staff token (for setups with no GlitchTip, and for automation).
+ * What this session is — Sentinel's read-only view of the one session there
+ * is. It reads; it never creates one, and it never sets a cookie.
+ *
+ * Always 200, including for nobody at all. The state is the answer, and
+ * "anonymous" is a perfectly good one: answering 401 here would make the
+ * client's own central 401 handling fire on a question about whether anyone
+ * is signed in, which is the thing that handling exists to avoid.
  */
-authRouter.post("/auth/login", async (req, res) => {
-  const token = String(req.body?.token || "").trim();
-  if (!token) return res.status(400).json({ error: "token is required" });
+authRouter.get("/auth/me", async (req, res) => {
+  /**
+   * The embedded viewer asks this before it renders anything, and it has no
+   * cookie — it lives in another page's iframe and authenticates with a
+   * header on every request. Answering only from the cookie told it that
+   * nobody was signed in, and the guards in front of every screen duly sent
+   * it to a sign-in form inside somebody's admin page.
+   *
+   * A valid staff token is an answer to "who is asking". It is an app rather
+   * than a person, so it carries no identity and no organisations; what it
+   * gets is permission to read, which is all the viewer needs.
+   */
+  if (presentsStaffToken(req)) {
+    return res.json({
+      ...describeState({ state: STATES.AUTHENTICATED, user: null, orgs: [] }),
+      source: "staff-token",
+    });
+  }
 
   /**
-   * The staff token is not a way to sign in.
+   * ?fresh=1 skips the cache for this one session.
    *
-   * It's a shared secret that ships inside client-rendered admin panels, so
-   * anyone who can open one can read it — and letting it sign a person in
-   * would mean anyone who viewed source could browse every report and every
-   * session replay. Apps still send it to post reports, and the embedded
-   * viewer still uses it, but a human signing in brings a GlitchTip account
-   * of their own.
+   * Identity is cached for a few seconds so that a page load asking six
+   * times costs one lookup. That is right for reading, and wrong immediately
+   * after something changed what the answer is: accepting an invitation adds
+   * you to an organisation through GlitchTip directly, which this receiver
+   * never sees, so the next question is answered from a copy that still says
+   * you belong to nothing — and the guard sends you back to "you're in no
+   * organisation yet" for the rest of the window.
    *
-   * Without GlitchTip configured there'd otherwise be no way in at all, so
-   * it stays the credential of last resort for that setup only.
+   * Only ever affects the caller's own session, and only costs what the
+   * caller would have paid by waiting.
    */
-  if (!glitchtipConfigured) {
-    if (STAFF_API_TOKEN && token.length === STAFF_API_TOKEN.length) {
-      const matches = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(STAFF_API_TOKEN));
-      if (matches) {
-        const session = issueSession(res, { email: null, name: null, source: "staff-token" });
-        return res.json({ email: null, name: null, source: session.source });
-      }
-    }
-    return res.status(401).json({ error: "That token wasn't accepted." });
-  }
+  if (req.query?.fresh) forget(readCookie(req, GLITCHTIP_SESSION_COOKIE));
 
   try {
-    const user = await verifyGlitchtipUser(token);
-    if (user) {
-      await rememberProjectOrgs(user.projects || []);
-      const session = issueSession(res, {
-        ...user,
-        source: "glitchtip",
-        projects: user.projects ? user.projects.map((p) => p.slug) : null,
-        orgs: user.orgs || [],
-      });
-      return res.json({ email: session.email, name: session.name, source: session.source });
-    }
-    // A real account that belongs to no organisation. Rather than a dead
-    // end, give them a session that can do exactly one thing: ask.
-    const identity = await identifyGlitchtipUser({ token });
-    if (identity) {
-      const session = issueSession(res, {
-        ...identity,
-        source: "glitchtip",
-        projects: [],
-        pending: true,
-      });
-      return res.json({ email: session.email, name: session.name, pending: true });
-    }
-
-    return res.status(403).json({
-      error: glitchtipInfo().org
-        ? `That GlitchTip account isn't a member of the ${glitchtipInfo().org} organisation.`
-        : "That account doesn't belong to any GlitchTip organisation.",
-    });
-  } catch (err) {
-    // Worth separating, because the fixes are completely different: 403
-    // means the token is real but was created without the scope that
-    // reading org membership needs, and no amount of retyping helps.
-    console.warn(`glitchtip rejected a sign-in token: ${err.status || err.message}`);
-
-    if (err.status === 403) {
-      return res.status(403).json({
-        error:
-          "That token is missing the org:read scope. Create a new one in " +
-          "GlitchTip under Profile → Auth Tokens with org:read ticked.",
-      });
-    }
-    if (err.status !== 401) {
-      return res.status(502).json({ error: "Couldn't reach GlitchTip to check that token." });
-    }
+    res.json(present(await currentUser(req)));
+  } catch (error) {
+    console.warn(`couldn't resolve the session: ${error.message}`);
+    res.status(502).json({ error: "couldn't reach GlitchTip to check that session" });
   }
-
-  res.status(401).json({
-    error:
-      "GlitchTip didn't recognise that token. Check it was copied whole, and that it hasn't been revoked.",
-  });
 });
 
 /**
- * Silent sign-in for someone already signed in to GlitchTip.
+ * Signing in is allauth's job now, at /_allauth/browser/v1/auth/login on this
+ * same origin, and the session it creates is the only one there is.
  *
- * GlitchTip's session cookie is host-only and cookies ignore ports, so a
- * browser signed in at <host>:8000 sends that cookie to the receiver at
- * <host>:4000 as well. We hand it straight back to GlitchTip to ask whose
- * it is, and issue our own session if the answer is a member of the
- * organisation. Nothing here trusts the cookie's contents — GlitchTip is
- * still the one deciding.
+ * This endpoint used to take a personal auth token and mint a Sentinel
+ * session from it. That was built when Sentinel ran as a separate app on its
+ * own port with no way to reach GlitchTip's session; on one origin it is
+ * vestigial, and it cannot survive one-session anyway — a token cannot create
+ * a Django session. Personal tokens remain API credentials.
  *
- * Only works when GlitchTip and Sentinel share a hostname; on separate
- * hosts the cookie never arrives and the sign-in screen takes over.
+ * It answers rather than disappearing, because a browser holding an old copy
+ * of the page would otherwise get an unexplained 404.
  */
-authRouter.post("/auth/sso", async (req, res) => {
-  if (!glitchtipConfigured) return res.status(401).json({ error: "no glitchtip configured" });
-
-  const sessionId = readCookie(req, GLITCHTIP_SESSION_COOKIE);
-  if (!sessionId) return res.status(401).json({ error: "not signed in to GlitchTip" });
-
-  try {
-    const user = await verifyGlitchtipSession(sessionId);
-    if (!user) {
-      const identity = await identifyGlitchtipUser({ sessionId });
-      if (identity) {
-        const session = issueSession(res, {
-          ...identity,
-          source: "glitchtip-sso",
-          boundTo: fingerprint(sessionId),
-          projects: [],
-          pending: true,
-        });
-        return res.json({ email: session.email, name: session.name, pending: true });
-      }
-      return res.status(403).json({
-        error: "You're signed in to GlitchTip, but that account belongs to no organisation.",
-      });
-    }
-    await rememberProjectOrgs(user.projects || []);
-    const session = issueSession(res, {
-      ...user,
-      source: "glitchtip-sso",
-      // Tie this session's life to the GlitchTip session it came from.
-      boundTo: fingerprint(sessionId),
-      projects: user.projects ? user.projects.map((p) => p.slug) : null,
-      orgs: user.orgs || [],
-    });
-    return res.json({ email: session.email, name: session.name, source: session.source });
-  } catch (err) {
-    // An expired or unknown GlitchTip session is the ordinary case here, not
-    // an error worth shouting about — the sign-in screen handles it.
-    if (err.status === 401 || err.status === 403) {
-      return res.status(401).json({ error: "not signed in to GlitchTip" });
-    }
-    console.warn(`glitchtip sso check failed: ${err.status || err.message}`);
-    return res.status(502).json({ error: "Couldn't reach GlitchTip." });
-  }
+authRouter.post("/auth/login", (_req, res) => {
+  res.status(410).json({
+    error:
+      "Signing in with a token has been removed. Sign in with your email and password — " +
+      "personal auth tokens are for API calls now.",
+  });
 });
 
 /**
@@ -206,8 +111,9 @@ authRouter.post("/auth/logout", async (req, res) => {
     // Host-only cookie, and cookies ignore ports — so clearing it here
     // clears it for GlitchTip on :8000 too.
     res.clearCookie(GLITCHTIP_SESSION_COOKIE, { path: "/" });
+    // Ten seconds of cached identity would otherwise outlive the sign-out.
+    forget(sessionId);
   }
 
-  clearSession(res);
   res.status(204).end();
 });

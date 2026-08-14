@@ -131,8 +131,6 @@ services:
       GLITCHTIP_TEAM: ${GLITCHTIP_TEAM:-}
       # Signed session cookies. Without this, everyone is signed out on
       # every restart.
-      SESSION_SECRET: ${SESSION_SECRET}
-      SESSION_HOURS: ${SESSION_HOURS:-12}
       # Set once there's TLS in front: session cookies then refuse to travel
       # over plain HTTP. Leave false on a bare-IP deployment or nobody can
       # sign in at all.

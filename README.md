@@ -663,19 +663,37 @@ nobody sent, a URL space two backends both claimed, a guard mounted where
 it intercepted every request. None of those are visible without the whole
 thing up.
 
-The session and CSRF checks need a GlitchTip session, which needs a
-password nobody should be typing into a test. Seed a throwaway one instead:
+The session and CSRF checks need a real signed-in session, which needs a
+password nobody should be typing into a test. One command handles the whole
+thing — it signs a dedicated test account in, runs the suite, and clears the
+session afterwards even if the suite fails or you interrupt it:
 
 ```bash
-export GLITCHTIP_SESSION=$(./scripts/seed-smoke-session.sh)
+cd receiver && npm run smoke:seeded
+```
+
+That account is created on first use: lowest role in the organisation, not
+staff, not a superuser, no second factor, and a password generated per run
+that is never stored. Remove it when you are done with it:
+
+```bash
+./scripts/seed-smoke-session.sh --destroy
+```
+
+Running the pieces by hand needs two values, not one — the session key and
+the organisation it belongs to, because the suite writes to that
+organisation and naming a real one in this file would be wrong:
+
+```bash
+read -r KEY ORG < <(./scripts/seed-smoke-session.sh)
 ```
 
 ```bash
-cd receiver && npm run smoke && cd .. && ./scripts/seed-smoke-session.sh --clear "$GLITCHTIP_SESSION"
+cd receiver && GLITCHTIP_SESSION="$KEY" GLITCHTIP_ORG="$ORG" npm run smoke; cd ..; ./scripts/seed-smoke-session.sh --clear "$KEY"
 ```
 
-Without it those two checks skip rather than fail. `BASE_URL` points the
-suite at another host.
+Without them those two checks skip rather than fail, and the run reports how
+many skipped. `BASE_URL` points the suite at another host.
 
 ## Contributing
 
