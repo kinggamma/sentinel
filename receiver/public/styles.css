@@ -354,6 +354,24 @@ a.linky:hover {
   align-items: start;
 }
 
+/**
+ * A grid item defaults to min-width: auto, which means it cannot be narrower
+ * than its own content — so content doesn't fit the column, the column grows
+ * to fit the content.
+ *
+ * For the replay that is not just an overflow but a runaway. The player is
+ * given a pixel width, which widens .detail, which widens the element the
+ * ResizeObserver is watching, which hands the player a larger width again.
+ * At 390px it settled at 1316px wide inside a 1380px page.
+ *
+ * Zero here lets the column be the size the grid says it is, and the
+ * measurement the player follows becomes the space actually available
+ * rather than the space the player just took.
+ */
+.layout > * {
+  min-width: 0;
+}
+
 @media (max-width: 860px) {
   .layout {
     grid-template-columns: 1fr;
