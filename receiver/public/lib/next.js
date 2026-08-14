@@ -13,19 +13,57 @@
  * because it is a security control and belongs somewhere a test can reach
  * without a browser.
  */
+
+/**
+ * A path segment that means "go up" rather than naming anything.
+ *
+ * Decoded before it is judged, because a browser decodes before it resolves:
+ * "%2e%2e", "%2E%2E" and ".%2e" are all "..", and all of them turn
+ * "/sentinel/<this>/admin" into "/admin". Matching the literal spellings
+ * catches the obvious two and misses the mixed one.
+ */
+function climbs(pathname) {
+  return pathname.split("/").some((segment) => {
+    let decoded = segment;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      // Malformed encoding is not something to resolve; judge it as written.
+    }
+    return decoded === ".." || decoded === ".";
+  });
+}
+
 export function safeNext(query) {
   const next = query?.next;
-  if (typeof next !== "string") return "/";
+  if (typeof next !== "string" || !next) return "/";
 
   // Must be a path. A scheme ("https://", "javascript:") is not one, and
   // neither is a protocol-relative "//host" — which a browser reads as
-  // another origin despite starting with a slash, and which is the form
-  // most often missed.
+  // another origin despite starting with a slash, and which is the form most
+  // often missed.
   if (!next.startsWith("/") || next.startsWith("//")) return "/";
 
   // A backslash is treated as a slash by some browsers when resolving, so
-  // "/\evil.example" can escape the same way "//" does.
+  // "/\evil.example" escapes the same way "//" does.
   if (next.startsWith("/\\")) return "/";
+
+  /**
+   * And it must not climb out.
+   *
+   * This is the one that looks harmless. "/../admin" starts with a slash,
+   * names no host and carries no scheme — and every check above lets it
+   * through. What happens next is that the router prepends the mount, and
+   * the browser resolves "/sentinel/../admin" to "/admin": GlitchTip's
+   * Django admin, outside this app altogether. A crafted sign-in link would
+   * have deposited somebody on an unrelated login form the moment they
+   * signed in, with the URL looking like it had come from us.
+   *
+   * Only the path is inspected. A query value may legitimately contain "..",
+   * because people type it into a search box.
+   */
+  const [pathname] = next.split(/[?#]/);
+  if (climbs(pathname)) return "/";
 
   return next;
 }
