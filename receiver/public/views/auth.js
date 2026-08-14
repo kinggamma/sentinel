@@ -650,8 +650,15 @@ export async function acceptInviteView({ outlet, params, signal }, { onAccepted 
           event.target.disabled = false;
           return error.show(readErrors(failure, "That invitation couldn't be accepted."));
         }
-        // Membership changed, so everything the guards decided is stale.
+        /**
+         * Membership changed, and it changed at GlitchTip — this receiver
+         * never saw the request, so its cached idea of who this is has to be
+         * thrown away explicitly rather than waited out. Asked fresh here so
+         * that the guard on "/" sees an organisation rather than sending
+         * them straight back to "you're in no organisation yet".
+         */
         forgetSession();
+        await session({ fresh: true });
         onAccepted?.();
         await go("/", { replace: true });
       },

@@ -50,6 +50,22 @@ authRouter.get("/auth/me", async (req, res) => {
     });
   }
 
+  /**
+   * ?fresh=1 skips the cache for this one session.
+   *
+   * Identity is cached for a few seconds so that a page load asking six
+   * times costs one lookup. That is right for reading, and wrong immediately
+   * after something changed what the answer is: accepting an invitation adds
+   * you to an organisation through GlitchTip directly, which this receiver
+   * never sees, so the next question is answered from a copy that still says
+   * you belong to nothing — and the guard sends you back to "you're in no
+   * organisation yet" for the rest of the window.
+   *
+   * Only ever affects the caller's own session, and only costs what the
+   * caller would have paid by waiting.
+   */
+  if (req.query?.fresh) forget(readCookie(req, GLITCHTIP_SESSION_COOKIE));
+
   try {
     res.json(present(await currentUser(req)));
   } catch (error) {

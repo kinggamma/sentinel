@@ -99,6 +99,7 @@ try {
   process.stdout.write("\nWebAuthn, against a virtual authenticator\n");
 
   await test("a security key can be registered and then used as a second factor", async () => {
+    clearAuthenticators();
     const context = await browser.newContext();
     const page = await context.newPage();
     const errors = [];
@@ -196,25 +197,115 @@ try {
   });
 
   await test("a passkey signs in on its own, with no password", async () => {
+    // Starts from nothing: the test above leaves a key on this account, and
+    // inheriting it would send the password step below to a second-factor
+    // screen instead of into the app.
+    clearAuthenticators();
+
+    /**
+     * The real thing, and it has to happen in one context.
+     *
+     * A virtual authenticator belongs to the browser context that created
+     * it, so a key registered in one and a sign-in attempted in another can
+     * never meet. An earlier version of this test did exactly that, watched
+     * the button appear, watched the prompt find nothing, and reported a
+     * pass — it was testing that a button renders and that cancelling is
+     * handled, which is not what its name claimed.
+     *
+     * So: one context. Register a discoverable credential, throw the session
+     * away, and sign in with nothing but the key.
+     */
     const context = await browser.newContext();
     const page = await context.newPage();
-    await page.goto(`${BASE}/sentinel/signin?next=%2Fissues`, { waitUntil: "load" });
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+
+    await page.goto(`${BASE}/sentinel/signin`, { waitUntil: "load" });
     const { cdp } = await attachAuthenticator(page);
 
-    // The key registered above lives in the previous virtual authenticator,
-    // which went away with its context — so this proves the *offer* is made
-    // and that cancelling it is handled, rather than a full passkey sign-in.
+    await page.fill("#email-input", EMAIL);
+    await page.fill("#password-input", password);
+    await page.click(".gate-card button[type=submit]");
+    await page.waitForFunction(() => !document.getElementById("topbar")?.hidden, { timeout: 20_000 });
+
+    const registered = await page.evaluate(async () => {
+      const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "";
+      const res = await fetch("/_allauth/browser/v1/account/authenticators/webauthn", {
+        credentials: "same-origin",
+      });
+      const options = (await res.json())?.data?.creation_options;
+      if (!options) return { ok: false, why: `no creation options (${res.status})` };
+
+      const b64 = (buf) =>
+        btoa(String.fromCharCode(...new Uint8Array(buf)))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+      const un = (s) => {
+        const p = s.replace(/-/g, "+").replace(/_/g, "/");
+        const bin = atob(p + "=".repeat((4 - (p.length % 4)) % 4));
+        return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      };
+
+      const publicKey = { ...options.publicKey };
+      publicKey.challenge = un(publicKey.challenge);
+      publicKey.user = { ...publicKey.user, id: un(publicKey.user.id) };
+      // Discoverable, or the browser cannot offer it without being told
+      // whose account it is — which is the whole point of a passkey.
+      publicKey.authenticatorSelection = {
+        ...(publicKey.authenticatorSelection || {}),
+        residentKey: "required",
+        requireResidentKey: true,
+        userVerification: "required",
+      };
+
+      const credential = await navigator.credentials.create({ publicKey });
+      const payload = {
+        id: credential.id,
+        rawId: b64(credential.rawId),
+        type: credential.type,
+        response: {
+          clientDataJSON: b64(credential.response.clientDataJSON),
+          attestationObject: b64(credential.response.attestationObject),
+        },
+      };
+      const post = await fetch("/_allauth/browser/v1/account/authenticators/webauthn", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", "x-csrftoken": csrf },
+        body: JSON.stringify({ name: "Test passkey", credential: payload }),
+      });
+      return { ok: post.ok, why: `${post.status} ${(await post.text()).slice(0, 160)}` };
+    });
+    assert(registered.ok, `could not register a passkey: ${registered.why}`);
+
+    // Throw the session away entirely, so nothing but the key remains.
+    await page.evaluate(() =>
+      fetch("/sentinel/api/auth/logout", { method: "POST", credentials: "same-origin" })
+    );
+    await context.clearCookies();
+    await page.goto(`${BASE}/sentinel/signin?next=%2Fissues`, { waitUntil: "load" });
+
     const passkey = page.locator(".gate-card button", { hasText: "Use a passkey instead" });
     assert(await passkey.count(), "the sign-in screen offered no passkey option");
 
+    // No email, no password typed. Just the key.
     await passkey.click();
-    await page.waitForTimeout(3000);
-    // No credential for this authenticator: it must stay on the sign-in
-    // screen and say something, rather than throw or navigate anywhere.
-    assert(/\/sentinel\/signin/.test(page.url()), `it navigated to ${page.url()}`);
+    await page.waitForURL(/\/sentinel\/issues/, { timeout: 20_000 });
+    await page.waitForFunction(() => !document.getElementById("topbar")?.hidden, {
+      timeout: 20_000,
+    });
+
+    const who = await page.evaluate(async () =>
+      (await (await fetch("/sentinel/api/auth/me", { credentials: "same-origin" })).json()).email
+    );
+    assert(who === EMAIL, `signed in as ${who}`);
+    assert(!errors.length, `page errors: ${errors.join("; ")}`);
+
     await cdp.send("WebAuthn.disable").catch(() => {});
     await context.close();
   });
+
 } finally {
   await browser.close();
   clearAuthenticators();

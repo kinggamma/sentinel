@@ -616,6 +616,11 @@ await test("a return address that leaves this app is refused", async () => {
     "//evil.example",
     "///evil.example",
     "/\\evil.example",
+    // A backslash further in, which a leading-character check waves
+    // through and a browser then reads as a separator.
+    "/a\\..\\..\\admin",
+    "/issues\\..\\..\\admin",
+    "/a\\b",
     "https://evil.example",
     "http://evil.example",
     "javascript:alert(1)",
@@ -633,6 +638,8 @@ await test("a return address that leaves this app is refused", async () => {
     "/../admin",
     "/./../admin",
     "/a/../../admin",
+    "/a\\..\\..\\admin",
+    "/issues\\..\\..\\admin",
     "/issues/../../admin",
     "/..",
     "/%2e%2e/admin",

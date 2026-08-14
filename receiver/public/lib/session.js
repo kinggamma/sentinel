@@ -29,10 +29,17 @@ export function session({ fresh = false } = {}) {
   if (inFlight) return inFlight;
 
   inFlight = sentinel
-    // Never signals unauthorized: this *is* the question of whether anyone is
-    // signed in, and answering it by triggering the signed-out handler would
-    // be a loop.
-    .get("/auth/me", { signalUnauthorized: false })
+    /**
+     * Never signals unauthorized: this *is* the question of whether anyone is
+     * signed in, and answering it by triggering the signed-out handler would
+     * be a loop.
+     *
+     * `fresh` reaches the receiver too. Forgetting only this side leaves the
+     * receiver's own few seconds of cached identity to answer, which is how
+     * somebody who has just accepted an invitation is told for the next ten
+     * seconds that they belong to nothing.
+     */
+    .get(fresh ? "/auth/me?fresh=1" : "/auth/me", { signalUnauthorized: false })
     .then((body) => {
       cached = body;
       return body;

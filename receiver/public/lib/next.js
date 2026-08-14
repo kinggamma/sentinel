@@ -44,9 +44,26 @@ export function safeNext(query) {
   // often missed.
   if (!next.startsWith("/") || next.startsWith("//")) return "/";
 
-  // A backslash is treated as a slash by some browsers when resolving, so
-  // "/\evil.example" escapes the same way "//" does.
-  if (next.startsWith("/\\")) return "/";
+  /**
+   * Only the path is inspected from here on. A query value may legitimately
+   * contain both of the things rejected below, because people type them into
+   * a search box.
+   */
+  const [pathname] = next.split(/[?#]/);
+
+  /**
+   * No backslash anywhere in it.
+   *
+   * A browser treats "\" as "/" when it resolves, and checking only the
+   * first character misses every one after it. "/a\..\..\admin" passes a
+   * leading-character check, then splits on "/" into a single segment that
+   * is not "..", and then resolves to "/admin" regardless — the separator
+   * the check was looking for was spelled the other way.
+   *
+   * Rejecting the character outright is the only version of this that does
+   * not depend on my having guessed where it would turn up.
+   */
+  if (pathname.includes("\\")) return "/";
 
   /**
    * And it must not climb out.
@@ -58,11 +75,7 @@ export function safeNext(query) {
    * Django admin, outside this app altogether. A crafted sign-in link would
    * have deposited somebody on an unrelated login form the moment they
    * signed in, with the URL looking like it had come from us.
-   *
-   * Only the path is inspected. A query value may legitimately contain "..",
-   * because people type it into a search box.
    */
-  const [pathname] = next.split(/[?#]/);
   if (climbs(pathname)) return "/";
 
   return next;
