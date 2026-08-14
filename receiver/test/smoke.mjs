@@ -104,6 +104,16 @@ async function shellServed() {
 
   for (const route of [
     "/sentinel/",
+    // Auth is addressable now, which is what lets an emailed reset link land
+    // somewhere and a deep link survive signing in.
+    "/sentinel/signin",
+    "/sentinel/signin?next=%2Fissues",
+    "/sentinel/signup",
+    "/sentinel/password/request",
+    "/sentinel/password/reset?key=abc",
+    "/sentinel/password/reset/5-abc-def",
+    "/sentinel/mfa",
+    "/sentinel/access",
     "/sentinel/issues",
     "/sentinel/settings/teams",
     "/sentinel/requests",
@@ -158,6 +168,8 @@ async function shellServed() {
     "views/projects.js",
     "views/reports.js",
     "views/issues.js",
+    "views/auth.js",
+    "lib/session.js",
   ]) {
     await check(`${asset} is served`, async () => {
       assertStatus(await get(`/sentinel/${asset}`), 200, asset);
@@ -318,6 +330,19 @@ async function authBoundaries() {
     // here would mean Sentinel had started keeping its own again.
     const res = await get("/sentinel/api/auth/me");
     assert(!res.headers.get("set-cookie"), "it set a cookie");
+  });
+
+  await check("allauth publishes what this installation offers", async () => {
+    // The sign-in screen renders from this rather than from assumptions: no
+    // providers configured means no buttons, closed signup means no link.
+    // A button for something that isn't there is a screen that 404s on
+    // submit.
+    const res = await get("/_allauth/browser/v1/config");
+    assertStatus(res, 200);
+    const config = (await res.json()).data;
+    assert(Array.isArray(config?.socialaccount?.providers), "no provider list");
+    assert(typeof config?.account?.is_open_for_signup === "boolean", "no signup flag");
+    assert(Array.isArray(config?.mfa?.supported_types), "no mfa list");
   });
 
   await check("token sign-in is gone, and says so rather than 404ing", async () => {
