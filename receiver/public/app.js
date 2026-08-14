@@ -43,6 +43,7 @@ import {
   passwordResetView,
   mfaView,
   accessView,
+  acceptInviteView,
 } from "./views/auth.js";
 import { session, forget as forgetSession } from "./lib/session.js";
 
@@ -189,6 +190,11 @@ route("/password/reset", openRoute(passwordResetView));
 // link already uses, so Phase 9 can point those links here with a Caddy rule.
 route("/password/reset/:key", openRoute(passwordResetView));
 route("/mfa", openRoute(mfaView));
+// Matching GlitchTip's own /accept/<org user id>/<token>/, so Phase 9 points
+// the emailed links here with a Caddy rule rather than a rewrite.
+route("/accept/:orgUserId/:token", openRoute((ctx) =>
+  acceptInviteView(ctx, { onAccepted: invalidateData })
+));
 
 /**
  * Signed in, with nowhere to go. Its own address rather than a mode, so that

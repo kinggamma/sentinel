@@ -114,6 +114,9 @@ async function shellServed() {
     "/sentinel/password/reset/5-abc-def",
     "/sentinel/mfa",
     "/sentinel/access",
+    // Matching GlitchTip's own invitation path, so Phase 9 can point the
+    // emailed links here without rewriting them.
+    "/sentinel/accept/12/ddar27-abc123",
     "/sentinel/issues",
     "/sentinel/settings/teams",
     "/sentinel/requests",
@@ -170,6 +173,8 @@ async function shellServed() {
     "views/issues.js",
     "views/auth.js",
     "lib/session.js",
+    "lib/next.js",
+    "lib/webauthn.js",
   ]) {
     await check(`${asset} is served`, async () => {
       assertStatus(await get(`/sentinel/${asset}`), 200, asset);

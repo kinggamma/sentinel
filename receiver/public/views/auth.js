@@ -16,11 +16,12 @@
  * installation does not have is how you get a screen that 404s on submit, so
  * everything below is gated on that document.
  */
-import { allauth } from "../lib/api.js";
+import { allauth, glitchtip } from "../lib/api.js";
 import { h, fill } from "../lib/dom.js";
 import { go, href as routeHref } from "../lib/router.js";
-import { forget as forgetSession } from "../lib/session.js";
+import { session, forget as forgetSession } from "../lib/session.js";
 import { safeNext } from "../lib/next.js";
+import { supported as webauthnSupported, sign } from "../lib/webauthn.js";
 
 let capabilities = null;
 
@@ -107,13 +108,51 @@ function afterAuthStep(body, next) {
   return go(next, { replace: true });
 }
 
+/**
+ * "Use a passkey", wherever it appears.
+ *
+ * The two entry points differ only in which pair of endpoints they use:
+ * /auth/webauthn/login signs somebody in outright, and
+ * /auth/webauthn/authenticate satisfies a second factor for a login already
+ * half done. Everything else — asking allauth for a challenge, handing it to
+ * the browser, sending the signature back — is the same, so it is written
+ * once.
+ *
+ * Rendered only when this installation offers it *and* this browser can do
+ * it. A button that opens nothing is worse than no button.
+ */
+function passkeyButton({ path, label, next, onProblem, signal }) {
+  const button = h("button", { type: "button", className: "ghost", text: label });
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const challenge = await allauth.get(path);
+      const credential = await sign(challenge?.data?.request_options || {}, signal);
+      const body = await allauth.post(path, { credential });
+      await afterAuthStep(body, next);
+    } catch (failure) {
+      button.disabled = false;
+      // Cancelling the browser's own prompt is not a failure worth shouting
+      // about — they simply changed their mind.
+      if (failure?.name === "NotAllowedError" || failure?.name === "AbortError") return;
+      onProblem(readErrors(failure, "That key wasn't accepted."));
+    }
+  });
+
+  return button;
+}
+
 // -------------------------------------------------------------- sign in
 
-export async function signInView({ outlet, query }) {
+export async function signInView({ outlet, query, signal }) {
   const config = await authConfig();
   const next = safeNext(query);
   const canSignUp = config?.account?.is_open_for_signup;
   const providers = config?.socialaccount?.providers || [];
+  // Signing in with a passkey alone, no password at all — offered only when
+  // GlitchTip has it switched on and the browser knows what one is.
+  const canUsePasskey = Boolean(config?.mfa?.passkey_login_enabled) && webauthnSupported();
 
   const email = field({ id: "email-input", type: "email", label: "Email", autocomplete: "username" });
   const password = field({
@@ -172,6 +211,15 @@ export async function signInView({ outlet, query }) {
     password,
     submit,
     error.node,
+    canUsePasskey
+      ? passkeyButton({
+          path: "/auth/webauthn/login",
+          label: "Use a passkey instead",
+          next,
+          onProblem: (message) => error.show(message),
+          signal,
+        })
+      : null,
     h(
       "p",
       { className: "gate-hint muted" },
@@ -432,12 +480,25 @@ export async function passwordResetView({ outlet, query, params }) {
 
 // ------------------------------------------------------------------ mfa
 
-export async function mfaView({ outlet, query }) {
+export async function mfaView({ outlet, query, signal }) {
   const config = await authConfig();
   const next = safeNext(query);
   const supported = config?.mfa?.supported_types || [];
 
-  const code = field({ id: "mfa-code", type: "text", label: "Six-digit code", autocomplete: "one-time-code" });
+  /**
+   * One field for both kinds of code, because allauth takes both at the same
+   * endpoint: a six-digit one from an authenticator, or one of the eight-digit
+   * recovery codes issued when the second factor was set up. Labelling it
+   * "six-digit" made the screen look like it would reject the very thing
+   * somebody reaches for when they have lost their phone.
+   */
+  const hasRecovery = supported.includes("recovery_codes");
+  const code = field({
+    id: "mfa-code",
+    type: "text",
+    label: hasRecovery ? "Authentication or recovery code" : "Six-digit code",
+    autocomplete: "one-time-code",
+  });
   code.setAttribute("inputmode", "numeric");
   const error = problem();
   const submit = h("button", { type: "submit", text: "Confirm" });
@@ -473,10 +534,20 @@ export async function mfaView({ outlet, query }) {
     submit,
     error.node,
     // Only mentioned when this installation actually has them.
-    supported.includes("recovery_codes")
+    // A security key satisfies the same challenge the code does.
+    supported.includes("webauthn") && webauthnSupported()
+      ? passkeyButton({
+          path: "/auth/webauthn/authenticate",
+          label: "Use a security key",
+          next,
+          onProblem: (message) => error.show(message),
+          signal,
+        })
+      : null,
+    hasRecovery
       ? h("p", {
           className: "gate-hint muted",
-          text: "Lost your authenticator? A recovery code works here too.",
+          text: "Lost your authenticator? Enter one of your recovery codes instead — each works once.",
         })
       : null,
     h(
@@ -488,6 +559,125 @@ export async function mfaView({ outlet, query }) {
 
   fill(outlet, card("One more step", form));
   code.focus();
+}
+
+// -------------------------------------------------------- an invitation
+
+/**
+ * The other end of "you have been invited to an organisation".
+ *
+ * GlitchTip mints these as /accept/<org user id>/<token>/ and emails the
+ * link. Reading it needs nobody signed in — that is how you find out what
+ * you have been invited to before deciding — but accepting it transfers the
+ * membership to whoever is signed in, so it needs a session and there is an
+ * order to things: look, sign in, accept.
+ *
+ * The address matches GlitchTip's own so that Phase 9 can point those links
+ * here with a Caddy rule rather than a rewrite. Until then the emailed link
+ * lands on GlitchTip's screen, which works.
+ */
+export async function acceptInviteView({ outlet, params, signal }, { onAccepted } = {}) {
+  const { orgUserId, token } = params;
+  const path = `/accept/${encodeURIComponent(orgUserId)}/${encodeURIComponent(token)}/`;
+
+  let invite;
+  try {
+    invite = await glitchtip.get(path, { signal, signalUnauthorized: false });
+  } catch (failure) {
+    fill(
+      outlet,
+      card(
+        "That invitation isn't valid",
+        h("p", {
+          className: "muted",
+          text:
+            failure?.status === 403
+              ? "It may have been used already, or withdrawn. Ask whoever invited you for a new one."
+              : "It couldn't be read. Check the link was copied whole.",
+        }),
+        h("a", { className: "button-link", href: routeHref("/signin"), text: "Go to sign in" })
+      )
+    );
+    return;
+  }
+
+  const orgUser = invite?.orgUser || {};
+  const orgName = orgUser.organization?.name || orgUser.organization?.slug || "an organisation";
+  const me = await session();
+
+  // Not signed in yet: say what this is, then send them to do that and come
+  // straight back here. The address is unchanged by signing in, so the
+  // invitation is still waiting when they return.
+  if (!me.email) {
+    const here = `/accept/${encodeURIComponent(orgUserId)}/${encodeURIComponent(token)}`;
+    fill(
+      outlet,
+      card(
+        `You've been invited to ${orgName}`,
+        h("p", {
+          className: "muted",
+          text: `The invitation was sent to ${orgUser.email || "you"}. Sign in to accept it — or create an account first if you haven't got one.`,
+        }),
+        h("a", {
+          className: "button-link",
+          href: routeHref(`/signin?next=${encodeURIComponent(here)}`),
+          text: "Sign in to accept",
+        }),
+        h(
+          "p",
+          { className: "gate-hint muted" },
+          h("a", {
+            href: routeHref(`/signup?next=${encodeURIComponent(here)}`),
+            text: "Create an account",
+          })
+        )
+      )
+    );
+    return;
+  }
+
+  const error = problem();
+  const accept = h("button", {
+    type: "button",
+    text: `Join ${orgName}`,
+    on: {
+      click: async (event) => {
+        event.target.disabled = true;
+        error.clear();
+        try {
+          await glitchtip.post(path, { accept_invite: true }, { signal });
+        } catch (failure) {
+          event.target.disabled = false;
+          return error.show(readErrors(failure, "That invitation couldn't be accepted."));
+        }
+        // Membership changed, so everything the guards decided is stale.
+        forgetSession();
+        onAccepted?.();
+        await go("/", { replace: true });
+      },
+    },
+  });
+
+  fill(
+    outlet,
+    card(
+      `Join ${orgName}?`,
+      h("p", {
+        className: "muted",
+        text: `You're signed in as ${me.email}. Accepting adds this account to ${orgName} as a ${(orgUser.roleName || "member").toLowerCase()}.`,
+      }),
+      // Worth saying: the invitation names an address, and accepting it as
+      // somebody else is a surprise nobody wants to discover later.
+      orgUser.email && orgUser.email !== me.email
+        ? h("p", {
+            className: "gate-hint muted",
+            text: `The invitation was sent to ${orgUser.email}. Accepting it here joins ${me.email} instead.`,
+          })
+        : null,
+      accept,
+      error.node
+    )
+  );
 }
 
 // ------------------------------------------- states that are not sign-in
