@@ -5,7 +5,9 @@ import {
   glitchtipInfo,
   GLITCHTIP_SESSION_COOKIE,
 } from "../glitchtip.js";
-import { currentUser, readCookie } from "../middleware/auth.js";
+import { currentUser, readCookie, presentsStaffToken } from "../middleware/auth.js";
+import { STATES } from "../auth/state.js";
+import { describe as describeState } from "../auth/state.js";
 import { present, forget } from "../auth/identity.js";
 
 export const authRouter = Router();
@@ -30,6 +32,24 @@ authRouter.get("/auth/config", (_req, res) => {
  * is signed in, which is the thing that handling exists to avoid.
  */
 authRouter.get("/auth/me", async (req, res) => {
+  /**
+   * The embedded viewer asks this before it renders anything, and it has no
+   * cookie — it lives in another page's iframe and authenticates with a
+   * header on every request. Answering only from the cookie told it that
+   * nobody was signed in, and the guards in front of every screen duly sent
+   * it to a sign-in form inside somebody's admin page.
+   *
+   * A valid staff token is an answer to "who is asking". It is an app rather
+   * than a person, so it carries no identity and no organisations; what it
+   * gets is permission to read, which is all the viewer needs.
+   */
+  if (presentsStaffToken(req)) {
+    return res.json({
+      ...describeState({ state: STATES.AUTHENTICATED, user: null, orgs: [] }),
+      source: "staff-token",
+    });
+  }
+
   try {
     res.json(present(await currentUser(req)));
   } catch (error) {

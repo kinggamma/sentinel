@@ -177,6 +177,114 @@ async function shellServed() {
   }
 }
 
+// ------------------------------------------------- the embedded bearer viewer
+
+/**
+ * The viewer inside an app's own admin page, and the one caller in the whole
+ * system with no session at all.
+ *
+ * It lives in an iframe on another page, authenticates with a header on
+ * every request, and holds no cookie of ours — which makes it the thing most
+ * likely to be broken by any change to how sessions work, and the least
+ * likely to be noticed, because every hand-test happens in a browser that is
+ * already signed in.
+ *
+ * Every assertion here therefore sends *no cookie header at all*, rather than
+ * merely not signing in.
+ */
+async function embeddedBearerViewer() {
+  process.stdout.write("\nThe embedded viewer: a bearer token and no cookies\n");
+
+  const noCookies = { ...bearer };
+
+  await check("it reads reports with a header and no session", async () => {
+    if (!TOKEN) return "skip";
+    const res = await get("/sentinel/api/reports", { headers: noCookies });
+    assertStatus(res, 200);
+    assert(Array.isArray(await res.json()), "reports were not a list");
+  });
+
+  await check("it reads projects with a header and no session", async () => {
+    if (!TOKEN) return "skip";
+    assertStatus(await get("/sentinel/api/projects", { headers: noCookies }), 200);
+  });
+
+  await check("a bearer write needs no CSRF token and no cookie", async () => {
+    if (!TOKEN) return "skip";
+    // The apps' own SDKs post exactly like this. Requiring CSRF here would
+    // stop every app reporting, and it would fail silently at the edge.
+    const res = await fetch(`${BASE}/api/reports`, {
+      method: "POST",
+      headers: { ...noCookies, "content-type": "application/json" },
+      body: JSON.stringify({
+        appName: "smoke-test",
+        note: "embedded bearer regression",
+        source: "staff-report",
+      }),
+    });
+    assertStatus(res, 201);
+  });
+
+  await check("nothing it does ever hands it a session", async () => {
+    if (!TOKEN) return "skip";
+    // If a cookie ever comes back on this path, the bearer viewer has
+    // quietly become session-authenticated and the next change to sessions
+    // will break it.
+    for (const path of ["/sentinel/api/reports", "/sentinel/api/projects"]) {
+      const res = await get(path, { headers: noCookies });
+      assert(!res.headers.get("set-cookie"), `${path} set a cookie`);
+    }
+  });
+
+  await check("the token is the only thing that opens it", async () => {
+    // Same request, no header: refused. Proves the reads above pass because
+    // of the token rather than because the route is open.
+    assertStatus(await get("/sentinel/api/reports"), 401);
+    assertStatus(
+      await get("/sentinel/api/reports", { headers: { authorization: "Bearer not-the-token" } }),
+      401
+    );
+  });
+
+  await check("it is told it may read, which is what its guards ask", async () => {
+    if (!TOKEN) return "skip";
+    /**
+     * The regression this exists for.
+     *
+     * Every screen now asks /auth/me through a guard before it renders. That
+     * endpoint answered from the session cookie alone, and this viewer has
+     * none — so it was told nobody was signed in, and the guard put a
+     * sign-in form inside somebody's admin page. The API tests above all
+     * passed throughout, because they call the API directly and never go
+     * near the boot path a browser takes.
+     */
+    const res = await get("/sentinel/api/auth/me", { headers: noCookies });
+    assertStatus(res, 200);
+    const body = await res.json();
+    assert(body.can?.canRead === true, `canRead was ${body.can?.canRead}`);
+    assert(body.source === "staff-token", `source was ${body.source}`);
+    // An app, not a person: nothing to attribute, nowhere to manage.
+    assert(body.email === null, "it was given an identity");
+    assert(body.can.canManageAccess === false, "it was allowed to approve people");
+  });
+
+  await check("its own page loads with no session, at both roots", async () => {
+    // The iframe asks for the shell itself before it asks for any data.
+    const proxied = await get("/sentinel/reports/smoke-test?app=smoke-test&embed=1", {
+      headers: { accept: "text/html" },
+    });
+    assertStatus(proxied, 200);
+    assert((await proxied.text()).includes("<title>Sentinel</title>"), "no shell at /sentinel");
+
+    const bare = await getStandalone("/reports/smoke-test?app=smoke-test&embed=1", {
+      headers: { accept: "text/html" },
+    });
+    if (bare.status === 200) {
+      assert((await bare.text()).includes("<title>Sentinel</title>"), "no shell at the bare root");
+    }
+  });
+}
+
 // --------------------------------------------------- standalone (no /sentinel)
 
 /**
@@ -343,6 +451,54 @@ async function authBoundaries() {
     assert(Array.isArray(config?.socialaccount?.providers), "no provider list");
     assert(typeof config?.account?.is_open_for_signup === "boolean", "no signup flag");
     assert(Array.isArray(config?.mfa?.supported_types), "no mfa list");
+  });
+
+  await check("a wrong password is refused with a reason, not a redirect", async () => {
+    const bootstrap = await get("/_allauth/browser/v1/auth/session");
+    const csrf = (bootstrap.headers.get("set-cookie") || "").match(/csrftoken=([^;]+)/)?.[1];
+    const res = await fetch(`${BASE}/_allauth/browser/v1/auth/login`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-csrftoken": csrf || "",
+        cookie: `csrftoken=${csrf || ""}`,
+        referer: `${BASE}/`,
+      },
+      body: JSON.stringify({ email: "nobody@example.com", password: "not-the-password" }),
+    });
+    assertStatus(res, 400);
+    const body = await res.json();
+    assert(Array.isArray(body.errors) && body.errors.length, "no reason given");
+  });
+
+  await check("a spent or invented reset key is a 400 that says so", async () => {
+    // The discriminator the reset screen depends on: a *failure* here is a
+    // 400 carrying errors, while a successful reset is a 401 carrying none.
+    // Reading only the status called success a failure.
+    const bootstrap = await get("/_allauth/browser/v1/auth/session");
+    const csrf = (bootstrap.headers.get("set-cookie") || "").match(/csrftoken=([^;]+)/)?.[1];
+    const res = await fetch(`${BASE}/_allauth/browser/v1/auth/password/reset`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-csrftoken": csrf || "",
+        cookie: `csrftoken=${csrf || ""}`,
+        referer: `${BASE}/`,
+      },
+      body: JSON.stringify({ key: "1-invented-0000000000000000000000", password: "Whatever-1234" }),
+    });
+    assertStatus(res, 400);
+    const body = await res.json();
+    assert(Array.isArray(body.errors) && body.errors.length, "a bad key gave no reason");
+  });
+
+  await check("the second-factor endpoint refuses a caller with no pending login", async () => {
+    const res = await fetch(`${BASE}/_allauth/browser/v1/auth/2fa/authenticate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: "000000" }),
+    });
+    assert(res.status === 401 || res.status === 403 || res.status === 409, `answered ${res.status}`);
   });
 
   await check("token sign-in is gone, and says so rather than 404ing", async () => {
@@ -535,6 +691,7 @@ async function main() {
   if (!SESSION) process.stdout.write("  (no GLITCHTIP_SESSION set — CSRF checks will skip)\n");
 
   await shellServed();
+  await embeddedBearerViewer();
   await standaloneMode();
   await backendsOwnTheirPaths();
   await authBoundaries();

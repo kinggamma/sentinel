@@ -604,6 +604,47 @@ await test("a returned cleanup runs before the ones the view registered", async 
   router.stop();
 });
 
+// ------------------------------------------------- where sign-in returns you
+
+await test("a return address that leaves this app is refused", async () => {
+  const { safeNext } = await import("../public/lib/next.js");
+
+  // Every one of these is a way to write "somewhere else" that still passes
+  // a careless check. The protocol-relative one is the usual miss: it starts
+  // with a slash, and a browser reads it as another origin.
+  for (const hostile of [
+    "//evil.example",
+    "///evil.example",
+    "/\\evil.example",
+    "https://evil.example",
+    "http://evil.example",
+    "javascript:alert(1)",
+    "data:text/html,<script>",
+    "",
+  ]) {
+    same(safeNext({ next: hostile }), "/", `refused ${JSON.stringify(hostile)}`);
+  }
+
+  // And nothing at all, or something that isn't a string.
+  for (const missing of [undefined, null, 42, {}, ["/issues"]]) {
+    same(safeNext({ next: missing }), "/", `refused ${JSON.stringify(missing) ?? "undefined"}`);
+  }
+  same(safeNext(undefined), "/", "refused a missing query");
+});
+
+await test("a return address inside this app survives intact", async () => {
+  const { safeNext } = await import("../public/lib/next.js");
+  for (const path of [
+    "/",
+    "/issues",
+    "/issues?q=is%3Aunresolved&range=14d",
+    "/reports/an-app/a-report-id",
+    "/settings/apps/an-app",
+  ]) {
+    same(safeNext({ next: path }), path, `kept ${path}`);
+  }
+});
+
 await test("stop() tears down the mounted view and stops listening", async () => {
   const { router, outlet, click, location } = await harness("/sentinel/issues");
   let cleaned = 0;

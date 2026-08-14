@@ -8,6 +8,21 @@ const STAFF_API_TOKEN = process.env.STAFF_API_TOKEN;
 export { readCookie };
 
 /**
+ * Whether this request carries the shared staff token.
+ *
+ * Its own function because two things need the same answer and getting it
+ * twice, differently, is how they drift: the guard below, and /auth/me — the
+ * one the embedded viewer asks before it renders anything at all.
+ */
+export function presentsStaffToken(req) {
+  if (!STAFF_API_TOKEN) return false;
+  const header = req.header?.("authorization") || req.headers?.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token || token.length !== STAFF_API_TOKEN.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(STAFF_API_TOKEN));
+}
+
+/**
  * There is one session, and it is GlitchTip's.
  *
  * This file used to mint a second: an HMAC-signed cookie carrying email,
@@ -47,17 +62,11 @@ export async function requireStaffToken(req, res, next) {
     return res.status(503).json({ error: "receiver misconfigured" });
   }
 
-  const header = req.header("authorization") || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-
   // Checked before anything touches a cookie, so a bearer request never costs
   // a lookup and never depends on one being reachable.
-  if (token && token.length === STAFF_API_TOKEN.length) {
-    const matches = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(STAFF_API_TOKEN));
-    if (matches) {
-      req.viewer = { source: "staff-token", email: null, state: null, projects: null };
-      return next();
-    }
+  if (presentsStaffToken(req)) {
+    req.viewer = { source: "staff-token", email: null, state: null, projects: null };
+    return next();
   }
 
   let identity;

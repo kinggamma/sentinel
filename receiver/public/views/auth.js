@@ -20,6 +20,7 @@ import { allauth } from "../lib/api.js";
 import { h, fill } from "../lib/dom.js";
 import { go, href as routeHref } from "../lib/router.js";
 import { forget as forgetSession } from "../lib/session.js";
+import { safeNext } from "../lib/next.js";
 
 let capabilities = null;
 
@@ -36,20 +37,6 @@ export async function authConfig() {
     capabilities = { account: { login_methods: ["email"] }, socialaccount: { providers: [] } };
   }
   return capabilities;
-}
-
-/**
- * Where to go after signing in.
- *
- * Carried through the flow as ?next=, and deliberately checked before it is
- * used: an open redirect is a phishing primitive, and "sign in and you will
- * be sent wherever this link says" is exactly the shape of one. Only a path
- * within this app is honoured.
- */
-export function safeNext(query) {
-  const next = query?.next;
-  if (typeof next !== "string" || !next.startsWith("/") || next.startsWith("//")) return "/";
-  return next;
 }
 
 // ------------------------------------------------------------- the shell
