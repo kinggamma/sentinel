@@ -41,6 +41,10 @@ function staffToken() {
 
 const TOKEN = staffToken();
 const SESSION = process.env.GLITCHTIP_SESSION || "";
+// Handed over with the session rather than written down here: the suite has
+// to write to a real organisation, and naming one in the repo would put a
+// particular installation's own organisation in a public file.
+const ORG = process.env.GLITCHTIP_ORG || "";
 
 let passed = 0;
 const failures = [];
@@ -340,8 +344,8 @@ async function csrfIsEnforced() {
   process.stdout.write("\nCSRF on session-authenticated writes\n");
 
   await check("a session write without a token is refused", async () => {
-    if (!SESSION) return "skip";
-    const res = await fetch(`${BASE}/api/0/organizations/almareem/issues/?id=999999`, {
+    if (!SESSION || !ORG) return "skip";
+    const res = await fetch(`${BASE}/api/0/organizations/${encodeURIComponent(ORG)}/issues/?id=999999`, {
       method: "PUT",
       headers: { cookie: `sessionid=${SESSION}`, "content-type": "application/json" },
       body: JSON.stringify({ status: "resolved" }),
@@ -350,14 +354,14 @@ async function csrfIsEnforced() {
   });
 
   await check("a session write with a token is accepted by CSRF", async () => {
-    if (!SESSION) return "skip";
+    if (!SESSION || !ORG) return "skip";
     const bootstrap = await get("/_allauth/browser/v1/auth/session", {
       headers: { cookie: `sessionid=${SESSION}` },
     });
     const csrf = (bootstrap.headers.get("set-cookie") || "").match(/csrftoken=([^;]+)/)?.[1];
     assert(csrf, "no csrftoken cookie was offered to bootstrap from");
 
-    const res = await fetch(`${BASE}/api/0/organizations/almareem/issues/?id=999999`, {
+    const res = await fetch(`${BASE}/api/0/organizations/${encodeURIComponent(ORG)}/issues/?id=999999`, {
       method: "PUT",
       headers: {
         cookie: `sessionid=${SESSION}; csrftoken=${csrf}`,

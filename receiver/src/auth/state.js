@@ -210,20 +210,60 @@ export function derive({
 }
 
 /**
- * What each state permits. The client is handed this rather than deriving it,
- * so "may this person read reports" has exactly one implementation, on the
- * server, and a new state cannot be half-taught to the UI.
+ * What this session may do — conclusions, not the facts they were drawn from.
+ *
+ * The client is handed answers rather than ingredients. Shipping
+ * `hasPasswordAuth` and letting each screen work out what it implies is how
+ * two screens end up implying different things from it; the interesting one
+ * here is a security claim, and it has exactly one correct reading.
+ *
+ * Unknown reads as "no" throughout. These gate actions, and a fact we could
+ * not establish must never open a door.
  */
-export function capabilities(state) {
-  const may = {
-    read: state === STATES.AUTHENTICATED,
-    requestAccess: state === STATES.PENDING || state === STATES.DENIED,
-    // Everything except a live session needs the sign-in screen; MFA and
-    // reauthentication are mid-conversation and own their own screens.
-    signIn: [STATES.ANONYMOUS, STATES.EXPIRED, STATES.DISABLED].includes(state),
-    completeMfa: state === STATES.MFA_REQUIRED,
-  };
-  return Object.freeze(may);
+export function capabilities({ state, user = null, orgs = [] } = {}) {
+  const authenticated = state === STATES.AUTHENTICATED;
+  // Explicitly true, not merely truthy: null means "we could not tell".
+  const hasPassword = user?.hasPasswordAuth === true;
+
+  return Object.freeze({
+    canRead: authenticated,
+
+    canRequestAccess: state === STATES.PENDING || state === STATES.DENIED,
+
+    /**
+     * Approving somebody is performed with Sentinel's own service token
+     * rather than the approver's credentials (glitchtip.js: inviteToOrg), so
+     * GlitchTip never checks the caller's role and the only real guard is
+     * membership. Encoded as it actually behaves. If approval is ever meant
+     * to need manager or above, this is the line that changes, and the lie
+     * would have been telling the UI it already does.
+     */
+    canManageAccess: authenticated && orgs.length > 0,
+
+    /**
+     * Changing a password needs one to exist. A social-only or passkey-only
+     * account is offered "set a password" instead, which is a different flow
+     * with a different endpoint.
+     */
+    canChangePassword: authenticated && hasPassword,
+
+    /**
+     * Whether a password change would actually sign this account's other
+     * sessions out. Django derives the session auth hash from the password
+     * hash, so it does — but only for accounts that have a password. A
+     * social-only or passkey-only account has no password-change event, and
+     * nothing invalidates its sessions until per-user session indexing
+     * exists. This is why the flag is a conclusion and not a raw fact: it is
+     * the difference between "we revoked your sessions" and "we did not".
+     */
+    canInvalidateSessionsByPasswordChange: hasPassword,
+
+    // Routing, rather than authorisation. MFA and reauthentication are
+    // mid-conversation and own their own screens; sending them to sign-in
+    // discards the flow at the moment it is half finished.
+    canSignIn: [STATES.ANONYMOUS, STATES.EXPIRED, STATES.DISABLED].includes(state),
+    canCompleteMfa: state === STATES.MFA_REQUIRED,
+  });
 }
 
 /**
@@ -236,11 +276,11 @@ export function describe({ state, user = null, orgs = [], allauth = null } = {})
     email: user?.email || null,
     name: user?.name || null,
     orgs,
-    // Whether this account could ever be invalidated by a password change,
-    // which social-only and passkey-only accounts cannot. Carried so nothing
-    // downstream describes that as revocation.
+    // Kept alongside the conclusions rather than instead of them: a screen
+    // that needs to explain *why* it is offering "set a password" instead of
+    // "change password" needs the fact, not just the verdict.
     hasPasswordAuth: user?.hasPasswordAuth ?? null,
     available: allauth?.available || [],
-    can: capabilities(state),
+    can: capabilities({ state, user, orgs }),
   };
 }

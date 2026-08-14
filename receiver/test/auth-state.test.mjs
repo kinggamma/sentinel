@@ -244,29 +244,79 @@ section("What each state is allowed to do");
 
 await test("only an authenticated session may read", () => {
   for (const state of Object.values(STATES)) {
-    same(capabilities(state).read, state === STATES.AUTHENTICATED, `${state} read`);
+    same(
+      capabilities({ state, user: { email: "a@b.c" }, orgs: ["acme"] }).canRead,
+      state === STATES.AUTHENTICATED,
+      `${state} canRead`
+    );
   }
 });
 
 await test("asking for access belongs to the two states that have nothing yet", () => {
-  assert(capabilities(STATES.PENDING).requestAccess, "pending may ask");
-  assert(capabilities(STATES.DENIED).requestAccess, "denied may ask again");
-  assert(!capabilities(STATES.AUTHENTICATED).requestAccess, "authenticated need not");
-  assert(!capabilities(STATES.ANONYMOUS).requestAccess, "anonymous cannot");
+  const can = (state) => capabilities({ state }).canRequestAccess;
+  assert(can(STATES.PENDING), "pending may ask");
+  assert(can(STATES.DENIED), "denied may ask again");
+  assert(!can(STATES.AUTHENTICATED), "authenticated need not");
+  assert(!can(STATES.ANONYMOUS), "anonymous cannot");
+});
+
+await test("managing access needs a live session and an organisation to manage", () => {
+  const of = (facts) => capabilities(facts).canManageAccess;
+  assert(
+    of({ state: STATES.AUTHENTICATED, user: { email: "a@b.c" }, orgs: ["acme"] }),
+    "member may manage"
+  );
+  assert(!of({ state: STATES.AUTHENTICATED, user: { email: "a@b.c" }, orgs: [] }), "no org");
+  assert(!of({ state: STATES.PENDING, user: { email: "a@b.c" }, orgs: [] }), "pending");
+  assert(!of({ state: STATES.ANONYMOUS }), "anonymous");
+});
+
+await test("a password can only be changed by an account that has one", () => {
+  const of = (facts) => capabilities(facts).canChangePassword;
+  const orgs = ["acme"];
+  assert(
+    of({ state: STATES.AUTHENTICATED, user: { hasPasswordAuth: true }, orgs }),
+    "password account"
+  );
+  assert(
+    !of({ state: STATES.AUTHENTICATED, user: { hasPasswordAuth: false }, orgs }),
+    "social-only account is offered 'set', not 'change'"
+  );
+  assert(!of({ state: STATES.PENDING, user: { hasPasswordAuth: true } }), "not signed in enough");
+});
+
+await test("only a password account has its sessions invalidated by changing it", () => {
+  // The distinction the whole flag exists for. Django derives the session
+  // auth hash from the password hash, so social-only and passkey-only
+  // accounts are untouched by a password change and stay signed in
+  // everywhere until per-user session indexing exists.
+  const of = (user) => capabilities({ state: STATES.AUTHENTICATED, user, orgs: ["acme"] })
+    .canInvalidateSessionsByPasswordChange;
+  same(of({ hasPasswordAuth: true }), true, "password account");
+  same(of({ hasPasswordAuth: false }), false, "social-only account");
+});
+
+await test("a fact we could not establish never opens a door", () => {
+  // null is "we could not tell", and every one of these gates an action.
+  const unknown = capabilities({ state: STATES.AUTHENTICATED, user: { hasPasswordAuth: null }, orgs: ["acme"] });
+  same(unknown.canChangePassword, false, "canChangePassword");
+  same(unknown.canInvalidateSessionsByPasswordChange, false, "canInvalidateSessions...");
+  const nobody = capabilities({ state: STATES.AUTHENTICATED });
+  same(nobody.canManageAccess, false, "canManageAccess with no orgs known");
 });
 
 await test("a half-finished sign-in is not sent back to the sign-in screen", () => {
   // The guard that matters: MFA and reauthentication carry state, and
   // bouncing them to sign-in throws that state away mid-conversation.
-  assert(!capabilities(STATES.MFA_REQUIRED).signIn, "mfa keeps its own screen");
-  assert(!capabilities(STATES.REAUTH_REQUIRED).signIn, "reauth keeps its own screen");
-  assert(capabilities(STATES.MFA_REQUIRED).completeMfa, "mfa may complete");
+  assert(!capabilities({ state: STATES.MFA_REQUIRED }).canSignIn, "mfa keeps its own screen");
+  assert(!capabilities({ state: STATES.REAUTH_REQUIRED }).canSignIn, "reauth keeps its own screen");
+  assert(capabilities({ state: STATES.MFA_REQUIRED }).canCompleteMfa, "mfa may complete");
 });
 
 await test("expired and disabled both go to sign-in, and say different things there", () => {
-  assert(capabilities(STATES.EXPIRED).signIn, "expired");
-  assert(capabilities(STATES.DISABLED).signIn, "disabled");
-  assert(capabilities(STATES.ANONYMOUS).signIn, "anonymous");
+  assert(capabilities({ state: STATES.EXPIRED }).canSignIn, "expired");
+  assert(capabilities({ state: STATES.DISABLED }).canSignIn, "disabled");
+  assert(capabilities({ state: STATES.ANONYMOUS }).canSignIn, "anonymous");
 });
 
 // ------------------------------------------------------------ the body
@@ -302,12 +352,20 @@ await test("it never leaks identity for a state that has none", () => {
   const body = describeState({ state: STATES.ANONYMOUS });
   same(body.email, null, "email");
   same(body.orgs, [], "orgs");
-  same(body.can.read, false, "read");
+  same(body.can.canRead, false, "canRead");
 });
 
-await test("capabilities travel with the state rather than being recomputed", () => {
-  const body = describeState({ state: STATES.PENDING, user: { email: "a@b.c" } });
-  same(body.can, capabilities(STATES.PENDING), "can");
+await test("the body carries conclusions, not just the facts behind them", () => {
+  const body = describeState({
+    state: STATES.AUTHENTICATED,
+    user: { email: "a@b.c", hasPasswordAuth: false },
+    orgs: ["acme"],
+  });
+  same(body.can, capabilities({ state: STATES.AUTHENTICATED, user: { hasPasswordAuth: false }, orgs: ["acme"] }), "can");
+  // The fact survives alongside the verdict, because a screen offering "set a
+  // password" instead of "change password" needs to know which it is.
+  same(body.hasPasswordAuth, false, "hasPasswordAuth");
+  same(body.can.canChangePassword, false, "canChangePassword");
 });
 
 process.stdout.write(`\n${passed} passed, ${failures.length} failed\n`);
