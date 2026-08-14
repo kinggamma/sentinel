@@ -50,7 +50,7 @@ function requestRow(request, organisations, onDecide) {
   );
 }
 
-export async function requestsView({ signal }) {
+export async function requestsView({ signal, onCleanup }) {
   // Closing (Done, backdrop, Escape) should send the URL back to "/", but
   // the router tearing this view down on its own — because the user
   // navigated somewhere else directly — must not fight that by navigating
@@ -81,6 +81,14 @@ export async function requestsView({ signal }) {
     },
   });
   done.addEventListener("click", close);
+  // Registered here, not returned at the end. load() below rethrows an
+  // AbortError when the navigation that superseded this one cancels its
+  // fetch — and that throw skips the return, so the router would be handed
+  // no teardown and this dialog would stay open over the next screen.
+  onCleanup(() => {
+    active = false;
+    close();
+  });
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", "People asking for access");
 
@@ -127,8 +135,4 @@ export async function requestsView({ signal }) {
 
   await load();
 
-  return () => {
-    active = false;
-    close();
-  };
 }

@@ -4,3 +4,10 @@ receiver/node_modules/
 *.log
 .DS_Store
 .git-broken-unused/
+
+# Built in the image's assets stage, never committed: the replay player
+# bundle and the app bundle. They exist locally only if you ran
+# `npm run build:assets` in receiver/, which is worth doing before serving
+# from a checkout but is not the source of anything.
+receiver/public/vendor/
+receiver/public/app.bundle.js

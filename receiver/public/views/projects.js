@@ -3,15 +3,10 @@
  * its report counts, its DSN if Sentinel provisioned it, and where it's
  * allowed to run.
  *
- * The home screen, so it owns "/" — but it can't yet remove the pairwise
- * hiding the way access requests and settings did, because it shares a
- * toggle with Reports (app.js's `view` state, paintChrome()), and Reports
- * hasn't moved onto the router yet. This view renders into the router's
- * outlet and fetches its own data on every mount, same as any other view;
- * app.js's showReports()/showProjects() still own switching #view and
- * #reports-view's visibility for as long as Reports stays legacy, calling
- * this file's mount fresh (via the router's own refresh()) whenever the
- * underlying data might have changed.
+ * The home screen, so it owns "/". It renders into the router's outlet and
+ * fetches its own data on every mount, same as any other view — opening an
+ * app is now a navigation to /reports/:app rather than a mode change, so
+ * nothing here hides anything.
  */
 import { sentinel } from "../lib/api.js";
 import { h, fill, emptyState } from "../lib/dom.js";
@@ -119,13 +114,9 @@ function projectCard(project, hue, onOpenReports) {
 
 /**
  * @param {object} deps
- * @param {(appName: string) => void} deps.onOpenReports - Reports is still
- *   app.js's legacy showReports(), not a route of its own yet.
- */
-/**
- * @param {object} deps
- * @param {(appName: string) => void} deps.onOpenReports - Reports is still
- *   app.js's legacy showReports(), not a route of its own yet.
+ * @param {(appName: string) => void} deps.onOpenReports - navigates to that
+ *   app's reports. A function rather than an href because the card itself is
+ *   clickable, not just the link inside it.
  * @param {(appName: string) => number} [deps.hueFor] - app.js's own
  *   appHue(), keyed off every app that has ever reported or been
  *   provisioned — not just the ones with a project record. Without it, an

@@ -121,18 +121,18 @@
         </h1>
 
         <!-- The two halves of an incident: what broke, and what someone said
-             about it. One app, so they're tabs rather than two addresses. -->
+             about it. They look like tabs and are ordinary links — each half
+             is an address, so either can be bookmarked, opened in a new tab
+             and come back the same on reload. The hrefs are rewritten with
+             the mount at boot; these are the standalone spellings. -->
         <nav class="sections" aria-label="Sections">
-          <button id="tab-issues" type="button" class="tab">Issues</button>
-          <button id="tab-reports" type="button" class="tab selected">Reports</button>
+          <a id="tab-issues" href="/issues" class="tab">Issues</a>
+          <a id="tab-reports" href="/" class="tab">Reports</a>
         </nav>
+        <!-- Reports' search and source filter used to live here, in the
+             shell, shown and hidden by whichever screen was up. They belong
+             to that screen, and moved into it (views/reports.js). -->
         <div class="topbar-controls">
-          <input id="search" type="search" placeholder="Search note, URL, reporter…" hidden />
-          <select id="source-filter" hidden>
-            <option value="">All sources</option>
-            <option value="staff-report">Staff reports</option>
-            <option value="auto-error">Auto-captured</option>
-          </select>
           <a id="glitchtip-link" class="button-link" target="_blank" rel="noreferrer noopener" hidden>
             Errors in GlitchTip ↗
           </a>
@@ -155,101 +155,28 @@
         </div>
       </header>
 
-      <!-- Errors, read straight from GlitchTip's API with the session this
-           browser already holds. Laid out like the list people already know. -->
-      <main id="issues-view" class="issues-view" hidden aria-label="Issues">
-        <div class="issues-toolbar">
-          <select id="issue-env" aria-label="Environment">
-            <option value="">All environments</option>
-          </select>
-          <input
-            id="issue-search"
-            type="search"
-            value="is:unresolved"
-            aria-label="Search issues"
-            placeholder="is:unresolved"
-          />
-          <div class="issue-range" role="group" aria-label="Time range"></div>
-          <select id="issue-sort" aria-label="Sort by"></select>
-          <button id="issue-refresh" type="button" class="ghost">Refresh</button>
-        </div>
+      <!-- Where every routed screen renders: the landing grid of app cards
+           (views/projects.js), one app's reports and the report itself
+           (views/reports.js). Dialogs like requests and settings layer over
+           whatever is here rather than replacing it.
 
-        <div class="issue-bulk">
-          <input type="checkbox" id="issue-all" aria-label="Select all" />
-          <button type="button" data-status="resolved" disabled>Mark resolved</button>
-          <button type="button" data-status="unresolved" disabled>Mark unresolved</button>
-          <button type="button" data-status="ignored" disabled>Mark ignored</button>
-          <button type="button" id="issue-delete" class="ghost danger" disabled>Delete</button>
-          <span class="bulk-spacer"></span>
-          <button type="button" id="issue-prev" class="ghost" aria-label="Previous page">‹</button>
-          <button type="button" id="issue-next" class="ghost" aria-label="Next page">›</button>
-        </div>
-
-        <!-- One issue: what threw, where, and everything the last event
-             carried. Replaces the list rather than opening elsewhere. -->
-        <section id="issue-detail" hidden>
-          <button id="issue-back" type="button" class="linky">← All issues</button>
-
-          <header class="detail-head">
-            <h2 id="detail-title"></h2>
-            <p id="detail-culprit" class="muted"></p>
-            <div class="detail-meta">
-              <span id="detail-project" class="tag"></span>
-              <span id="detail-status" class="tag"></span>
-              <span id="detail-seen" class="muted"></span>
-            </div>
-            <div class="detail-actions">
-              <button type="button" id="detail-resolve">Mark resolved</button>
-              <button type="button" id="detail-ignore" class="ghost">Mark ignored</button>
-              <a id="detail-glitchtip" class="button-link" target="_blank" rel="noreferrer noopener">
-                Open in GlitchTip ↗
-              </a>
-            </div>
-          </header>
-
-          <div id="detail-body"></div>
-        </section>
-
-        <table class="issues-table">
-          <thead>
-            <tr>
-              <th class="pick"></th>
-              <th>Issue</th>
-              <th class="trend-col">Trend</th>
-              <th class="count-col">Events</th>
-            </tr>
-          </thead>
-          <tbody id="issue-rows"></tbody>
-        </table>
-      </main>
-
-      <!-- Where routed screens render. The landing grid of app cards is the
-           first of them (views/projects.js); dialogs like requests and
-           settings layer over whatever is here rather than replacing it.
-           Reports is next to move, and takes #reports-view below with it. -->
+           The reports list and detail had their own <main> beside this one,
+           swapped by hand; the screenshot lightbox was a third block down
+           here, filled in by whichever screen opened it. Both belong to the
+           screen that shows them, and now live there — the lightbox is
+           built and appended by the view, and goes away with it. -->
       <main id="view" hidden></main>
-
-      <!-- Drill-down: reports for one app. Still legacy, still toggled. -->
-      <main id="reports-view" class="layout" hidden>
-        <ul id="list" class="list" aria-label="Reports"></ul>
-        <section id="detail" class="detail">
-          <p class="empty">Select a report.</p>
-        </section>
-      </main>
-    </div>
-
-    <div id="lightbox" class="lightbox" hidden>
-      <button id="lightbox-close" class="lightbox-close" type="button" aria-label="Close">✕</button>
-      <button id="lightbox-prev" class="lightbox-nav prev" type="button" aria-label="Previous frame">‹</button>
-      <img id="lightbox-img" alt="" />
-      <button id="lightbox-next" class="lightbox-nav next" type="button" aria-label="Next frame">›</button>
-      <p id="lightbox-caption" class="lightbox-caption"></p>
     </div>
 
     <!-- Relative, resolved by the <base> tag in <head> like the stylesheets.
          Its own imports (./lib/router.js and so on) are fine either way —
          module specifiers resolve against this script's own URL, not the
-         page's, so they'd have worked even without the fix above. -->
-    <script src="app.js" type="module"></script>
+         page's, so they'd have worked even without the fix above.
+
+         Which file this is gets filled in by src/index.js: the bundle when
+         the build produced one, the entry module when it didn't. Running the
+         receiver straight from a checkout is a normal thing to do, and it
+         should not be a blank page because a build step wasn't run. -->
+    <script src="__SENTINEL_SCRIPT__" type="module"></script>
   </body>
 </html>

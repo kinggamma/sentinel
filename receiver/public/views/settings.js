@@ -31,7 +31,7 @@ function originRow(origin, { fixed, onRemove }) {
 }
 
 /** @param {object} [opts] - onSaved is called after a change worth reflecting elsewhere: a project card's origin count, its very existence. */
-export async function settingsView({ params, signal }, { onSaved } = {}) {
+export async function settingsView({ params, signal, onCleanup }, { onSaved } = {}) {
   const appName = params.app || null;
   let active = true;
   // Never populated for an app-scoped list: "from .env" describes the global
@@ -255,6 +255,14 @@ export async function settingsView({ params, signal }, { onSaved } = {}) {
     },
   });
   done.addEventListener("click", close);
+  // Registered here, not returned at the end. load() below rethrows an
+  // AbortError when the navigation that superseded this one cancels its
+  // fetch — and that throw skips the return, so the router would be handed
+  // no teardown and this dialog would stay open over the next screen.
+  onCleanup(() => {
+    active = false;
+    close();
+  });
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", appName ? `Where ${appName} runs` : "Apps allowed to report");
 
@@ -281,8 +289,4 @@ export async function settingsView({ params, signal }, { onSaved } = {}) {
 
   await load();
 
-  return () => {
-    active = false;
-    close();
-  };
 }

@@ -18,18 +18,24 @@
  * embedded gets a fresh token from its host on every load.
  */
 
-import { initIssues, showIssues } from "./issues.js";
+import { useBearerToken, handleUnauthorized } from "./lib/api.js";
+import { h, fill } from "./lib/dom.js";
 import {
   route,
   layer,
   start as startRouter,
   go as goRoute,
   refresh as refreshRoute,
+  stop as stopRouter,
+  setNotFound,
+  currentPath,
   href as routeHref,
 } from "./lib/router.js";
 import { requestsView } from "./views/requests.js";
 import { settingsView } from "./views/settings.js";
 import { projectsView } from "./views/projects.js";
+import { reportsView } from "./views/reports.js";
+import { issuesListView, issueDetailView } from "./views/issues.js";
 
 /** Left over from when the viewer kept a bearer token here. Clear it out. */
 try {
@@ -84,8 +90,14 @@ const MOUNT = document.querySelector('meta[name="sentinel-mount"]')?.content ?? 
  * One small GET for a background that is definitely current, rather than a
  * cache to invalidate.
  */
-const landing = (ctx) =>
-  scopedApp ? undefined : projectsView(ctx, { onOpenReports: showReports, hueFor: appHue });
+const landing = (ctx) => {
+  // Every route repaints the chrome, because the chrome describes the route.
+  // Arriving at /settings from an app's reports, the breadcrumb still named
+  // that app until this line: the topbar was only ever repainted by the two
+  // routes that happened to remember to.
+  paintChrome();
+  return scopedApp ? undefined : projectsView(ctx, { onOpenReports: showReports, hueFor: appHue });
+};
 
 // layer() rather than calling one and returning the other: two views in one
 // render produce two cleanups, and a route hands the router only one. The
@@ -99,13 +111,69 @@ route("/settings/apps/:app", layer(landing, (ctx) => settingsView(ctx, { onSaved
 // Scoped and embedded sessions are locked to one app's reports and have no
 // "all projects" to come home to — showProjects() already refused to show
 // it for the same reason, this is that same refusal at the address level.
+// Reports has an address per app, and per report inside it. Chrome is
+// painted from the route rather than from a `view` variable, so there is one
+// answer to "what is showing" and the URL is it.
+const reportsRoute = (ctx) => {
+  paintChrome();
+  return reportsView(ctx, {
+    hueFor: appHue,
+    onChanged: () => void loadData(),
+    // Embedded and scoped sessions are pinned to the app their host page is
+    // about, so a report id from anywhere else is refused rather than
+    // followed.
+    lockedTo: scopedApp,
+  });
+};
+/**
+ * Errors, from GlitchTip, under whichever organisation this account belongs
+ * to. The org is discovered at sign-in (enter(), below) rather than known at
+ * module load, so the routes read it when they run.
+ */
+const issuesRoute = (view) => (ctx) => {
+  paintChrome();
+  return view(ctx, { org: organisation });
+};
+/**
+ * Anything else. The router has always supported this and nothing ever
+ * registered one, so a typo past the mount rendered an empty outlet inside a
+ * complete shell — which reads as a screen that failed to load rather than
+ * an address that doesn't exist.
+ */
+setNotFound(({ outlet, path }) => {
+  paintChrome();
+  fill(
+    outlet,
+    h(
+      "div",
+      { className: "not-found" },
+      h("h2", { text: "That page doesn't exist" }),
+      h("p", { className: "muted mono", text: path }),
+      h("a", {
+        className: "button-link",
+        href: routeHref(scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/"),
+        text: scopedApp ? "Back to reports" : "Back to your apps",
+      })
+    )
+  );
+});
+
+route("/issues", issuesRoute(issuesListView));
+route("/issues/:id", issuesRoute(issueDetailView));
+
+route("/reports/:app", reportsRoute);
+route("/reports/:app/:id", reportsRoute);
+
 if (!scopedApp) {
   // hueFor is app.js's own appHue(), not a copy: it's keyed off appNames,
   // which spans both projects and reports, so an app with reports but no
   // project record still gets the same colour here as it does on a report
   // row's project chip. A card's own idea of "which apps exist" would only
   // ever see the project half of that list.
-  route("/", (ctx) => projectsView(ctx, { onOpenReports: showReports, hueFor: appHue }));
+  route("/", (ctx) => {
+    paintChrome();
+    return projectsView(ctx, { onOpenReports: showReports, hueFor: appHue });
+  });
 }
 
 /**
@@ -164,28 +232,26 @@ function cycleTheme() {
 const el = (id) => document.getElementById(id);
 const gate = el("gate");
 const app = el("app");
-const list = el("list");
-const detail = el("detail");
-// The router's outlet — Projects renders here now, the first full-page
-// (non-modal) view to. Its own visibility is still paintChrome()'s job,
-// toggled alongside #reports-view, for as long as Reports stays legacy.
+// The router's outlet. Every full-page screen renders here now — there is
+// no second <main> to keep in step with it, and no mode that decides which
+// of the two is showing.
 const viewOutlet = el("view");
 
 /** Only set when embedded: the shared staff token, from the host page. */
 let bearerToken = "";
 
+/**
+ * The GlitchTip organisation this account browses errors under. Discovered at
+ * sign-in, read by the issue routes when they run — they're registered at
+ * module load, long before anyone has signed in.
+ */
+let organisation = null;
+
 let projects = [];
 let reports = [];
 let appNames = [];
 let glitchtipRoot = null;
-let view = "projects";
-let selectedApp = "";
-let selectedId = null;
-let lightboxFrames = [];
-let lightboxIndex = 0;
 
-/** Object URLs we minted for screenshots — revoked when the view changes. */
-let objectUrls = [];
 
 /**
  * Standalone the session cookie carries us; embedded there is no cookie to
@@ -198,37 +264,14 @@ function api(path, init = {}) {
   return fetch(path, { ...init, headers, credentials: "same-origin" });
 }
 
-function releaseObjectUrls() {
-  objectUrls.forEach((url) => URL.revokeObjectURL(url));
-  objectUrls = [];
-}
-
-function fmtTime(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function fmtCrumbTime(ts) {
-  if (!ts) return "—";
-  // Sentry breadcrumb timestamps are seconds since epoch (float).
-  const ms = ts > 1e12 ? ts : ts * 1000;
-  return new Date(ms).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 // ---------------------------------------------------------------- sign-in
 
 function showGate(message) {
+  // Hiding the app is not stopping it. The router kept its listeners on
+  // document and kept the last view mounted behind the sign-in screen — a
+  // replay still playing, its timers still running, and every link click on
+  // this page still intercepted by a router whose session has gone.
+  stopRouter();
   app.hidden = true;
   gate.hidden = false;
   const err = el("gate-error");
@@ -425,8 +468,6 @@ el("forget").addEventListener("click", async () => {
   await fetch("/sentinel/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
   projects = [];
   reports = [];
-  selectedId = null;
-  detail.innerHTML = "<p class='empty'>Select a report.</p>";
   showGate();
 });
 
@@ -499,28 +540,6 @@ function appHue(appName) {
   return PROJECT_HUES[(index < 0 ? 0 : index) % PROJECT_HUES.length];
 }
 
-/** What visual evidence a report carries — replay now, screenshots on older ones. */
-function evidenceLabel(report) {
-  if (report.hasReplay) {
-    const meta = report.replayMeta || {};
-    if (meta.startedAt && meta.endedAt) {
-      return `${Math.round((meta.endedAt - meta.startedAt) / 1000)}s replay`;
-    }
-    return "replay";
-  }
-  const shots = (report.screenshots || []).length;
-  if (shots) return `${shots} shot${shots > 1 ? "s" : ""}`;
-  return "no replay";
-}
-
-function projectChip(appName) {
-  const chip = document.createElement("span");
-  chip.className = "tag project";
-  chip.style.setProperty("--project-hue", String(appHue(appName)));
-  chip.textContent = appName;
-  return chip;
-}
-
 // ------------------------------------------------------- projects landing
 //
 // The screen itself is views/projects.js, mounted by the router at "/".
@@ -528,404 +547,59 @@ function projectChip(appName) {
 // its own project chips, and projects.js is handed appHue() directly as
 // hueFor() (see the route registration) rather than keeping its own copy.
 
-// ----------------------------------------------------------- reports list
-
-function currentFilters() {
-  return {
-    q: el("search").value.trim().toLowerCase(),
-    source: el("source-filter").value,
-  };
-}
-
-function visibleReports() {
-  const { q, source } = currentFilters();
-  return reports.filter((r) => {
-    // The list only ever shows one app: either the drilled-into project or,
-    // embedded, the app whose admin we're sitting inside.
-    if (selectedApp && r.appName !== selectedApp) return false;
-    if (source && r.source !== source) return false;
-    if (!q) return true;
-    return [r.note, r.url, r.reporterEmail, r.appName, r.id]
-      .filter(Boolean)
-      .some((field) => String(field).toLowerCase().includes(q));
-  });
-}
-
-function renderList() {
-  const rows = visibleReports();
-  list.innerHTML = "";
-
-  if (!rows.length) {
-    const li = document.createElement("li");
-    li.className = "empty";
-    li.textContent = reports.length ? "Nothing matches those filters." : "No reports yet.";
-    list.appendChild(li);
-    return;
-  }
-
-  for (const report of rows) {
-    const li = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    if (report.id === selectedId) button.setAttribute("aria-current", "true");
-
-    const top = document.createElement("div");
-    top.className = "row-top";
-    const note = document.createElement("span");
-    note.className = "row-note";
-    note.textContent = report.note || "(no note)";
-    const tag = document.createElement("span");
-    tag.className = report.source === "auto-error" ? "tag auto" : "tag";
-    tag.textContent = report.source === "auto-error" ? "auto" : "staff";
-    top.append(note, tag);
-
-    const meta = document.createElement("div");
-    meta.className = "row-meta";
-    meta.append(
-      Object.assign(document.createElement("span"), { textContent: fmtTime(report.createdAt) }),
-      Object.assign(document.createElement("span"), { textContent: evidenceLabel(report) })
-    );
-
-    button.append(top, meta);
-    button.addEventListener("click", () => selectReport(report.id));
-    li.appendChild(button);
-    list.appendChild(li);
-  }
-}
-
 // ------------------------------------------------------------- navigation
 
-/** Topbar and view visibility for whichever of the two views is current. */
-function paintChrome() {
-  const inReports = view === "reports";
+/**
+ * Which app the current route is showing, or "" for the landing screen.
+ *
+ * Derived from the path rather than tracked alongside it. The old pair of
+ * `view` and `selectedApp` had to be kept in step with what was on screen by
+ * every function that changed either, and the address bar was a third copy
+ * that could disagree with both.
+ */
+function routedApp() {
+  const found = currentPath().match(/^\/reports\/([^/]+)/);
+  return found ? decodeURIComponent(found[1]) : "";
+}
 
-  // Projects itself is router-rendered now (views/projects.js, into #view);
-  // this is only ever a visibility toggle, never a repaint. Reports still
-  // owns #reports-view directly, so it's still this function's job to hide
-  // one and show the other.
-  viewOutlet.hidden = inReports;
-  el("reports-view").hidden = !inReports;
-  el("search").hidden = !inReports;
-  el("source-filter").hidden = !inReports;
+/** The topbar, for whatever the route is showing. */
+function paintChrome() {
+  const appName = routedApp();
+  const onIssues = currentPath().startsWith("/issues");
+
+  // Which half of the app is showing is a fact about the path now, not a
+  // variable a click handler had to remember to set. There is nothing left
+  // to hide either: both halves render into the same outlet.
+  el("tab-issues").classList.toggle("selected", onIssues);
+  el("tab-reports").classList.toggle("selected", !onIssues);
 
   const crumb = el("crumb");
-  crumb.hidden = !inReports || !selectedApp;
-  crumb.textContent = selectedApp ? `/ ${selectedApp}` : "";
+  crumb.hidden = onIssues || !appName;
+  crumb.textContent = appName ? `/ ${appName}` : "";
+  document.title = appName ? `${appName} — Sentinel` : "Sentinel";
 
   // Scoped to one app by its host: there is no "all projects" to go back to.
-  el("home-link").disabled = Boolean(scopedApp) || !inReports;
+  el("home-link").disabled = Boolean(scopedApp) || !appName;
 
-  const url = inReports ? projectFor(selectedApp)?.glitchtipUrl || glitchtipRoot : glitchtipRoot;
+  const url = appName ? projectFor(appName)?.glitchtipUrl || glitchtipRoot : glitchtipRoot;
   const link = el("glitchtip-link");
   link.hidden = !url;
   if (url) link.href = url;
 }
 
 /**
- * Chrome only — the cards themselves are already sitting in #view, painted
- * once by the router when "/" first mounted. Showing them again is just
- * this toggle; refresh() is what asks the router to repaint with fresh
- * data, and only when the data might actually be stale.
+ * Both are navigations now. What used to be a mode change with three
+ * elements to hide is a URL, and the router does the rest.
  */
 function showProjects() {
   if (scopedApp) return;
-  view = "projects";
-  selectedApp = "";
-  selectedId = null;
-  releaseObjectUrls();
-  detail.innerHTML = "<p class='empty'>Select a report.</p>";
-  document.title = "Sentinel";
-  paintChrome();
+  void goRoute("/");
 }
 
 function showReports(appName) {
-  view = "reports";
-  selectedApp = appName || "";
-  selectedId = null;
-  releaseObjectUrls();
-  detail.innerHTML = "<p class='empty'>Select a report.</p>";
-  document.title = selectedApp ? `${selectedApp} — Sentinel` : "Sentinel";
-  el("search").placeholder = selectedApp
-    ? `Search ${selectedApp} reports…`
-    : "Search note, URL, reporter…";
-  paintChrome();
-  renderList();
-}
-
-function render() {
-  if (view === "reports") renderList();
-  // Embedded never starts the router (see enter()) — nothing to refresh.
-  else if (!embedded) void refreshRoute();
-}
-
-// ----------------------------------------------------------- report detail
-
-async function selectReport(id) {
-  selectedId = id;
-  renderList();
-  releaseObjectUrls();
-  detail.innerHTML = "<p class='empty'>Loading…</p>";
-
-  const res = await api(`/sentinel/api/reports/${encodeURIComponent(id)}`);
-  if (res.status === 401) return showGate("Your session has expired.");
-  if (!res.ok) {
-    detail.innerHTML = `<p class="error">Could not load report (${res.status}).</p>`;
-    return;
-  }
-  const report = await res.json();
-  renderDetail(report);
-}
-
-function renderDetail(report) {
-  detail.innerHTML = "";
-
-  const heading = document.createElement("h2");
-  heading.textContent = report.note || "(no note)";
-  detail.appendChild(heading);
-
-  const sub = document.createElement("p");
-  sub.className = "detail-sub";
-  const id = document.createElement("span");
-  id.className = "muted mono";
-  id.textContent = report.id;
-  sub.append(projectChip(report.appName), id);
-  detail.appendChild(sub);
-
-  const kv = document.createElement("dl");
-  kv.className = "kv";
-  const rows = [
-    ["App", report.appName],
-    ["Source", report.source === "auto-error" ? "Auto-captured error" : "Staff report"],
-    ["Reported by", report.reporterEmail || "—"],
-    ["Page", report.url || "—"],
-    ["When", fmtTime(report.createdAt)],
-    ["GlitchTip", report.glitchtipEventId || "— (staff reports aren't sent to GlitchTip)"],
-  ];
-  for (const [key, value] of rows) {
-    const dt = document.createElement("dt");
-    dt.textContent = key;
-    const dd = document.createElement("dd");
-    if (key === "Page" && report.url) {
-      const a = document.createElement("a");
-      a.href = report.url;
-      a.textContent = report.url;
-      a.target = "_blank";
-      a.rel = "noreferrer noopener";
-      dd.appendChild(a);
-    } else if (key === "GlitchTip" && report.glitchtipUrl) {
-      // With an event id this lands on the error itself; without one, on the
-      // project's issue stream, which is still the right next place to look.
-      const a = document.createElement("a");
-      a.href = report.glitchtipUrl;
-      a.target = "_blank";
-      a.rel = "noreferrer noopener";
-      a.textContent = report.glitchtipEventId
-        ? `${report.glitchtipEventId} ↗`
-        : "Open this app's errors ↗";
-      dd.appendChild(a);
-    } else {
-      dd.textContent = value;
-    }
-    kv.append(dt, dd);
-  }
-  detail.appendChild(kv);
-
-  renderReplay(report);
-  renderScreenshots(report);
-  renderBreadcrumbs(report);
-  renderDangerZone(report);
-}
-
-/**
- * Session replay. Reports made before the rrweb switch have screenshots
- * instead, so this quietly does nothing for them.
- */
-async function renderReplay(report) {
-  if (!report.hasReplay) return;
-
-  const h3 = document.createElement("h3");
-  h3.textContent = "Session replay";
-  detail.appendChild(h3);
-
-  const meta = report.replayMeta || {};
-  if (meta.startedAt && meta.endedAt) {
-    const seconds = Math.round((meta.endedAt - meta.startedAt) / 1000);
-    const note = document.createElement("p");
-    note.className = "muted";
-    note.style.margin = "0 0 10px";
-    note.textContent = `${seconds}s leading up to the report · ${meta.eventCount ?? "?"} events`;
-    detail.appendChild(note);
-  }
-
-  const mount = document.createElement("div");
-  mount.className = "replay";
-  detail.appendChild(mount);
-
-  try {
-    const res = await api(`/sentinel/api/reports/${encodeURIComponent(report.id)}/replay`);
-    if (!res.ok) throw new Error(`replay unavailable (${res.status})`);
-    const events = await res.json();
-    if (events.length < 2) throw new Error("replay too short to play");
-
-    const { default: Player } = await import("./vendor/rrweb-player.js");
-    // eslint-disable-next-line no-new
-    new Player({
-      target: mount,
-      props: {
-        events,
-        width: mount.clientWidth || 720,
-        height: Math.round((mount.clientWidth || 720) * 0.56),
-        autoPlay: false,
-        showController: true,
-        // The recording is masked, but don't let a replayed page make
-        // network requests of its own.
-        UNSAFE_replayCanvas: false,
-      },
-    });
-  } catch (err) {
-    mount.innerHTML = "";
-    const p = document.createElement("p");
-    p.className = "empty";
-    p.textContent = `Could not load replay: ${err.message}`;
-    mount.appendChild(p);
-  }
-}
-
-function renderDangerZone(report) {
-  const wrap = document.createElement("div");
-  wrap.className = "danger-zone";
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "ghost danger";
-  button.textContent = "Delete this report";
-  button.addEventListener("click", async () => {
-    if (button.dataset.confirming !== "true") {
-      button.dataset.confirming = "true";
-      button.textContent = "Really delete? Click again";
-      setTimeout(() => {
-        button.dataset.confirming = "false";
-        button.textContent = "Delete this report";
-      }, 4000);
-      return;
-    }
-
-    button.disabled = true;
-    const res = await api(`/sentinel/api/reports/${encodeURIComponent(report.id)}`, { method: "DELETE" });
-    if (!res.ok && res.status !== 204) {
-      button.disabled = false;
-      button.textContent = `Delete failed (${res.status})`;
-      return;
-    }
-    reports = reports.filter((r) => r.id !== report.id);
-    // The card's counts are now wrong, so re-derive them from the receiver
-    // rather than guessing at them here.
-    const project = projectFor(report.appName);
-    if (project) project.total = Math.max(0, project.total - 1);
-    selectedId = null;
-    detail.innerHTML = "<p class='empty'>Report deleted.</p>";
-    renderList();
-  });
-
-  wrap.appendChild(button);
-  detail.appendChild(wrap);
-}
-
-function frameLabel(index, total, timestamp, filedAt) {
-  const position = index === total - 1 ? "latest" : `frame ${index + 1}`;
-  if (!timestamp || !filedAt) return position;
-  const secondsBack = Math.round((filedAt - timestamp) / 1000);
-  if (secondsBack <= 0) return `${position} · at report`;
-  return `${position} · −${secondsBack}s`;
-}
-
-function renderScreenshots(report) {
-  const files = report.screenshots || [];
-  // Replay supersedes screenshots; only older reports have both/neither.
-  if (!files.length && report.hasReplay) return;
-
-  const h3 = document.createElement("h3");
-  h3.textContent = `Screenshots (${files.length})`;
-  detail.appendChild(h3);
-
-  if (!files.length) {
-    const p = document.createElement("p");
-    p.className = "empty";
-    p.textContent = "No screenshots or replay in this report.";
-    detail.appendChild(p);
-    return;
-  }
-
-  const wrap = document.createElement("div");
-  wrap.className = "shots";
-  detail.appendChild(wrap);
-
-  lightboxFrames = [];
-
-  const stamps = report.screenshotTimestamps || [];
-  const filedAt = new Date(report.createdAt).getTime();
-
-  files.forEach((filename, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    const img = document.createElement("img");
-    img.alt = `Frame ${index + 1}`;
-    const label = document.createElement("div");
-    label.className = "shot-label";
-    // Frames are oldest-first and the last one is the moment the report was
-    // filed, so label them by how far back they look.
-    label.textContent = frameLabel(index, files.length, stamps[index], filedAt);
-    button.append(img, label);
-    button.addEventListener("click", () => openLightbox(index));
-    wrap.appendChild(button);
-
-    api(`/sentinel/api/reports/${encodeURIComponent(report.id)}/screenshots/${encodeURIComponent(filename)}`)
-      .then((res) => (res.ok ? res.blob() : Promise.reject(new Error(String(res.status)))))
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        objectUrls.push(url);
-        lightboxFrames[index] = { url, label: label.textContent };
-        img.src = url;
-      })
-      .catch(() => {
-        label.textContent = `frame ${index + 1} — failed to load`;
-      });
-  });
-}
-
-function renderBreadcrumbs(report) {
-  const crumbs = report.breadcrumbs || [];
-  const h3 = document.createElement("h3");
-  h3.textContent = `Breadcrumbs (${crumbs.length})`;
-  detail.appendChild(h3);
-
-  if (!crumbs.length) {
-    const p = document.createElement("p");
-    p.className = "empty";
-    p.textContent = "No breadcrumbs recorded.";
-    detail.appendChild(p);
-    return;
-  }
-
-  const box = document.createElement("div");
-  box.className = "crumbs";
-  for (const crumb of crumbs) {
-    const row = document.createElement("div");
-    row.className = "crumb";
-    const time = document.createElement("span");
-    time.className = "t mono";
-    time.textContent = fmtCrumbTime(crumb.timestamp);
-    const category = document.createElement("span");
-    category.className = "c";
-    category.textContent = crumb.category || crumb.type || "—";
-    const message = document.createElement("span");
-    message.className = "m";
-    message.textContent =
-      crumb.message || (crumb.data ? JSON.stringify(crumb.data) : "") || "—";
-    row.append(time, category, message);
-    box.appendChild(row);
-  }
-  detail.appendChild(box);
+  // The query survives the navigation: embedded sessions carry ?app= and
+  // ?embed= in it, and a reload inside the iframe has to still find them.
+  void goRoute(`/reports/${encodeURIComponent(appName || "")}${location.search}`);
 }
 
 // ------------------------------------------------------- awaiting access
@@ -938,6 +612,9 @@ const waiting = el("waiting");
  * for access, so this is it.
  */
 async function showWaiting(identity) {
+  // Same transition as showGate(): whatever was mounted is behind this
+  // screen now, and nothing behind a screen should still be running.
+  stopRouter();
   gate.hidden = true;
   app.hidden = true;
   waiting.hidden = false;
@@ -1031,86 +708,17 @@ async function refreshRequestCount() {
 
 
 // ------------------------------------------------------------- sections
-
-/**
- * Issues and Reports are two views of the same incident, so they're tabs
- * rather than two applications. Issues reads GlitchTip's API directly;
- * Reports is this receiver's own data.
- */
-let section = "reports";
-
-function showSection(next) {
-  section = next;
-  const onIssues = next === "issues";
-
-  el("tab-issues").classList.toggle("selected", onIssues);
-  el("tab-reports").classList.toggle("selected", !onIssues);
-  el("issues-view").hidden = !onIssues;
-
-  // The reports side owns three of its own elements; hide the lot together.
-  if (onIssues) {
-    viewOutlet.hidden = true;
-    el("reports-view").hidden = true;
-    el("search").hidden = true;
-    el("source-filter").hidden = true;
-    el("crumb").hidden = true;
-    void showIssues();
-  } else {
-    // Not render(): whichever of #view or #reports-view was showing before
-    // Issues is still sitting there untouched, just hidden. Re-showing it
-    // is all this needs — render() would also ask the router to refetch
-    // Projects, on every tab switch, for data that hasn't changed.
-    paintChrome();
-  }
-}
-
-el("tab-issues").addEventListener("click", () => showSection("issues"));
-el("tab-reports").addEventListener("click", () => showSection("reports"));
+//
+// Issues and Reports were tabs toggling two <main> elements by hand, with a
+// `section` variable deciding which. They're two routes now — the tabs are
+// ordinary links in index.html, and paintChrome() reads which one is current
+// off the path. showSection() is gone rather than moved.
 
 // ---------------------------------------------------------- settings
 //
 // The screen itself is views/settings.js, mounted by the router — both
 // "/settings" (global) and "/settings/apps/:app" (one app, opened from
 // its project card). Registered down in boot(), alongside requests.
-// ---------------------------------------------------------- lightbox
-
-const lightbox = el("lightbox");
-
-function openLightbox(index) {
-  if (!lightboxFrames[index]) return;
-  lightboxIndex = index;
-  paintLightbox();
-  lightbox.hidden = false;
-}
-
-function paintLightbox() {
-  const frame = lightboxFrames[lightboxIndex];
-  if (!frame) return;
-  el("lightbox-img").src = frame.url;
-  el("lightbox-caption").textContent = `${frame.label} — ${lightboxIndex + 1} of ${lightboxFrames.length}`;
-}
-
-function step(delta) {
-  const next = lightboxIndex + delta;
-  if (next < 0 || next >= lightboxFrames.length) return;
-  lightboxIndex = next;
-  paintLightbox();
-}
-
-el("lightbox-close").addEventListener("click", () => (lightbox.hidden = true));
-el("lightbox-prev").addEventListener("click", () => step(-1));
-el("lightbox-next").addEventListener("click", () => step(1));
-lightbox.addEventListener("click", (event) => {
-  if (event.target === lightbox) lightbox.hidden = true;
-});
-
-document.addEventListener("keydown", (event) => {
-  if (lightbox.hidden) return;
-  if (event.key === "Escape") lightbox.hidden = true;
-  if (event.key === "ArrowLeft") step(-1);
-  if (event.key === "ArrowRight") step(1);
-});
-
 // ------------------------------------------------------------- wiring
 
 const themeToggle = el("theme-toggle");
@@ -1122,8 +730,6 @@ function labelThemeToggle(theme) {
 
 themeToggle.addEventListener("click", () => labelThemeToggle(cycleTheme()));
 
-el("search").addEventListener("input", render);
-el("source-filter").addEventListener("change", render);
 el("home-link").addEventListener("click", () => showProjects());
 el("refresh").addEventListener("click", () => void refresh());
 
@@ -1131,19 +737,17 @@ async function refresh() {
   try {
     if (!(await loadData())) return;
   } catch (err) {
-    detail.innerHTML = `<p class="error">${err.message}</p>`;
+    fill(viewOutlet, h("p", { className: "error", text: err.message }));
     return;
   }
-  // The app we were looking at may have had its last report deleted.
-  if (view === "reports" && selectedApp && !projectFor(selectedApp) && !scopedApp) {
-    showProjects();
-    // Landing on Projects with whatever it last fetched would still show
-    // the app that's meant to have just disappeared from it.
-    if (!embedded) void refreshRoute();
-    return;
-  }
+  // The app we were looking at may have had its last report deleted. Going
+  // home re-runs the landing view, so it can't show the app that just
+  // stopped existing.
+  const appName = routedApp();
+  if (appName && !projectFor(appName) && !scopedApp) return void goRoute("/");
+
   paintChrome();
-  render();
+  void refreshRoute();
 }
 
 /** Past the gate: load everything, then land on the right view. */
@@ -1151,6 +755,11 @@ async function enter() {
   gate.hidden = true;
   waiting.hidden = true;
   app.hidden = false;
+  // The outlet starts hidden so the shell isn't a bare empty frame before
+  // anything has been signed into. From here on its visibility is the tab's
+  // business (paintChrome), not any individual route's — routes that layer a
+  // dialog over the landing screen never call it.
+  viewOutlet.hidden = false;
   if (!(await loadData())) return;
   void refreshRequestCount();
 
@@ -1159,41 +768,63 @@ async function enter() {
   const me = await fetch("/sentinel/api/auth/me", { credentials: "same-origin" })
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
-  const organisation = (me?.orgs || [])[0];
-  if (organisation) {
-    initIssues({ organisation });
-    el("tab-issues").hidden = false;
-  } else {
-    // Nothing to browse errors under — the staff token, typically.
-    el("tab-issues").hidden = true;
-  }
-  // Embedded is a single app inside another page's iframe — no address bar
-  // of its own to route within, and nothing routed lives there yet anyway.
+  organisation = (me?.orgs || [])[0] || null;
+  // Nothing to browse errors under — the staff token, typically.
+  el("tab-issues").hidden = !organisation;
+  // The router runs in both modes now. It used to be skipped when embedded,
+  // on the grounds that an iframe has no address bar to route within — but
+  // embedded is nothing *but* Reports, and Reports is a route. The iframe
+  // does have a URL, it just isn't on display; navigations inside it replace
+  // rather than push, so the host page's back button stays out of it.
   //
-  // Started before the base view below, not after: showProjects() further
-  // down does nothing but toggle visibility now, but the router still needs
-  // its mount configured before requests-open/settings-open (below, static
-  // markup that can't read MOUNT itself) or the Projects view it renders at
-  // "/" — both build links with routeHref(), which would otherwise still be
-  // pointing at the default "/sentinel" in standalone mode.
+  // Started before the first navigation below: every routeHref() link the
+  // views build resolves against the mount, which would otherwise still be
+  // the default "/sentinel" on the standalone port.
+  await startRouter({ outlet: viewOutlet, mount: MOUNT });
+
+  // Static markup in index.html, so it can't read MOUNT itself. Set in both
+  // modes: embedded runs on the standalone root, where the mount is empty,
+  // and the router now intercepts these links there too — left at the
+  // literal "/sentinel/settings" it would route to a path that matches
+  // nothing and blank the screen.
+  el("requests-open").href = routeHref("/requests");
+  el("settings-open").href = routeHref("/settings");
+  el("tab-issues").href = routeHref("/issues");
+  // A scoped session has no "all projects" to go home to, so its Reports tab
+  // points at the one app it is allowed to show.
+  el("tab-reports").href = routeHref(
+    scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/"
+  );
+
   if (!embedded) {
-    await startRouter({ outlet: viewOutlet, mount: MOUNT });
-    // Static markup in index.html, so it can't read MOUNT itself.
-    el("requests-open").href = routeHref("/requests");
-    el("settings-open").href = routeHref("/settings");
     // Arrived from GlitchTip's "Requests" nav item (glitchtip/index.html),
     // which still links to the old query-param address. Land on the real
     // one instead of teaching the router about a second spelling of it.
     if (params.get("view") === "requests") {
       await goRoute("/requests", { replace: true });
+      return;
     }
   }
 
-  if (scopedApp) showReports(scopedApp);
-  else showProjects();
+  // A scoped session is pinned to one app and boots at "/", which has no
+  // route registered for it in that mode — so it needs sending on.
+  if (scopedApp) {
+    await goRoute(`/reports/${encodeURIComponent(scopedApp)}${location.search}`, {
+      replace: true,
+    });
+  }
 }
 
 async function boot() {
+  // One answer to a rejected credential, for every fetch any view makes.
+  // The allauth client is exempt (lib/api.js): its 401s are conversation,
+  // not refusal.
+  handleUnauthorized(() =>
+    showGate(
+      embedded ? "The token this page was given was rejected." : "Your session has expired."
+    )
+  );
+
   if (embedded) {
     document.body.classList.add("embedded");
     el("forget").hidden = true;
@@ -1213,6 +844,10 @@ async function boot() {
   const hostToken = await requestTokenFromHost();
   if (hostToken) {
     bearerToken = hostToken;
+    // The views fetch through lib/api.js, which keeps its own copy — the
+    // embedded viewer has no cookie, so without this every screen it renders
+    // is anonymous.
+    useBearerToken(hostToken);
     try {
       await enter();
     } catch (err) {

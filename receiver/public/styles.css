@@ -1,19 +1,92 @@
-/* Neutrals track the host admin panels (Ant Design light/dark, Moove) so the
-   embedded viewer reads as part of the app rather than a bolted-on iframe.
-   --accent is overridden at runtime from ?accent=<hex>, which each host sets
-   from its own brand colour. */
+/* Every colour in the app has one definition here.
+ *
+ * It used to have three: the light values on :root, the dark values inside a
+ * prefers-color-scheme block, and then both sets written out again under
+ * body.theme-light and body.theme-dark for hosts that pick a theme
+ * independently of the OS. Three copies of the same hex is three places for
+ * one of them to be missed — --accent-contrast was already only in two of
+ * them.
+ *
+ * So the values live once, in the two ramps below, and the blocks after them
+ * only say which ramp is currently in play. Aliasing repeats; values do not.
+ *
+ * Neutrals track the host admin panels (Ant Design light/dark, Moove) so the
+ * embedded viewer reads as part of the app rather than a bolted-on iframe.
+ * --accent is overridden at runtime from ?accent=<hex>, which each host sets
+ * from its own brand colour.
+ */
 :root {
-  --bg: #f5f5f5;
-  --panel: #ffffff;
-  --border: #d9d9d9;
-  --text: rgba(0, 0, 0, 0.88);
-  --muted: rgba(0, 0, 0, 0.45);
+  --light-bg: #f5f5f5;
+  --light-panel: #ffffff;
+  --light-border: #d9d9d9;
+  --light-text: rgba(0, 0, 0, 0.88);
+  --light-muted: rgba(0, 0, 0, 0.45);
+  --light-accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --light-auto: #d46b08;
+  --light-danger: #cf1322;
+  --light-success: #389e0d;
+  --light-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02);
+
+  --dark-bg: #141414;
+  --dark-panel: #1f1f1f;
+  --dark-border: #303030;
+  --dark-text: rgba(255, 255, 255, 0.85);
+  --dark-muted: rgba(255, 255, 255, 0.45);
+  --dark-accent-soft: color-mix(in srgb, var(--accent) 22%, transparent);
+  --dark-auto: #e8a33d;
+  --dark-danger: #ff7875;
+  --dark-success: #73d13d;
+  --dark-shadow: none;
+
   --accent: #1677ff;
   --accent-contrast: #ffffff;
-  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
-  --auto: #d46b08;
-  --auto-soft: color-mix(in srgb, #d46b08 12%, transparent);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02);
+}
+
+/* Light is the default, and the only ramp named twice — once here for a
+   browser with no preference, once under body.theme-light for a host that
+   asked for it against the grain of the OS. */
+:root,
+body.theme-light {
+  --bg: var(--light-bg);
+  --panel: var(--light-panel);
+  --border: var(--light-border);
+  --text: var(--light-text);
+  --muted: var(--light-muted);
+  --accent-soft: var(--light-accent-soft);
+  --auto: var(--light-auto);
+  --danger: var(--light-danger);
+  --success: var(--light-success);
+  --shadow: var(--light-shadow);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: var(--dark-bg);
+    --panel: var(--dark-panel);
+    --border: var(--dark-border);
+    --text: var(--dark-text);
+    --muted: var(--dark-muted);
+    --accent-soft: var(--dark-accent-soft);
+    --auto: var(--dark-auto);
+    --danger: var(--dark-danger);
+    --success: var(--dark-success);
+    --shadow: var(--dark-shadow);
+  }
+}
+
+/* Last, so an explicit choice beats the OS preference above whichever way
+   it points. */
+body.theme-dark {
+  --bg: var(--dark-bg);
+  --panel: var(--dark-panel);
+  --border: var(--dark-border);
+  --text: var(--dark-text);
+  --muted: var(--dark-muted);
+  --accent-soft: var(--dark-accent-soft);
+  --auto: var(--dark-auto);
+  --danger: var(--dark-danger);
+  --success: var(--dark-success);
+  --shadow: var(--dark-shadow);
 }
 
 :root[data-theme="dark"],
@@ -21,45 +94,31 @@ body.theme-dark {
   color-scheme: dark;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #141414;
-    --panel: #1f1f1f;
-    --border: #303030;
-    --text: rgba(255, 255, 255, 0.85);
-    --muted: rgba(255, 255, 255, 0.45);
-    --accent-contrast: #ffffff;
-    --accent-soft: color-mix(in srgb, var(--accent) 22%, transparent);
-    --auto: #e8a33d;
-    --auto-soft: color-mix(in srgb, #e8a33d 18%, transparent);
-    --shadow: none;
-  }
+/* Derived, so a soft tint never drifts from the colour it tints. */
+:root {
+  --auto-soft: color-mix(in srgb, var(--auto) 14%, transparent);
+  --danger-soft: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
-/* Host apps let the user pick a theme independently of the OS, so they can
-   force ours to match with ?theme=light|dark. */
-body.theme-light {
-  --bg: #f5f5f5;
-  --panel: #ffffff;
-  --border: #d9d9d9;
-  --text: rgba(0, 0, 0, 0.88);
-  --muted: rgba(0, 0, 0, 0.45);
-  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
-  --auto: #d46b08;
-  --auto-soft: color-mix(in srgb, #d46b08 12%, transparent);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02);
-}
+/* Space, radius and type, so a number in a rule below is a decision rather
+   than a guess. The scale is the one the app already used, named. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 28px;
 
-body.theme-dark {
-  --bg: #141414;
-  --panel: #1f1f1f;
-  --border: #303030;
-  --text: rgba(255, 255, 255, 0.85);
-  --muted: rgba(255, 255, 255, 0.45);
-  --accent-soft: color-mix(in srgb, var(--accent) 22%, transparent);
-  --auto: #e8a33d;
-  --auto-soft: color-mix(in srgb, #e8a33d 18%, transparent);
-  --shadow: none;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
 }
 
 * {
@@ -89,8 +148,10 @@ code,
   color: var(--muted);
 }
 
+/* This was --accent: every failure in the app was rendered in the same
+   blue as every link and every primary button. */
 .error {
-  color: var(--accent);
+  color: var(--danger);
 }
 
 /* --- token gate --------------------------------------------------- */
@@ -105,7 +166,7 @@ code,
 .gate-card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 28px;
   width: min(440px, 100%);
@@ -113,7 +174,7 @@ code,
 
 .gate-card h1 {
   margin: 0 0 8px;
-  font-size: 20px;
+  font-size: var(--text-xl);
 }
 
 .gate-card p {
@@ -147,7 +208,7 @@ select,
 button {
   font: inherit;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text);
@@ -175,7 +236,7 @@ button.ghost {
 .topbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-3);
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
@@ -188,7 +249,7 @@ button.ghost {
 
 .topbar h1 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--text-lg);
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -215,18 +276,32 @@ button.linky:disabled {
   color: inherit;
 }
 
+/* The same control where it's a real link — "← All issues" is an address
+   now, not a mode change. Styled here rather than under the rules above,
+   which are all scoped to button.linky and quietly skipped an <a>. */
+a.linky {
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+a.linky:hover {
+  color: var(--accent);
+}
+
 .breadcrumb {
   color: var(--muted);
   font-weight: 400;
-  font-size: 15px;
+  font-size: var(--text-base);
   overflow-wrap: anywhere;
 }
 
 /* An <a> that has to sit in a row of buttons without pretending to be one. */
 .button-link {
-  font-size: 13px;
+  font-size: var(--text-sm);
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   color: var(--accent);
   text-decoration: none;
@@ -240,7 +315,7 @@ button.linky:disabled {
 .topbar-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .topbar-controls #search {
@@ -274,7 +349,7 @@ button.linky:disabled {
 .layout {
   display: grid;
   grid-template-columns: minmax(280px, 380px) 1fr;
-  gap: 20px;
+  gap: var(--space-5);
   padding: 20px;
   align-items: start;
 }
@@ -290,7 +365,7 @@ button.linky:disabled {
 .projects {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  gap: var(--space-4);
   padding: 20px;
 }
 
@@ -300,7 +375,7 @@ button.linky:disabled {
   background: var(--panel);
   border: 1px solid var(--border);
   border-left: 4px solid hsl(var(--project-hue) 65% 55%);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 18px 20px;
   cursor: pointer;
@@ -358,12 +433,12 @@ button.linky:disabled {
 
 .card-foot {
   margin: 0 0 14px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .card-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
   flex-wrap: wrap;
   margin-top: auto;
@@ -377,37 +452,40 @@ button.linky:disabled {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
   max-height: calc(100vh - 110px);
   overflow-y: auto;
 }
 
-.list li button {
+.list li button,
+.list li a.row {
   width: 100%;
   text-align: left;
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 12px 14px;
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
   box-shadow: var(--shadow);
 }
 
-.list li button:hover {
+.list li button:hover,
+.list li a.row:hover {
   filter: none;
   border-color: var(--accent);
 }
 
-.list li button[aria-current="true"] {
+.list li button[aria-current="true"],
+.list li a.row[aria-current="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
 
 .row-top {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
   justify-content: space-between;
 }
@@ -423,7 +501,7 @@ button.linky:disabled {
   font-size: 12.5px;
   color: var(--muted);
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
@@ -479,7 +557,7 @@ body.theme-dark .tag.project {
 .detail {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 20px;
   min-height: 300px;
@@ -528,7 +606,7 @@ body.theme-dark .tag.project {
 .shots button {
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--bg);
   line-height: 0;
@@ -552,7 +630,7 @@ body.theme-dark .tag.project {
 
 .replay {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: #000;
 }
@@ -568,17 +646,17 @@ body.theme-dark .tag.project {
 }
 
 button.danger {
-  color: #cf1322;
-  border-color: color-mix(in srgb, #cf1322 40%, transparent);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
 }
 
 button.danger:hover {
-  background: color-mix(in srgb, #cf1322 10%, transparent);
+  background: var(--danger-soft);
 }
 
 .crumbs {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   max-height: 320px;
   overflow-y: auto;
@@ -590,7 +668,7 @@ button.danger:hover {
   gap: 10px;
   padding: 7px 10px;
   border-bottom: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .crumb:last-child {
@@ -649,7 +727,7 @@ button.danger:hover {
   bottom: 18px;
   grid-column: 2;
   color: #d8dde2;
-  font-size: 13px;
+  font-size: var(--text-sm);
   margin: 0;
 }
 
@@ -672,10 +750,15 @@ button.danger:hover {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  /* An origin is a URL, and a URL has no spaces in it — left alone it sets
+     a minimum width the dialog has to grow to, and on a phone that pushes
+     its own controls off the side of the screen. */
+  overflow-wrap: anywhere;
+  min-width: 0;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
 }
 
 .origin-list li.empty {
@@ -685,7 +768,7 @@ button.danger:hover {
 
 .origin-add {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .origin-add input {
@@ -718,16 +801,24 @@ button.danger:hover {
 
 .sections {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
+/* Links that read as tabs. They were <button>s, which inherited none of
+   this from the page — an anchor needs the underline taken off and the box
+   given back. */
 .tab {
   background: transparent;
   color: var(--muted);
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 6px 14px;
   font-size: 14px;
+  font-family: inherit;
+  line-height: 1.4;
+  text-decoration: none;
+  display: inline-block;
+  cursor: pointer;
 }
 
 .tab:hover {
@@ -741,6 +832,27 @@ button.danger:hover {
   border-color: transparent;
 }
 
+/* An address that matched nothing. Sits in the outlet like any screen — it
+   is one, rather than an empty page that looks like a failure to load. */
+.not-found {
+  padding: 48px 20px;
+  text-align: center;
+}
+
+.not-found h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.not-found p {
+  margin: 0 0 18px;
+  overflow-wrap: anywhere;
+}
+
+.not-found .button-link {
+  display: inline-block;
+}
+
 /* --- issues ------------------------------------------------------- */
 
 .issues-view {
@@ -750,12 +862,12 @@ button.danger:hover {
 .issues-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
   margin-bottom: 12px;
 }
 
-.issues-toolbar #issue-search {
+.issues-toolbar .issue-search {
   flex: 1;
   min-width: 240px;
 }
@@ -791,7 +903,7 @@ button.danger:hover {
 .issue-bulk {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   padding: 8px 12px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -800,7 +912,7 @@ button.danger:hover {
 }
 
 .issue-bulk button {
-  font-size: 13px;
+  font-size: var(--text-sm);
   padding: 6px 10px;
   background: transparent;
   color: var(--muted);
@@ -820,6 +932,22 @@ button.danger:hover {
   flex: 1;
 }
 
+/* The pager reads as the buttons it replaced. A page with nowhere to go has
+   no href at all, which is what tells a browser and a screen reader it isn't
+   clickable — so it can't be styled on :disabled the way a button is. */
+.issue-bulk .button-link {
+  font-size: var(--text-sm);
+  padding: 6px 10px;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.issue-bulk .button-link[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
 .issues-table {
   width: 100%;
   border-collapse: collapse;
@@ -831,7 +959,7 @@ button.danger:hover {
 
 .issues-table th {
   text-align: left;
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -876,6 +1004,8 @@ button.danger:hover {
   opacity: 0.55;
 }
 
+/* An issue's own address, so this is a link. It reads as the title it always
+   was — an underline on every row turns the list into a wall of blue. */
 .issue-title {
   background: none;
   border: none;
@@ -886,6 +1016,8 @@ button.danger:hover {
   text-align: left;
   cursor: pointer;
   overflow-wrap: anywhere;
+  text-decoration: none;
+  display: inline-block;
 }
 
 .issue-title:hover {
@@ -895,6 +1027,7 @@ button.danger:hover {
 
 .issue-sub {
   font-size: 12.5px;
+  overflow-wrap: anywhere;
   margin-top: 2px;
   overflow-wrap: anywhere;
 }
@@ -917,12 +1050,102 @@ button.danger:hover {
   background: var(--border);
 }
 
+/* On a phone the issue list had two problems, and the first caused the
+   second. The bulk row is a flex line of four labelled buttons and a pager,
+   and it does not wrap — so it set the width of the whole page (456px inside
+   a 390px viewport), and the table, told to fill that, gave what was left
+   after Trend and Events to the title: a column about one character wide.
+
+   So the row wraps, its controls get smaller, and Trend goes away. Trend is
+   a sparkline whose headline the Events count already states in a word,
+   which makes it the right thing to lose first. */
+@media (max-width: 620px) {
+  .issue-bulk {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .issue-bulk button,
+  .issue-bulk .button-link {
+    font-size: var(--text-xs);
+    padding: 5px 8px;
+  }
+
+  /* Pushes the pager to the far edge, which only means anything on one line. */
+  .bulk-spacer {
+    display: none;
+  }
+
+  .issues-table .trend-col,
+  .issues-table td:nth-child(3) {
+    display: none;
+  }
+
+  /* With the widths pinned on the two narrow columns, everything left over
+     goes to the title rather than being shared out evenly. */
+  .issues-table {
+    table-layout: fixed;
+  }
+
+  .issues-table .pick,
+  .issues-table td:first-child {
+    width: 30px;
+    padding-right: 0;
+  }
+
+  /* Wide enough for the word "EVENTS" in the header, which is what sets
+     this column's real minimum — the numbers under it are one or two
+     digits. */
+  .issues-table .count-col,
+  .issues-table td.issue-count {
+    width: 68px;
+    padding-left: 0;
+  }
+
+  /* Its own line. Sharing one with the environment picker left room for
+     about four characters of a search box people type queries into. */
+  .issues-toolbar .issue-search {
+    flex: 1 1 100%;
+    min-width: 0;
+    order: -1;
+  }
+
+  /* Reports' toolbar has the same shape and the same problem: a search box
+     with a 220px floor, plus a source filter, is wider than the screen. */
+  .reports-toolbar .reports-search {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .reports-toolbar select {
+    flex: 1;
+  }
+
+  /* Stacked, because side by side leaves a text field too narrow to read
+     back what was typed into it. */
+  .origin-add {
+    flex-wrap: wrap;
+  }
+
+  .origin-add input {
+    flex: 1 1 100%;
+  }
+
+  .modal {
+    padding: 12px;
+  }
+
+  .modal-card {
+    padding: 18px;
+  }
+}
+
 /* --- one issue ---------------------------------------------------- */
 
-#issue-detail {
+.issue-detail {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 20px;
 }
 
@@ -934,7 +1157,7 @@ button.danger:hover {
 
 #detail-culprit {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .detail-meta {
@@ -942,13 +1165,13 @@ button.danger:hover {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  font-size: 13px;
+  font-size: var(--text-sm);
   margin-bottom: 14px;
 }
 
 .detail-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
@@ -960,7 +1183,7 @@ button.danger:hover {
 
 .detail-section h3 {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -968,7 +1191,7 @@ button.danger:hover {
 
 .exception-value {
   margin: 0 0 12px;
-  font-size: 15px;
+  font-size: var(--text-base);
   overflow-wrap: anywhere;
 }
 
@@ -977,7 +1200,7 @@ button.danger:hover {
   margin: 0;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -1031,7 +1254,7 @@ button.danger:hover {
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 20px;
 }
@@ -1041,13 +1264,13 @@ button.danger:hover {
   border-collapse: collapse;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .data-table th {
   text-align: left;
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -1069,7 +1292,7 @@ button.danger:hover {
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   margin-bottom: 12px;
 }
 
@@ -1091,8 +1314,11 @@ button.danger:hover {
 
 .modal-card {
   background: var(--panel);
+  /* min() caps the width but does not stop unbreakable content forcing the
+     box wider than its own container. */
+  max-width: 100%;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 24px;
   width: min(560px, 100%);
@@ -1102,12 +1328,34 @@ button.danger:hover {
 
 .modal-card h2 {
   margin: 0 0 12px;
-  font-size: 17px;
+  font-size: var(--text-lg);
 }
 
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-2);
   margin-top: 18px;
+}
+
+/* Reports' own toolbar, matching the issue list's — filters belong on the
+   screen they filter, not in the shell's topbar. */
+.reports-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 20px 20px 0;
+}
+
+.reports-toolbar .reports-search {
+  flex: 1;
+  min-width: 220px;
+}
+
+/* A row is a link now; it still has to look and sit like the button it was. */
+.list li a.row {
+  display: grid;
+  text-decoration: none;
+  color: var(--text);
 }

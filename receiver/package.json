@@ -8,6 +8,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "build:player": "esbuild vendor/player-entry.js --bundle --format=esm --minify --outfile=public/vendor/rrweb-player.js && cp node_modules/rrweb-player/dist/style.css public/vendor/rrweb-player.css",
+    "build:app": "esbuild public/app.js --bundle --format=esm --minify --outfile=public/app.bundle.js",
+    "build:assets": "npm run build:player && npm run build:app",
     "smoke": "node test/smoke.mjs",
     "test": "node test/router.test.mjs",
     "smoke:seeded": "bash ../scripts/run-smoke.sh"
