@@ -176,7 +176,7 @@ function detailRows(report) {
   return rows;
 }
 
-async function renderReplay(report, into, signal, { onPlayer }) {
+async function renderReplay(report, into, signal, { onPlayer, track }) {
   if (!report.hasReplay) return;
 
   into.append(h("h3", { text: "Session replay" }));
@@ -211,34 +211,54 @@ async function renderReplay(report, into, signal, { onPlayer }) {
     const { default: Player } = await import(playerUrl);
     throwIfAborted(signal);
 
-    // The player is sized once, from a number, and never resizes itself — so
-    // that number has to be the width this really ends up. Read straight
-    // after the detail is built it isn't: on a cold load of a report's own
-    // URL the grid column hasn't settled and it measured a third of the
-    // width, which is exactly the case a linkable report creates. One frame
-    // is enough for layout to be final.
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-    throwIfAborted(signal);
-    const width = mount.clientWidth || 720;
-    // Handed straight up rather than dropped on the floor. It's a Svelte
-    // component with its own timers, rAF loop and iframe, and removing the
-    // element it rendered into doesn't stop any of them — a replay left
-    // playing kept ticking behind whatever screen came next.
-    onPlayer(
-      new Player({
-        target: mount,
-        props: {
-          events,
-          width,
-          height: Math.round(width * 0.56),
-          autoPlay: false,
-          showController: true,
-          // The recording is masked, but don't let a replayed page make
-          // network requests of its own.
-          UNSAFE_replayCanvas: false,
-        },
-      })
-    );
+    /**
+     * The player takes its size as a number and never re-reads it, and the
+     * number available at this moment is not reliably the one it ends up
+     * with: a cold load of a report's own URL builds before the grid column
+     * has settled, and a background tab defers layout altogether, so both
+     * report about a third of the real width.
+     *
+     * Waiting a frame fixed the first and broke the second — a hidden tab
+     * never paints, so requestAnimationFrame never fires and the replay sat
+     * blank until someone looked at the tab, with no error, because nothing
+     * had failed. Waiting on a timer instead fixed that and brought the
+     * wrong width back.
+     *
+     * So don't wait, and don't guess: build at whatever is measurable now,
+     * then watch the element and tell the player when it changes. Every case
+     * lands right, including two that were never handled at all — the window
+     * being resized, and a phone being turned sideways.
+     */
+    const measure = () => mount.clientWidth || 720;
+    // Kept rather than dropped on the floor. It's a Svelte component with
+    // its own timers, rAF loop and iframe, and removing the element it
+    // rendered into stops none of them — a replay left playing kept ticking
+    // behind whatever screen came next.
+    const player = new Player({
+      target: mount,
+      props: {
+        events,
+        width: measure(),
+        height: Math.round(measure() * 0.56),
+        autoPlay: false,
+        showController: true,
+        // The recording is masked, but don't let a replayed page make
+        // network requests of its own.
+        UNSAFE_replayCanvas: false,
+      },
+    });
+    onPlayer(player);
+
+    let painted = measure();
+    const observer = new ResizeObserver(() => {
+      const width = mount.clientWidth;
+      if (!width || width === painted) return;
+      painted = width;
+      player.$set({ width, height: Math.round(width * 0.56) });
+      player.triggerResize();
+    });
+    observer.observe(mount);
+    track(() => observer.disconnect());
   } catch (error) {
     if (error?.name === "AbortError") throw error;
     fill(mount, h("p", { className: "empty", text: `Could not load replay: ${error.message}` }));
@@ -384,6 +404,7 @@ export async function reportsView(
 
   const objectUrls = [];
   const timers = [];
+  const disposers = [];
   let frames = { open: () => {}, cleanup: () => {} };
   let player = null;
 
@@ -396,6 +417,7 @@ export async function reportsView(
   onCleanup(() => {
     objectUrls.forEach((url) => URL.revokeObjectURL(url));
     timers.forEach((timer) => clearTimeout(timer));
+    disposers.forEach((dispose) => dispose());
     frames.cleanup();
     player?.$destroy?.();
   });
@@ -574,5 +596,8 @@ export async function reportsView(
 
   // Awaited last so a navigation during the bundle load can cancel it, but
   // painted into the slot above.
-  await renderReplay(report, replaySlot, signal, { onPlayer: (instance) => (player = instance) });
+  await renderReplay(report, replaySlot, signal, {
+    onPlayer: (instance) => (player = instance),
+    track: (dispose) => disposers.push(dispose),
+  });
 }
