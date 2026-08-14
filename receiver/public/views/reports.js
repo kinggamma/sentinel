@@ -200,7 +200,15 @@ async function renderReplay(report, into, signal, { onPlayer }) {
     const events = await sentinel.get(`/reports/${encodeURIComponent(report.id)}/replay`, { signal });
     if (!Array.isArray(events) || events.length < 2) throw new Error("replay too short to play");
 
-    const { default: Player } = await import("../vendor/rrweb-player.js");
+    // Resolved at runtime rather than written as a literal, and that is
+    // deliberate: a literal specifier is something a bundler follows, and
+    // following this one would pull half a megabyte of replay player into
+    // the main bundle for every screen that never opens a replay. An
+    // expression is left alone, and document.baseURI is the same <base> the
+    // rest of the page's assets resolve against, so it lands on the right
+    // root under /sentinel and standalone alike.
+    const playerUrl = new URL("vendor/rrweb-player.js", document.baseURI).href;
+    const { default: Player } = await import(playerUrl);
     throwIfAborted(signal);
 
     // The player is sized once, from a number, and never resizes itself — so

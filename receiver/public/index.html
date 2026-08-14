@@ -171,7 +171,12 @@
     <!-- Relative, resolved by the <base> tag in <head> like the stylesheets.
          Its own imports (./lib/router.js and so on) are fine either way —
          module specifiers resolve against this script's own URL, not the
-         page's, so they'd have worked even without the fix above. -->
-    <script src="app.js" type="module"></script>
+         page's, so they'd have worked even without the fix above.
+
+         Which file this is gets filled in by src/index.js: the bundle when
+         the build produced one, the entry module when it didn't. Running the
+         receiver straight from a checkout is a normal thing to do, and it
+         should not be a blank page because a build step wasn't run. -->
+    <script src="__SENTINEL_SCRIPT__" type="module"></script>
   </body>
 </html>

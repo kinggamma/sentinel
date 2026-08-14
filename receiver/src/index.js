@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import path from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { reportRouter } from "./routes/report.js";
 import { authRouter } from "./routes/auth.js";
@@ -105,7 +105,23 @@ const staticOptions = {
  */
 const BASE_PLACEHOLDER = "__SENTINEL_BASE__";
 const MOUNT_PLACEHOLDER = "__SENTINEL_MOUNT__";
+const SCRIPT_PLACEHOLDER = "__SENTINEL_SCRIPT__";
 const INDEX_TEMPLATE = readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+
+/**
+ * One file or twenty.
+ *
+ * The image builds public/app.bundle.js, and that is what a browser should
+ * get: the module graph behind app.js is around twenty files, and a cold
+ * load spends twenty round trips discovering them one layer at a time.
+ * Running from a checkout with no build produces no bundle, and the entry
+ * module works perfectly well on its own — so which one exists decides,
+ * rather than a flag someone has to remember to set.
+ *
+ * Checked once, at boot: a file cannot appear under a running process
+ * without a rebuild, and a rebuild restarts it.
+ */
+const APP_SCRIPT = existsSync(path.join(PUBLIC_DIR, "app.bundle.js")) ? "app.bundle.js" : "app.js";
 
 // Checked once, at boot, rather than trusted: a second mention anywhere in
 // the file — a comment referring to it by name, a copy-pasted tag — makes
@@ -114,7 +130,7 @@ const INDEX_TEMPLATE = readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8")
 // served. It happened once already, to BASE_PLACEHOLDER, in this file's own
 // comment, while writing this. Failing to boot is loud; a wrong <base> or
 // mount in production is not.
-for (const placeholder of [BASE_PLACEHOLDER, MOUNT_PLACEHOLDER]) {
+for (const placeholder of [BASE_PLACEHOLDER, MOUNT_PLACEHOLDER, SCRIPT_PLACEHOLDER]) {
   const count = INDEX_TEMPLATE.split(placeholder).length - 1;
   if (count !== 1) {
     throw new Error(
@@ -125,10 +141,9 @@ for (const placeholder of [BASE_PLACEHOLDER, MOUNT_PLACEHOLDER]) {
 }
 
 function renderShell(mount) {
-  return INDEX_TEMPLATE.replace(BASE_PLACEHOLDER, mount ? `${mount}/` : "/").replace(
-    MOUNT_PLACEHOLDER,
-    mount
-  );
+  return INDEX_TEMPLATE.replace(BASE_PLACEHOLDER, mount ? `${mount}/` : "/")
+    .replace(MOUNT_PLACEHOLDER, mount)
+    .replace(SCRIPT_PLACEHOLDER, APP_SCRIPT);
 }
 function sendShell(mount) {
   return (_req, res) => res.type("html").send(renderShell(mount));
@@ -213,6 +228,9 @@ await initSettings();
 
 app.listen(PORT, () => {
   console.log(`Sentinel receiver listening on :${PORT}`);
+  if (APP_SCRIPT === "app.js") {
+    console.log("viewer: serving unbundled modules — run `npm run build:assets` for one file");
+  }
   if (glitchtipConfigured && glitchtipInfo().org) {
     console.log(`sign-in: GlitchTip accounts in the "${glitchtipInfo().org}" organisation`);
   } else if (glitchtipConfigured) {
