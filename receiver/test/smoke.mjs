@@ -300,8 +300,45 @@ async function authBoundaries() {
     assertStatus(await get("/sentinel/api/projects"), 401);
   });
 
-  await check("/auth/me is 401 without a session", async () => {
-    assertStatus(await get("/sentinel/api/auth/me"), 401);
+  await check("/auth/me answers with a state rather than refusing", async () => {
+    // It is a read-only view of the one session there is, and "nobody is
+    // signed in" is an answer. Refusing would also make the client's own
+    // central 401 handling fire on the question of whether anyone is signed
+    // in, which is the thing that handling exists to avoid.
+    const res = await get("/sentinel/api/auth/me");
+    assertStatus(res, 200);
+    const body = await res.json();
+    assert(body.state === "anonymous", `state was ${body.state}`);
+    assert(body.email === null, "an anonymous answer carries no identity");
+    assert(body.can.canRead === false, "and grants nothing");
+  });
+
+  await check("/auth/me never mints a session of its own", async () => {
+    // The whole point of one-session: this endpoint reads, and a Set-Cookie
+    // here would mean Sentinel had started keeping its own again.
+    const res = await get("/sentinel/api/auth/me");
+    assert(!res.headers.get("set-cookie"), "it set a cookie");
+  });
+
+  await check("token sign-in is gone, and says so rather than 404ing", async () => {
+    const res = await fetch(`${BASE}/sentinel/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "irrelevant" }),
+    });
+    assertStatus(res, 410);
+  });
+
+  await check("silent sign-in is gone entirely", async () => {
+    if (!SESSION) return "skip";
+    // Asked with a session good enough that the old endpoint would have
+    // answered it. Anonymously this only ever proves the guard runs first,
+    // since the guard on /sentinel/api refuses before routing reaches a 404.
+    const res = await fetch(`${BASE}/sentinel/api/auth/sso`, {
+      method: "POST",
+      headers: { cookie: `sessionid=${SESSION}` },
+    });
+    assertStatus(res, 404, "POST /auth/sso with a valid session");
   });
 
   await check("the staff token reads reports", async () => {

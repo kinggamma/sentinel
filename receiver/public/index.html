@@ -34,10 +34,14 @@
     />
   </head>
   <body>
-    <!-- Sign-in. Preferred: a personal GlitchTip auth token, so access is
-         granted by inviting someone to the GlitchTip org and revoked by
-         removing them. The shared staff token still works for setups with
-         no GlitchTip. -->
+    <!-- Sign-in. Sentinel's form, GlitchTip's accounts, one session: the
+         credentials go to allauth on this same origin and the session it
+         creates is the only one there is. Access is granted by inviting
+         someone to the organisation and revoked by removing them.
+
+         A personal auth token used to be offered here as a second way in.
+         It cannot create a browser session, so it is an API credential now
+         and nothing else. -->
     <div id="gate" class="gate" hidden>
       <form id="gate-form" class="gate-card">
         <h1>Sentinel</h1>
@@ -56,35 +60,11 @@
           />
           <button type="button" id="password-submit">Sign in</button>
           <p id="password-error" class="error" hidden></p>
-          <p class="gate-hint muted">
-            Or sign in with a personal auth token instead.
-            <button type="button" id="show-token" class="linky">Use a token</button>
-          </p>
-        </div>
-
-        <div id="token-signin" hidden>
-        <p class="muted" id="gate-help">Sign in to read bug reports and session replays.</p>
-        <input
-          id="token-input"
-          type="password"
-          placeholder="GlitchTip auth token"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <button type="submit">Sign in</button>
-        <p id="gate-error" class="error" hidden></p>
-        <p class="gate-hint muted" id="gate-hint" hidden>
-          Create one in GlitchTip under <strong>Profile → Auth Tokens</strong>, with the
-          <strong>org:read</strong> and <strong>project:read</strong> scopes ticked — the first proves your membership, the second decides which apps you see.
-          <span id="gate-org-note" hidden>Your account must belong to the
-          <strong id="gate-org">organisation</strong> organisation.</span>
-          <a id="gate-glitchtip-link" href="#" target="_blank" rel="noreferrer noopener" hidden>
-            Create a token ↗
-          </a>
-        </p>
-        <p class="gate-hint muted">
-          <button type="button" id="show-password" class="linky">Back to email and password</button>
-        </p>
+          <!-- The gate's own message — "you were signed out", "that account
+               has been switched off" — as opposed to password-error, which
+               belongs to an attempt that was just made. -->
+          <p id="gate-error" class="error" hidden></p>
+          <p id="gate-help" class="gate-hint muted"></p>
         </div>
       </form>
     </div>

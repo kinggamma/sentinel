@@ -21,7 +21,7 @@ import { serviceTeam, serviceToken } from "./settings.js";
  * Compose.
  */
 const GLITCHTIP_URL = (process.env.GLITCHTIP_URL || "").replace(/\/+$/, "");
-const GLITCHTIP_API_URL = (process.env.GLITCHTIP_API_URL || GLITCHTIP_URL).replace(/\/+$/, "");
+export const GLITCHTIP_API_URL = (process.env.GLITCHTIP_API_URL || GLITCHTIP_URL).replace(/\/+$/, "");
 /**
  * There is deliberately no "the organisation" here.
  *
@@ -64,7 +64,7 @@ export const GLITCHTIP_SESSION_COOKIE = process.env.GLITCHTIP_SESSION_COOKIE || 
  * One call, two ways to prove who you are: a personal auth token, or the
  * caller's own GlitchTip session forwarded back to GlitchTip.
  */
-async function callGlitchtip(path, { token, sessionId } = {}, { method, body } = {}) {
+export async function callGlitchtip(path, { token, sessionId } = {}, { method, body } = {}) {
   const headers = { accept: "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
   if (sessionId) headers.cookie = `${GLITCHTIP_SESSION_COOKIE}=${sessionId}`;
@@ -84,87 +84,13 @@ async function callGlitchtip(path, { token, sessionId } = {}, { method, body } =
 }
 
 /**
- * Resolve a GlitchTip credential to a person, but only if they belong to the
- * configured organisation. Membership of some *other* org is not access here.
- *
- * @returns {Promise<{email: string, name: string|null}|null>} null when the
- *          credential is valid but the user isn't a member.
+ * Resolving a credential to a person used to live here — resolveMember(),
+ * verifyGlitchtipUser(), verifyGlitchtipSession() and identifyGlitchtipUser().
+ * All four existed to turn a token or a cookie into a Sentinel session, and
+ * there is no Sentinel session any more. src/auth/identity.js answers the same
+ * question per request, from GlitchTip's own cookie, and reduces it through
+ * the state machine rather than freezing it into one of ours.
  */
-async function resolveMember(credential) {
-  if (!glitchtipConfigured) return null;
-
-  const orgs = await callGlitchtip("/api/0/organizations/", credential);
-  const memberOf = (Array.isArray(orgs) ? orgs : []).map((o) => o.slug).filter(Boolean);
-  if (!memberOf.length) return null;
-
-  // GLITCHTIP_ORG is optional and only ever narrows: set it when one
-  // GlitchTip serves more than this pipeline and you want a single
-  // organisation to be the gate.
-  const restrictTo = orgSlug();
-  if (restrictTo && !memberOf.includes(restrictTo)) return null;
-
-  /**
-   * Which projects this person can see, straight from GlitchTip, with the
-   * organisation each belongs to. This is what makes a shared GlitchTip work
-   * without anything here having to be told about it: someone in two
-   * organisations sees both organisations' apps, someone in one sees one,
-   * and taking them off a team in GlitchTip takes their access away here
-   * too.
-   */
-  let projects = [];
-  try {
-    const visible = await callGlitchtip("/api/0/projects/", credential);
-    projects = (Array.isArray(visible) ? visible : [])
-      .map((p) => ({ slug: p.slug, org: p.organization?.slug || null }))
-      .filter((p) => p.slug);
-  } catch (err) {
-    // A token without project:read still identifies its owner, and org
-    // membership already decided that they may be here — so let them in and
-    // fall back to showing everything, rather than an empty viewer with no
-    // explanation.
-    console.warn(
-      `couldn't list projects for this sign-in (${err.status || err.message}) — ` +
-        "reports won't be narrowed to their projects."
-    );
-    projects = null;
-  }
-
-  let email = null;
-  let name = null;
-  try {
-    const me = await callGlitchtip("/api/0/users/me/", credential);
-    email = me.email || me.username || null;
-    name = me.name || null;
-  } catch {
-    // Older GlitchTip versions scope tokens more tightly; org membership is
-    // the decision, the identity is only for display.
-  }
-
-  return { email, name, orgs: memberOf, projects };
-}
-
-/** A personal auth token, pasted into the sign-in screen. */
-export function verifyGlitchtipUser(token) {
-  return resolveMember({ token });
-}
-
-/**
- * Who a credential belongs to, without requiring that they belong anywhere.
- *
- * Someone with a GlitchTip account and no organisation can't be let in to
- * read anything — but they can be allowed to ask, and that needs their
- * identity. Returns null only if GlitchTip doesn't recognise them at all.
- */
-export async function identifyGlitchtipUser(credential) {
-  if (!glitchtipConfigured) return null;
-  try {
-    const me = await callGlitchtip("/api/0/users/me/", credential);
-    const email = me.email || me.username || null;
-    return email ? { email, name: me.name || null } : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Ask GlitchTip to invite someone to an organisation.
@@ -195,16 +121,6 @@ export async function inviteToOrg({ org, email, role = "member" }) {
     { method: "POST", body: { email, orgRole: role, teamRoles: [] } }
   );
   return { inviteLink: created.inviteLink || created.invite_link || null };
-}
-
-/**
- * The caller's own GlitchTip session, handed straight back to GlitchTip to
- * ask who it belongs to. Note that a session skips GlitchTip's token-scope
- * check entirely — `has_permission` only applies it to token auth — so this
- * works without anyone having to tick org:read on anything.
- */
-export function verifyGlitchtipSession(sessionId) {
-  return resolveMember({ sessionId });
 }
 
 /**

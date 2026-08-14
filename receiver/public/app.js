@@ -277,10 +277,7 @@ function showGate(message) {
   const err = el("gate-error");
   err.hidden = !message;
   err.textContent = message || "";
-  // Password is the way in most people will use; the token form is a click
-  // away for anyone who needs it.
-  if (!el("token-signin").hidden) el("token-input").focus();
-  else el("email-input").focus();
+  el("email-input").focus();
 }
 
 /**
@@ -301,39 +298,30 @@ async function describeSignIn() {
 }
 
 function paintSignIn(config) {
-
-  const hint = el("gate-hint");
-  const link = el("gate-glitchtip-link");
+  const help = el("gate-help");
 
   if (config.glitchtipEnabled) {
-    el("token-input").placeholder = "GlitchTip auth token";
-    // We only reach the sign-in screen when silent sign-in didn't work, so
-    // say what to do about that before offering the manual route.
-    el("gate-help").textContent =
-      "Sign in to GlitchTip in this browser and reload, or paste a GlitchTip auth token.";
-    hint.hidden = false;
-    // Only claim a specific organisation when one is actually required —
-    // normally any organisation you belong to will do.
-    const orgNote = el("gate-org-note");
-    if (config.glitchtipOrg) {
-      el("gate-org").textContent = config.glitchtipOrg;
-      orgNote.hidden = false;
-    } else {
-      orgNote.hidden = true;
-    }
-    if (config.glitchtipUrl) {
-      link.href = `${config.glitchtipUrl.replace(/\/+$/, "")}/profile/auth-tokens`;
-      link.hidden = false;
-    } else {
-      link.hidden = true;
-    }
-  } else {
-    el("token-input").placeholder = "Staff token";
-    el("gate-help").textContent = "Enter the staff token to read bug reports and session replays.";
-    hint.hidden = true;
+    help.textContent = config.glitchtipOrg
+      ? `Use your GlitchTip account. It has to belong to the ${config.glitchtipOrg} organisation.`
+      : "Use your GlitchTip account.";
+    return;
   }
-}
 
+  /**
+   * No GlitchTip, no session, no way in — and saying so is better than a
+   * form that cannot work.
+   *
+   * The staff token used to cover this case, because Sentinel could mint a
+   * session of its own from it. It cannot any more: there is one session and
+   * GlitchTip creates it. Apps still post reports with that token and the
+   * embedded viewer still reads with it, both by header; it is only the
+   * browser sign-in that has gone.
+   */
+  help.textContent =
+    "This Sentinel has no GlitchTip configured, so there is no account to sign in with. " +
+    "Set GLITCHTIP_URL and restart it.";
+  el("password-submit").disabled = true;
+}
 
 /**
  * Email and password, against GlitchTip's own accounts.
@@ -379,16 +367,9 @@ async function passwordSignIn() {
 
     if (res.ok || res.status === 200) {
       el("password-input").value = "";
-      // GlitchTip has set its session; ours follows from it.
-      const sso = await fetch("/sentinel/api/auth/sso", {
-        method: "POST",
-        credentials: "same-origin",
-      });
-      const body = await sso.json().catch(() => ({}));
-      if (sso.ok) return body.pending ? showWaiting(body) : enter();
-      error.hidden = false;
-      error.textContent = body.error || "Signed in to GlitchTip, but this viewer refused.";
-      return;
+      // allauth has created the session, and it is the only one there is —
+      // there is no second sign-in to perform against Sentinel any more.
+      return await land();
     }
 
     const body = await res.json().catch(() => ({}));
@@ -413,50 +394,10 @@ for (const id of ["email-input", "password-input"]) {
   });
 }
 
-el("show-token").addEventListener("click", () => {
-  el("password-signin").hidden = true;
-  el("token-signin").hidden = false;
-  el("token-input").focus();
-});
-
-el("show-password").addEventListener("click", () => {
-  el("token-signin").hidden = true;
-  el("password-signin").hidden = false;
-  el("email-input").focus();
-});
-
-el("gate-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const token = el("token-input").value.trim();
-  if (!token) return;
-
-  const button = el("gate-form").querySelector("button[type=submit]");
-  button.disabled = true;
-  try {
-    const res = await fetch("/sentinel/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({ token }),
-    });
-
-    if (res.ok) {
-      // The session is the cookie now; don't keep a copy of the token.
-      el("token-input").value = "";
-      const body = await res.json().catch(() => ({}));
-      if (body.pending) return showWaiting(body);
-      await enter();
-      return;
-    }
-
-    const body = await res.json().catch(() => ({}));
-    showGate(body.error || `Sign-in failed (${res.status}).`);
-  } catch (err) {
-    showGate(err.message);
-  } finally {
-    button.disabled = false;
-  }
-});
+// The token sign-in form and its submit handler lived here. A personal auth
+// token is an API credential and cannot create a browser session, so it can
+// no longer be a way in; email and password go to allauth, which creates the
+// one session there is.
 
 /**
  * Signing out ends the GlitchTip session too, so there's nothing left for
@@ -750,8 +691,47 @@ async function refresh() {
   void refreshRoute();
 }
 
+/**
+ * Ask what this session is, and show the screen that belongs to the answer.
+ *
+ * One question, one place. Before this there were three ways in — a session
+ * check, a silent sign-in, and a token form — each deciding for itself what
+ * to show, which is why "you belong to no organisation" could survive being
+ * approved: nothing re-asked.
+ */
+async function land() {
+  let me;
+  try {
+    const res = await fetch("/sentinel/api/auth/me", { credentials: "same-origin" });
+    me = res.ok ? await res.json() : null;
+  } catch {
+    me = null;
+  }
+
+  if (!me) return showGate("Couldn't reach Sentinel to check your session.");
+
+  switch (me.state) {
+    case "authenticated":
+      return enter(me);
+    case "pending":
+    case "denied":
+      return showWaiting(me);
+    case "disabled":
+      return showGate("That account has been switched off.");
+    case "expired":
+      return showGate("You were signed out.");
+    case "mfa_required":
+      // Its own screen arrives with the MFA flow; until then, saying so is
+      // better than a blank sign-in form that discards the half-finished
+      // login behind it.
+      return showGate("Finish signing in — a second factor is outstanding.");
+    default:
+      return showGate("");
+  }
+}
+
 /** Past the gate: load everything, then land on the right view. */
-async function enter() {
+async function enter(me = null) {
   gate.hidden = true;
   waiting.hidden = true;
   app.hidden = false;
@@ -763,11 +743,13 @@ async function enter() {
   if (!(await loadData())) return;
   void refreshRequestCount();
 
-  // Issues live under an organisation, so they can't be set up until we know
-  // which one this person belongs to.
-  const me = await fetch("/sentinel/api/auth/me", { credentials: "same-origin" })
-    .then((r) => (r.ok ? r.json() : null))
-    .catch(() => null);
+  // Issues live under an organisation. land() already asked; only a caller
+  // that skipped it has to ask again.
+  if (!me) {
+    me = await fetch("/sentinel/api/auth/me", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+  }
   organisation = (me?.orgs || [])[0] || null;
   // Nothing to browse errors under — the staff token, typically.
   el("tab-issues").hidden = !organisation;
@@ -856,41 +838,11 @@ async function boot() {
     return;
   }
 
-  // Standalone: our own session cookie may already be good.
-  const config = await describeSignIn();
-  try {
-    const res = await fetch("/sentinel/api/auth/me", { credentials: "same-origin" });
-    if (res.ok) {
-      const me = await res.json().catch(() => ({}));
-      if (me.pending) return showWaiting(me);
-      return await enter();
-    }
-  } catch {
-    // Fall through.
-  }
-
-  // Failing that, whoever is reading may already be signed in to GlitchTip
-  // in this browser — in which case there's nothing for them to type.
-  if (config.glitchtipEnabled) {
-    try {
-      const res = await fetch("/sentinel/api/auth/sso", { method: "POST", credentials: "same-origin" });
-      if (res.ok) {
-        const body = await res.json().catch(() => ({}));
-        if (body.pending) return showWaiting(body);
-        return await enter();
-      }
-      // 403 means signed in to GlitchTip but not a member of the org, which
-      // is worth saying out loud rather than showing a blank sign-in screen.
-      if (res.status === 403) {
-        const body = await res.json().catch(() => ({}));
-        return showGate(body.error || "That GlitchTip account isn't a member of the organisation.");
-      }
-    } catch {
-      // Fall through to the sign-in screen.
-    }
-  }
-
-  showGate(embedded ? "This page was not given a token." : "");
+  // One question now, and the answer is a state. Being signed in to
+  // GlitchTip in this browser *is* being signed in here, so there is no
+  // silent second sign-in to attempt and nothing to fall through to.
+  await describeSignIn();
+  await land();
 }
 
 void boot();

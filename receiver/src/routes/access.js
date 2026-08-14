@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { STATES } from "../auth/state.js";
 import {
   clearRequest,
   decide,
@@ -19,8 +20,13 @@ accessRouter.get("/me", async (req, res) => {
   const viewer = req.viewer || {};
   if (!viewer.email) return res.json({ pending: false, request: null, organisations: [] });
 
+  // "Pending" is a state now rather than a boolean on a frozen cookie, which
+  // is why somebody approved into an organisation used to keep being told
+  // they belonged to none: the cookie still said so until it expired.
+  const waiting = viewer.state === STATES.PENDING || viewer.state === STATES.DENIED;
+
   // Someone who has since been let in doesn't need their request any more.
-  if (!viewer.pending) {
+  if (!waiting) {
     await clearRequest(viewer.email);
     return res.json({ pending: false, request: null, organisations: viewer.orgs || [] });
   }
@@ -28,7 +34,7 @@ accessRouter.get("/me", async (req, res) => {
   res.json({
     pending: true,
     email: viewer.email,
-    name: viewer.name || null,
+    name: viewer.user?.name || null,
     request: await myRequest(viewer.email),
     organisations: [],
   });
@@ -39,14 +45,14 @@ accessRouter.post("/request", async (req, res) => {
   if (!viewer.email) {
     return res.status(400).json({ error: "we don't know who you are — sign in to GlitchTip first" });
   }
-  if (!viewer.pending) {
+  if (viewer.state !== STATES.PENDING && viewer.state !== STATES.DENIED) {
     return res.status(400).json({ error: "you already have access" });
   }
 
   try {
     const request = await requestAccess({
       email: viewer.email,
-      name: viewer.name,
+      name: viewer.user?.name || null,
       note: req.body?.note,
     });
     console.log(`access requested by ${viewer.email}`);
