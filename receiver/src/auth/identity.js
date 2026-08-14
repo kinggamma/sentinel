@@ -22,7 +22,7 @@ import {
   orgSlug,
   revokeGlitchtipSession,
 } from "../glitchtip.js";
-import { idleEnabled, isIdle, touch, forgetIdle } from "./idle.js";
+import { idleEnabled, isIdle, touch, begin, forgetIdle } from "./idle.js";
 import { rememberProjectOrgs } from "../project-map.js";
 import { readAllauth, derive, describe, STATES } from "./state.js";
 
@@ -269,6 +269,18 @@ export async function identify(req, { accessRequestFor = null } = {}) {
   if (user && orgs.length === 0 && accessRequestFor) {
     accessRequest = await accessRequestFor(user.email).catch(() => null);
   }
+
+  /**
+   * Start the clock, now that this session has been resolved against
+   * GlitchTip and found to belong to somebody.
+   *
+   * The only place a session enters the idle map. /auth/touch reads a cookie
+   * that nobody has checked yet, so it may refresh a record and never create
+   * one — otherwise inventing session ids would be a way to fill the map,
+   * and filling the map used to evict the records that keep expired sessions
+   * refused.
+   */
+  if (idleEnabled && user) begin(sessionId);
 
   const value = {
     state: derive({ sawCookie, allauth, user, orgs, accessRequest }),

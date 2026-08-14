@@ -133,6 +133,10 @@ services:
       # it off, which is the default: an idle timeout that fires while
       # somebody is reading is worse than not having one.
       SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-0}
+      # The receiver needs the same absolute cap GlitchTip enforces: it is
+      # the point past which a session cannot be valid whatever it does, and
+      # therefore the only point at which remembering one stops mattering.
+      SESSION_COOKIE_AGE: "${SESSION_COOKIE_AGE:-604800}"
       GLITCHTIP_PROJECT_MAP: ${GLITCHTIP_PROJECT_MAP}
       # Creates a GlitchTip project the first time a new app reports, so
       # nobody has to make one by hand. Give this token project:write and

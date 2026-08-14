@@ -53,7 +53,7 @@ await test("a session it has never seen is not idle", async () => {
 
 await test("it goes idle only after the window, and touching resets it", async () => {
   const idle = await load(0.002); // 120ms
-  idle.touch("s1");
+  idle.begin("s1");
   assert(!idle.isIdle("s1"), "idle immediately after being touched");
 
   await wait(70);
@@ -68,8 +68,8 @@ await test("it goes idle only after the window, and touching resets it", async (
 
 await test("one session going idle says nothing about another", async () => {
   const idle = await load(0.002);
-  idle.touch("busy");
-  idle.touch("abandoned");
+  idle.begin("busy");
+  idle.begin("abandoned");
   await wait(80);
   idle.touch("busy");
   await wait(80);
@@ -89,7 +89,7 @@ await test("coming back after the window does not restart the clock", async () =
    * end it; nothing a browser says may bring it back.
    */
   const idle = await load(0.002);
-  idle.touch("returning");
+  idle.begin("returning");
   await wait(160);
 
   idle.touch("returning"); // "I'm back!"
@@ -98,7 +98,7 @@ await test("coming back after the window does not restart the clock", async () =
 
 await test("forgetting one is what stops it being ended twice", async () => {
   const idle = await load(0.002);
-  idle.touch("s2");
+  idle.begin("s2");
   await wait(160);
   assert(idle.isIdle("s2"), "it never went idle");
   idle.forgetIdle("s2");
@@ -119,7 +119,7 @@ await test("keeping the record is what keeps a failed revocation refused", async
    * request tries the revoke again.
    */
   const idle = await load(0.002);
-  idle.touch("stubborn");
+  idle.begin("stubborn");
   await wait(160);
   assert(idle.isIdle("stubborn"), "it never went idle");
 
@@ -127,6 +127,48 @@ await test("keeping the record is what keeps a failed revocation refused", async
   assert(idle.isIdle("stubborn"), "it stopped being idle without being forgotten");
   idle.touch("stubborn"); // and a heartbeat still cannot rescue it
   assert(idle.isIdle("stubborn"), "a heartbeat revived a session we failed to end");
+});
+
+await test("a crowd of strangers cannot evict a tombstone", async () => {
+  /**
+   * The two fixes above disagreed with each other.
+   *
+   * Keeping the record of an idle session is what keeps it refused — and the
+   * map's own housekeeping deleted exactly those records, on the reasoning
+   * that a session idle long ago "says nothing that the absence of an entry
+   * doesn't". Once absence came to mean "newly arrived", that reasoning was
+   * false, and the sweep became a way to resurrect any session: fill the map
+   * with strangers until it trips, and the tombstones go with them.
+   *
+   * The strangers arrive through /auth/touch, which reads a cookie before
+   * anybody has checked whether it means anything, so they cost nothing to
+   * invent.
+   */
+  const idle = await load(0.002);
+  idle.begin("victim");
+  await wait(160);
+  assert(idle.isIdle("victim"), "the session under test never went idle");
+
+  for (let i = 0; i < 1200; i += 1) idle.touch(`stranger-${i}`);
+
+  assert(idle.isIdle("victim"), "pressure on the map revived an expired session");
+  // And they never got in at all: only the victim is tracked.
+  assert(
+    idle.trackedCount() === 1,
+    `strangers were recorded: ${idle.trackedCount()} sessions tracked`
+  );
+});
+
+await test("only a resolved session gets a record", async () => {
+  // The rule everything else rests on. A cookie is whatever the sender says
+  // it is, and /auth/touch reads one before anybody has established what it
+  // refers to — so a report may refresh, and may never create.
+  const idle = await load(10);
+  idle.touch("invented-by-a-stranger");
+  assert(idle.trackedCount() === 0, "a touch created a record");
+
+  idle.begin("resolved-against-glitchtip");
+  assert(idle.trackedCount() === 1, "a resolved session was not recorded");
 });
 
 process.stdout.write(`\n${passed} passed, ${failures.length} failed\n`);
