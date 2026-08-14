@@ -134,15 +134,32 @@ export async function identify(req, { accessRequestFor = null } = {}) {
    * what anybody means by signing someone out.
    */
   if (idleEnabled && isIdle(sessionId)) {
-    forgetIdle(sessionId);
     cache.delete(sessionId);
+
     // Reported rather than swallowed: a timeout that fails to end the
     // session is a timeout that has not happened, and silence is how that
     // goes unnoticed.
     const revoked = await revokeGlitchtipSession({ sessionId }).catch(() => false);
-    if (!revoked) {
-      console.warn("an idle session could not be ended at GlitchTip — it may still be usable there");
+
+    if (revoked) {
+      // Gone for good, so the record has nothing left to say.
+      forgetIdle(sessionId);
+    } else {
+      /**
+       * Kept, deliberately.
+       *
+       * An unknown session is treated as newly arrived rather than idle, so
+       * dropping the record here would hand a session we had just failed to
+       * destroy a fresh window — and it is still alive at GlitchTip, which
+       * is precisely the case where that must not happen. Holding on to it
+       * keeps the answer "expired" and makes every later request try the
+       * revoke again until one of them works.
+       */
+      console.warn(
+        "an idle session could not be ended at GlitchTip — refusing it here and retrying"
+      );
     }
+
     return { state: STATES.EXPIRED, sessionId, user: null, orgs: [], projects: [], allauth: null };
   }
 

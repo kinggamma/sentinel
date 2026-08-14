@@ -77,7 +77,26 @@ await test("one session going idle says nothing about another", async () => {
   assert(idle.isIdle("abandoned"), "the abandoned one was not");
 });
 
-await test("forgetting one stops it being judged twice", async () => {
+await test("coming back after the window does not restart the clock", async () => {
+  /**
+   * The bypass. Returning to a tab is activity, so the browser reports it —
+   * and if that report is taken at face value, the report itself is what
+   * saves the session that had already gone stale. Leave a tab open
+   * overnight, glance at it in the morning, and the timeout has never once
+   * fired.
+   *
+   * A session past the window stays past it. Only the next look at it can
+   * end it; nothing a browser says may bring it back.
+   */
+  const idle = await load(0.002);
+  idle.touch("returning");
+  await wait(160);
+
+  idle.touch("returning"); // "I'm back!"
+  assert(idle.isIdle("returning"), "a touch after the window revived the session");
+});
+
+await test("forgetting one is what stops it being ended twice", async () => {
   const idle = await load(0.002);
   idle.touch("s2");
   await wait(160);
@@ -86,6 +105,28 @@ await test("forgetting one stops it being judged twice", async () => {
   // Now unknown again, which is "just arrived" rather than "still idle" —
   // so the session it belongs to is not ended a second time.
   assert(!idle.isIdle("s2"), "a forgotten session was still idle");
+});
+
+await test("keeping the record is what keeps a failed revocation refused", async () => {
+  /**
+   * The other half of the same coin, and the reason forgetting is conditional
+   * at the call site: an unknown session reads as newly arrived, so dropping
+   * the record for one that is *still alive at GlitchTip* — which is exactly
+   * what a failed revocation means — would hand it a fresh window and
+   * authenticate it again on the very next request.
+   *
+   * Held on to, it stays idle, keeps answering "expired", and every later
+   * request tries the revoke again.
+   */
+  const idle = await load(0.002);
+  idle.touch("stubborn");
+  await wait(160);
+  assert(idle.isIdle("stubborn"), "it never went idle");
+
+  // No forgetIdle() — the revoke failed.
+  assert(idle.isIdle("stubborn"), "it stopped being idle without being forgotten");
+  idle.touch("stubborn"); // and a heartbeat still cannot rescue it
+  assert(idle.isIdle("stubborn"), "a heartbeat revived a session we failed to end");
 });
 
 process.stdout.write(`\n${passed} passed, ${failures.length} failed\n`);

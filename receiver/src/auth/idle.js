@@ -34,9 +34,25 @@ const IDLE_MS = IDLE_MINUTES * 60 * 1000;
 /** sessionId -> epoch ms of the last sign of life. */
 const lastSeen = new Map();
 
-/** Somebody is still there. */
+/**
+ * Somebody is still there.
+ *
+ * Refuses to revive a session that has already been left too long, and that
+ * refusal is the whole difference between a working timeout and a decorative
+ * one. Coming back to a tab is activity, the browser reports it, and taking
+ * that report at face value means the report itself rescues the session that
+ * had already gone stale — leave a tab open overnight, glance at it in the
+ * morning, and the window has never once elapsed.
+ *
+ * Past the window is a one-way door. Only the next look at the session can
+ * open it, by ending it.
+ */
 export function touch(sessionId) {
   if (!idleEnabled || !sessionId) return;
+
+  const seen = lastSeen.get(sessionId);
+  if (seen !== undefined && Date.now() - seen > IDLE_MS) return;
+
   lastSeen.set(sessionId, Date.now());
 
   // Bounded without a timer: sessions that went idle long ago cannot become
@@ -68,7 +84,14 @@ export function isIdle(sessionId) {
   return Date.now() - seen > IDLE_MS;
 }
 
-/** After it has been dealt with, so it isn't dealt with twice. */
+/**
+ * After it has been dealt with — and only then.
+ *
+ * An unknown session is treated as newly arrived rather than idle, so
+ * forgetting one that is still alive at GlitchTip hands it a fresh window
+ * and undoes the very thing that was being attempted. This is called when
+ * the session has actually been destroyed, never merely when we tried.
+ */
 export function forgetIdle(sessionId) {
   lastSeen.delete(sessionId);
 }
