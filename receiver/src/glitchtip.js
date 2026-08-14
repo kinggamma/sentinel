@@ -209,6 +209,28 @@ export async function fetchProjectDsn(projectSlug) {
 export async function revokeGlitchtipSession({ sessionId, csrfToken }) {
   if (!glitchtipConfigured || !sessionId) return false;
 
+  /**
+   * Django refuses this without a CSRF token, and there is not always a
+   * browser to have supplied one — an idle session is ended by the receiver
+   * on its own initiative, with nobody present. So when none is offered, get
+   * one the same way a browser would: ask allauth for the session, which
+   * hands one back in a Set-Cookie, and echo it.
+   *
+   * Without this the request came back 403, the caller swallowed it, and the
+   * session went on working everywhere except the screen that had just
+   * decided to end it.
+   */
+  if (!csrfToken) {
+    try {
+      const primer = await fetch(`${GLITCHTIP_API_URL}/_allauth/browser/v1/auth/session`, {
+        headers: { cookie: `${GLITCHTIP_SESSION_COOKIE}=${sessionId}`, accept: "application/json" },
+      });
+      csrfToken = (primer.headers.get("set-cookie") || "").match(/csrftoken=([^;]+)/)?.[1] || null;
+    } catch {
+      // Fall through: the attempt below will simply fail, and say so.
+    }
+  }
+
   const cookies = [`${GLITCHTIP_SESSION_COOKIE}=${sessionId}`];
   if (csrfToken) cookies.push(`csrftoken=${csrfToken}`);
 

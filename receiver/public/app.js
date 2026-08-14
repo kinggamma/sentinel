@@ -46,6 +46,7 @@ import {
   acceptInviteView,
 } from "./views/auth.js";
 import { session, forget as forgetSession } from "./lib/session.js";
+import { reportPresence, stopReportingPresence } from "./lib/presence.js";
 
 /** Left over from when the viewer kept a bearer token here. Clear it out. */
 try {
@@ -387,6 +388,7 @@ function api(path, init = {}) {
 
 /** Ends the session at GlitchTip, which ends it here — there is only one. */
 async function signOut() {
+  stopReportingPresence();
   await sentinelApi.post("/auth/logout", null).catch(() => {});
   forgetSession();
   projects = [];
@@ -664,6 +666,23 @@ async function boot() {
     if (here.startsWith("/signin")) return;
     void goRoute(`/signin?next=${encodeURIComponent(here)}`, { replace: true });
   });
+
+  /**
+   * If this installation signs idle sessions out, start saying we are here.
+   *
+   * Only for a browser session: the embedded viewer authenticates with a
+   * header on every request and has no session to expire, so a heartbeat
+   * from it would be reporting on nothing.
+   */
+  if (!embedded) {
+    try {
+      const idle = await sentinelApi.get("/auth/idle", { signalUnauthorized: false });
+      if (idle?.enabled) reportPresence();
+    } catch {
+      // Not knowing means not reporting, which is the safe direction: the
+      // receiver decides, and it will simply see no activity.
+    }
+  }
 
   // Embedded: the host hands us the shared staff token, and there is no
   // sign-in screen in an iframe. It authenticates by header and holds no

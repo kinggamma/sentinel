@@ -20,9 +20,11 @@ import {
   callGlitchtip,
   glitchtipConfigured,
   orgSlug,
+  revokeGlitchtipSession,
 } from "../glitchtip.js";
+import { idleEnabled, isIdle, touch, forgetIdle } from "./idle.js";
 import { rememberProjectOrgs } from "../project-map.js";
-import { readAllauth, derive, describe } from "./state.js";
+import { readAllauth, derive, describe, STATES } from "./state.js";
 
 /**
  * Short enough that a change of circumstances is felt within seconds, long
@@ -47,6 +49,9 @@ export function readCookie(req, name) {
 export function forget(sessionId) {
   if (sessionId) cache.delete(sessionId);
 }
+
+/** Re-export so callers have one import for "this session is alive". */
+export { touch };
 
 async function askAllauth(sessionId) {
   try {
@@ -117,6 +122,28 @@ export async function identify(req, { accessRequestFor = null } = {}) {
   if (!glitchtipConfigured || !sessionId) {
     const state = derive({ sawCookie });
     return { state, sessionId, user: null, orgs: [], projects: [], allauth: null };
+  }
+
+  /**
+   * Left alone too long, if this installation asks for that.
+   *
+   * Checked before the cache, because a cached "authenticated" from four
+   * seconds ago is exactly what an idle session looks like — and destroyed
+   * at GlitchTip rather than merely refused here, or the session would go on
+   * working in GlitchTip's own screens and in every other tab, which is not
+   * what anybody means by signing someone out.
+   */
+  if (idleEnabled && isIdle(sessionId)) {
+    forgetIdle(sessionId);
+    cache.delete(sessionId);
+    // Reported rather than swallowed: a timeout that fails to end the
+    // session is a timeout that has not happened, and silence is how that
+    // goes unnoticed.
+    const revoked = await revokeGlitchtipSession({ sessionId }).catch(() => false);
+    if (!revoked) {
+      console.warn("an idle session could not be ended at GlitchTip — it may still be usable there");
+    }
+    return { state: STATES.EXPIRED, sessionId, user: null, orgs: [], projects: [], allauth: null };
   }
 
   const hit = cache.get(sessionId);

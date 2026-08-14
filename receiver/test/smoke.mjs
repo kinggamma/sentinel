@@ -175,6 +175,7 @@ async function shellServed() {
     "lib/session.js",
     "lib/next.js",
     "lib/webauthn.js",
+    "lib/presence.js",
   ]) {
     await check(`${asset} is served`, async () => {
       assertStatus(await get(`/sentinel/${asset}`), 200, asset);
@@ -504,6 +505,23 @@ async function authBoundaries() {
       body: JSON.stringify({ code: "000000" }),
     });
     assert(res.status === 401 || res.status === 403 || res.status === 409, `answered ${res.status}`);
+  });
+
+  await check("the client is told whether idle sessions are signed out", async () => {
+    // The viewer only reports activity when there is something to report it
+    // to; without this it would either never report, or report always.
+    const res = await get("/sentinel/api/auth/idle");
+    assertStatus(res, 200);
+    const body = await res.json();
+    assert(typeof body.enabled === "boolean", "no enabled flag");
+    assert(typeof body.windowMs === "number", "no window");
+  });
+
+  await check("saying 'still here' costs nothing and answers nothing", async () => {
+    // Called as often as somebody moves a mouse, so it must not become a
+    // question that reaches GlitchTip.
+    const res = await fetch(`${BASE}/sentinel/api/auth/touch`, { method: "POST" });
+    assertStatus(res, 204);
   });
 
   await check("token sign-in is gone, and says so rather than 404ing", async () => {
