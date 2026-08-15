@@ -154,6 +154,19 @@ async function shellServed() {
     });
   }
 
+  await check("the shell carries a sidebar with only real destinations", async () => {
+    // GlitchTip's own nav also has Uptime, Logs, Performance, Releases and
+    // Projects. Those are later phases, and a link to a screen that does not
+    // exist is worse than no link — so this fails if one appears early.
+    const body = await (await get("/sentinel/", { headers: { accept: "text/html" } })).text();
+    for (const id of ["nav-issues", "nav-reports", "nav-requests", "nav-settings"]) {
+      assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
+    }
+    for (const absent of ["nav-uptime", "nav-logs", "nav-performance", "nav-releases"]) {
+      assert(!body.includes(`id="${absent}"`), `${absent} points at a screen that does not exist`);
+    }
+  });
+
   await check("a missing asset 404s rather than returning the shell", async () => {
     const res = await get("/sentinel/definitely-not-here.js");
     assertStatus(res, 404);

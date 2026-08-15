@@ -123,7 +123,14 @@ function guarded(view, { needs = "canRead" } = {}) {
       // to offer. Known here because the guard already asked; the screens
       // behind it never ask again.
       organisation = (me.orgs || [])[0] || null;
-      el("tab-issues").hidden = !organisation;
+      el("nav-issues").hidden = !organisation;
+
+      // Whose data this is. GlitchTip puts it at the top of its sidebar and
+      // it answers a real question on a shared install — one day there will
+      // be more than one to choose between, and this is where that goes.
+      const org = el("org-name");
+      org.hidden = !organisation;
+      org.textContent = organisation || "";
       await ensureData();
       void refreshRequestCount();
       return view(ctx, me);
@@ -155,10 +162,16 @@ function guarded(view, { needs = "canRead" } = {}) {
   };
 }
 
-/** Auth screens have no topbar to speak of; the app behind them does. */
+/**
+ * Auth screens are the whole window: no sidebar to navigate with, because
+ * there is nothing yet to navigate, and no page header because the card says
+ * what it is.
+ */
 function paintShell({ signedIn }) {
   app.hidden = false;
   viewOutlet.hidden = false;
+  app.classList.toggle("signed-in", signedIn);
+  el("sidebar").hidden = !signedIn;
   el("topbar").hidden = !signedIn;
 }
 
@@ -488,24 +501,62 @@ function routedApp() {
   return found ? decodeURIComponent(found[1]) : "";
 }
 
-/** The topbar, for whatever the route is showing. */
+/**
+ * Which section a path belongs to. One place, so the sidebar and anything
+ * else that cares agree about it.
+ */
+function sectionFor(path) {
+  if (path.startsWith("/issues")) return "issues";
+  if (path.startsWith("/requests")) return "requests";
+  if (path.startsWith("/settings")) return "settings";
+  if (path === "/" || path.startsWith("/reports")) return "reports";
+  // Somewhere that isn't a section. Falling through to "reports" would have
+  // the sidebar claim you were on a screen you are not on, and the header
+  // announce a page that failed to load as "Your apps".
+  return null;
+}
+
+/** The chrome, for whatever the route is showing. */
 function paintChrome() {
   const appName = routedApp();
-  const onIssues = currentPath().startsWith("/issues");
+  const path = currentPath();
+  const section = sectionFor(path);
 
-  // Which half of the app is showing is a fact about the path now, not a
-  // variable a click handler had to remember to set. There is nothing left
-  // to hide either: both halves render into the same outlet.
-  el("tab-issues").classList.toggle("selected", onIssues);
-  el("tab-reports").classList.toggle("selected", !onIssues);
+  // Where you are is a fact about the path, not a variable a click handler
+  // has to remember to set.
+  for (const [id, name] of [
+    ["nav-issues", "issues"],
+    ["nav-reports", "reports"],
+    ["nav-requests", "requests"],
+    ["nav-settings", "settings"],
+  ]) {
+    el(id).classList.toggle("current", section === name);
+    // Announced as well as coloured: "selected" that only exists in the
+    // styling is invisible to anyone not looking at it.
+    if (section === name) el(id).setAttribute("aria-current", "page");
+    else el(id).removeAttribute("aria-current");
+  }
+
+  /**
+   * What this screen is.
+   *
+   * With navigation in the sidebar the header had nothing left to say, and
+   * an empty bar with one button in it looks like something failed to load.
+   * It names the page instead — the app you are looking at when that is the
+   * answer, and the section otherwise.
+   */
+  const titles = {
+    issues: "Issues",
+    requests: "Access requests",
+    settings: "Settings",
+    reports: appName || "Your apps",
+  };
+  const heading = titles[section] || "";
 
   const crumb = el("crumb");
-  crumb.hidden = onIssues || !appName;
-  crumb.textContent = appName ? `/ ${appName}` : "";
+  crumb.hidden = !heading;
+  crumb.textContent = heading || "";
   document.title = appName ? `${appName} — Sentinel` : "Sentinel";
-
-  // Scoped to one app by its host: there is no "all projects" to go back to.
-  el("home-link").disabled = Boolean(scopedApp) || !appName;
 
   const url = appName ? projectFor(appName)?.glitchtipUrl || glitchtipRoot : glitchtipRoot;
   const link = el("glitchtip-link");
@@ -549,9 +600,9 @@ async function refreshRequestCount() {
   if (!res.ok) return;
   const body = await res.json().catch(() => ({}));
   const pending = (body.requests || []).filter((r) => r.status === "pending").length;
-  const button = el("requests-open");
-  button.hidden = pending === 0;
-  button.textContent = pending === 1 ? "1 request" : `${pending} requests`;
+  const link = el("nav-requests");
+  link.hidden = pending === 0;
+  link.textContent = pending === 1 ? "Requests (1)" : `Requests (${pending})`;
 }
 
 
@@ -578,7 +629,6 @@ function labelThemeToggle(theme) {
 
 themeToggle.addEventListener("click", () => labelThemeToggle(cycleTheme()));
 
-el("home-link").addEventListener("click", () => showProjects());
 el("refresh").addEventListener("click", () => void refresh());
 el("forget").addEventListener("click", () => void signOut());
 
@@ -699,12 +749,14 @@ async function boot() {
   await startRouter({ outlet: viewOutlet, mount: MOUNT });
 
   // Static markup in index.html, so it can't read MOUNT itself.
-  el("requests-open").href = routeHref("/requests");
-  el("settings-open").href = routeHref("/settings");
-  el("tab-issues").href = routeHref("/issues");
-  el("tab-reports").href = routeHref(
-    scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/"
-  );
+  el("nav-requests").href = routeHref("/requests");
+  el("nav-settings").href = routeHref("/settings");
+  el("nav-issues").href = routeHref("/issues");
+  // A scoped session has no "all projects" to go home to, so both of these
+  // point at the one app it is allowed to show.
+  const home = routeHref(scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/");
+  el("nav-reports").href = home;
+  el("home-link").href = home;
 
   if (!embedded && params.get("view") === "requests") {
     // Arrived from GlitchTip's "Requests" nav item, which still links to the
