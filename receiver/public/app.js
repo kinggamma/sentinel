@@ -255,9 +255,13 @@ const reportsRoute = (ctx) => {
  * to. The org is discovered at sign-in (enter(), below) rather than known at
  * module load, so the routes read it when they run.
  */
-const issuesRoute = (view) => (ctx) => {
+const issuesRoute = (view) => (ctx, me) => {
   paintChrome();
-  return view(ctx, { org: organisation });
+  // The signed-in address comes from the guard, which already asked. A note
+  // on an issue is signed, and only its author is offered a way to remove
+  // it — GlitchTip enforces that too, but a button that always fails is its
+  // own kind of rude.
+  return view(ctx, { org: organisation, me: me?.email || null });
 };
 /**
  * Anything else. The router has always supported this and nothing ever

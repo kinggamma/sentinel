@@ -18,7 +18,7 @@
  */
 import { glitchtip } from "../lib/api.js";
 import { h, fill, emptyState } from "../lib/dom.js";
-import { since } from "../lib/time.js";
+import { since, at } from "../lib/time.js";
 import { parseLinks } from "../lib/pagination.js";
 import { throwIfAborted } from "../lib/abort.js";
 import { href as routeHref, go, refresh as refreshRoute } from "../lib/router.js";
@@ -217,6 +217,35 @@ function toolbar(filters, navigate) {
   );
   environment.value = filters.environment;
 
+  /**
+   * What can be typed into the box.
+   *
+   * The search accepts a small query language and nothing on the screen said
+   * so, which makes it look like a plain text filter that mysteriously
+   * ignores what you type. These are GlitchTip's own terms.
+   */
+  const help = h(
+    "details",
+    { className: "search-help" },
+    h("summary", { text: "Search help" }),
+    h(
+      "dl",
+      {},
+      [
+        ["is:unresolved", "still open — the default"],
+        ["is:resolved", "dealt with"],
+        ["is:ignored", "deliberately set aside"],
+        ["age:-24h", "first seen in the last day"],
+        ["timesSeen:>10", "happened more than ten times"],
+        ["project:my-app", "one project"],
+        ["anything else", "matched against the title and culprit"],
+      ].flatMap(([term, means]) => [
+        h("dt", { className: "mono", text: term }),
+        h("dd", { className: "muted", text: means }),
+      ])
+    )
+  );
+
   const query = h("input", {
     type: "search",
     className: "issue-search",
@@ -260,6 +289,7 @@ function toolbar(filters, navigate) {
     { className: "issues-toolbar" },
     environment,
     query,
+    help,
     range,
     sort,
     h("button", {
@@ -444,6 +474,175 @@ export async function issuesListView({ outlet, query, signal }, { org } = {}) {
   );
 }
 
+// -------------------------------------------------- what else is known
+
+/**
+ * Which tag values this issue has been seen with.
+ *
+ * GlitchTip already computes it — top values per key, with counts — and it
+ * is the fastest way to tell "everybody" from "one browser on one machine",
+ * which is usually the first thing worth knowing about an error.
+ */
+function tagsSection(tags) {
+  if (!tags?.length) return null;
+
+  return detailSection(
+    "Tags across all events",
+    h(
+      "div",
+      { className: "tag-groups" },
+      tags.map((tag) =>
+        h(
+          "div",
+          { className: "tag-group" },
+          h("h4", { text: tag.name || tag.key }),
+          h(
+            "ul",
+            {},
+            (tag.topValues || []).map((value) => {
+              const share = tag.totalValues
+                ? Math.round((value.count / tag.totalValues) * 100)
+                : null;
+              return h(
+                "li",
+                {},
+                h("span", { className: "tag-value", text: value.value ?? value.name }),
+                h("span", {
+                  className: "muted",
+                  text: share === null ? String(value.count) : `${share}% · ${value.count}`,
+                })
+              );
+            })
+          )
+        )
+      )
+    )
+  );
+}
+
+/**
+ * What somebody typed into a crash dialog, if an app collects them.
+ *
+ * Rarely present, and worth a lot when it is — this is a person describing
+ * what they were doing, next to the stack trace of it going wrong.
+ */
+function userReportsSection(reports) {
+  if (!reports?.length) return null;
+
+  return detailSection(
+    `What people said (${reports.length})`,
+    h(
+      "div",
+      { className: "user-reports" },
+      reports.map((report) =>
+        h(
+          "article",
+          {},
+          h("p", { className: "report-comment", text: report.comments || "(no comment)" }),
+          h("p", {
+            className: "muted",
+            text: [report.name, report.email, report.dateCreated ? at(report.dateCreated) : null]
+              .filter(Boolean)
+              .join(" · "),
+          })
+        )
+      )
+    )
+  );
+}
+
+/**
+ * Notes people leave each other on an issue.
+ *
+ * The one genuinely collaborative thing on this screen, and the only part of
+ * it that writes: everything else here reports what happened, while this is
+ * two people working out what to do about it.
+ */
+function commentsSection({ comments, onAdd, onDelete, me }) {
+  const list = h("div", { className: "comments" });
+  const error = h("p", { className: "error" });
+  error.hidden = true;
+
+  const paint = (items) => {
+    if (!items.length) {
+      fill(list, emptyState("No notes yet."));
+      return;
+    }
+    fill(
+      list,
+      items.map((comment) =>
+        h(
+          "article",
+          { className: "comment" },
+          h("p", { text: comment.data?.text || "" }),
+          h(
+            "p",
+            { className: "muted" },
+            h("span", {
+              text: [comment.user?.email, comment.dateCreated ? at(comment.dateCreated) : null]
+                .filter(Boolean)
+                .join(" · "),
+            }),
+            // Only your own: GlitchTip decides this too, but offering a
+            // button that always fails is its own kind of rude.
+            me && comment.user?.email === me
+              ? h("button", {
+                  type: "button",
+                  className: "linky danger",
+                  text: "Delete",
+                  on: { click: () => run(remove(comment.id)) },
+                })
+              : null
+          )
+        )
+      )
+    );
+  };
+
+  const remove = async (commentId) => {
+    error.hidden = true;
+    try {
+      paint(await onDelete(commentId));
+    } catch (failure) {
+      error.hidden = false;
+      error.textContent = `Couldn't delete that note (${failure?.status ?? 0}).`;
+    }
+  };
+
+  const text = h("textarea", {
+    attrs: { rows: "2", placeholder: "Leave a note for whoever looks next", "aria-label": "New note" },
+  });
+  const submit = h("button", { type: "button", text: "Add note" });
+
+  submit.addEventListener("click", () =>
+    run(
+      (async () => {
+        const value = text.value.trim();
+        if (!value) return;
+        submit.disabled = true;
+        error.hidden = true;
+        try {
+          paint(await onAdd(value));
+          text.value = "";
+        } catch (failure) {
+          error.hidden = false;
+          error.textContent = `Couldn't add that note (${failure?.status ?? 0}).`;
+        } finally {
+          submit.disabled = false;
+        }
+      })()
+    )
+  );
+
+  paint(comments);
+  return detailSection(
+    "Notes",
+    list,
+    h("div", { className: "comment-form" }, text, submit),
+    error
+  );
+}
+
 // ----------------------------------------------------------- one issue
 
 function detailSection(title, ...children) {
@@ -573,7 +772,12 @@ function eventBody(event) {
   }
 
   if (event.tags?.length) {
-    parts.push(detailSection("Tags", keyValues(event.tags.map((tag) => [tag.key, tag.value]))));
+    // Named against the aggregate below it, which carries the same word and
+    // a different meaning: these are what *this* event was tagged with,
+    // those are how the whole issue is distributed across values.
+    parts.push(
+      detailSection("Tags on this event", keyValues(event.tags.map((tag) => [tag.key, tag.value])))
+    );
   }
 
   parts.push(
@@ -593,13 +797,24 @@ function eventBody(event) {
 }
 
 /** Same as the list above: the signal is the only teardown state it needs. */
-export async function issueDetailView({ outlet, params, query, signal }, { org } = {}) {
+export async function issueDetailView({ outlet, params, query, signal }, { org, me = null } = {}) {
+  /**
+   * Which event of this issue to show. An issue is a group of them, and the
+   * newest is only the default — walking back through them is how you find
+   * the first, or the one from the person who complained.
+   *
+   * In the query rather than the path, because it is a position within the
+   * issue rather than a different thing: /issues/4?event=<id> is still
+   * issue 4.
+   */
+  const eventId = query?.event || "latest";
   if (!org) {
     fill(outlet, emptyState("No organisation to browse errors under."));
     return;
   }
 
-  const id = params.id;
+  const issueId = params.id;
+  const id = issueId;
   // The filters came along in the query, so "all issues" goes back to the
   // list that was open rather than to an unfiltered one.
   const back = h("a", {
@@ -712,7 +927,11 @@ export async function issueDetailView({ outlet, params, query, signal }, { org }
   // and everything above it is already known.
   let event;
   try {
-    event = await glitchtip.raw(`${base}/events/latest/`, { signal, raw: true, ...NO_REDIRECT });
+    event = await glitchtip.raw(`${base}/events/${encodeURIComponent(eventId)}/`, {
+      signal,
+      raw: true,
+      ...NO_REDIRECT,
+    });
   } catch {
     throwIfAborted(signal);
     fill(body, emptyState("Couldn't load the event body."));
@@ -726,5 +945,72 @@ export async function issueDetailView({ outlet, params, query, signal }, { org }
   }
   const parsed = await event.json();
   throwIfAborted(signal);
-  fill(body, eventBody(parsed));
+
+  /**
+   * Everything else this issue knows, fetched together and after the body,
+   * because none of it is why somebody opened the screen. A failure in any
+   * one of them leaves that section out rather than taking the page with
+   * it — a missing note list is not a reason to hide a stack trace.
+   */
+  const filters = search(readFilters(query));
+  const eventHref = (id) =>
+    routeHref(
+      `/issues/${encodeURIComponent(issueId)}${filters ? `${filters}&` : "?"}event=${encodeURIComponent(id)}`
+    );
+
+  const [tags, reports, comments] = await Promise.all([
+    glitchtip.get(`${base}/tags/`, { signal, ...NO_REDIRECT }).catch(() => null),
+    glitchtip.get(`${base}/user-reports/`, { signal, ...NO_REDIRECT }).catch(() => null),
+    glitchtip.get(`${base}/comments/`, { signal, ...NO_REDIRECT }).catch(() => null),
+  ]);
+  throwIfAborted(signal);
+
+  fill(
+    body,
+    /**
+     * Which of this issue's events you are looking at, and how to move.
+     *
+     * GlitchTip puts previousEventID and nextEventID in the event itself, so
+     * this costs nothing extra — and without it the screen quietly implies
+     * an issue is one error rather than a group of them.
+     */
+    parsed.previousEventID || parsed.nextEventID
+      ? h(
+          "div",
+          { className: "event-nav" },
+          parsed.previousEventID
+            ? h("a", { className: "button-link", href: eventHref(parsed.previousEventID), text: "← Earlier" })
+            : h("span", { className: "button-link disabled", attrs: { "aria-disabled": "true" }, text: "← Earlier" }),
+          h("span", {
+            className: "muted",
+            text: parsed.dateCreated ? `This one: ${at(parsed.dateCreated)}` : "",
+          }),
+          parsed.nextEventID
+            ? h("a", { className: "button-link", href: eventHref(parsed.nextEventID), text: "Later →" })
+            : h("span", { className: "button-link disabled", attrs: { "aria-disabled": "true" }, text: "Later →" })
+        )
+      : null,
+
+    eventBody(parsed),
+    tagsSection(tags),
+    userReportsSection(reports),
+
+    comments
+      ? commentsSection({
+          comments,
+          me,
+          onAdd: async (text) => {
+            await glitchtip.post(`${base}/comments/`, { data: { text } }, { signal, ...NO_REDIRECT });
+            return glitchtip.get(`${base}/comments/`, { signal, ...NO_REDIRECT });
+          },
+          onDelete: async (commentId) => {
+            await glitchtip.del(`${base}/comments/${encodeURIComponent(commentId)}/`, {
+              signal,
+              ...NO_REDIRECT,
+            });
+            return glitchtip.get(`${base}/comments/`, { signal, ...NO_REDIRECT });
+          },
+        })
+      : null
+  );
 }

@@ -1328,6 +1328,134 @@ button.danger:hover {
   }
 }
 
+/* Which of an issue's events is showing, and how to reach its neighbours. */
+.event-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.event-nav .disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Tag values, with how much of the issue each accounts for. The share is
+   the point: "100% Chrome" and "3% Chrome" are different problems. */
+.tag-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+
+.tag-group h4 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.tag-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tag-group li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.tag-value {
+  overflow-wrap: anywhere;
+}
+
+.user-reports article,
+.comment {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.report-comment,
+.comment p:first-child {
+  margin: 0 0 var(--space-1);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.comment p:last-child {
+  margin: 0;
+  font-size: var(--text-xs);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.comment .linky.danger {
+  color: var(--danger);
+  font-size: var(--text-xs);
+}
+
+.comment-form {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.comment-form textarea {
+  flex: 1;
+  font: inherit;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  resize: vertical;
+}
+
+/* Folded away until wanted: the terms matter to somebody typing a query and
+   are noise to everybody else. */
+.search-help {
+  font-size: var(--text-xs);
+}
+
+.search-help summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: var(--space-2);
+}
+
+.search-help dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  position: absolute;
+  z-index: 4;
+  max-width: min(420px, 90vw);
+  box-shadow: var(--shadow);
+}
+
+.search-help dt,
+.search-help dd {
+  margin: 0;
+}
+
 /* --- one issue ---------------------------------------------------- */
 
 .issue-detail {

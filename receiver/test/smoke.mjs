@@ -130,6 +130,9 @@ async function shellServed() {
     "/sentinel/issues",
     "/sentinel/issues?q=is%3Aresolved&sort=-count&cursor=abc",
     "/sentinel/issues/123456",
+    // One issue is a group of events, and which one you are looking at is a
+    // position within it rather than a different address.
+    "/sentinel/issues/123456?event=019ffabc82a7718cad4fe7a13a7efc37",
     "/sentinel/reports/e-library-admin",
     "/sentinel/reports/e-library-admin/2f8a1c",
   ]) {
@@ -457,6 +460,51 @@ async function authBoundaries() {
     // here would mean Sentinel had started keeping its own again.
     const res = await get("/sentinel/api/auth/me");
     assert(!res.headers.get("set-cookie"), "it set a cookie");
+  });
+
+  await check("an issue's other facets are readable with a session", async () => {
+    if (!SESSION || !ORG) return "skip";
+    /**
+     * Comments, tags and user reports hang off the issue and each is a
+     * separate call the detail screen makes. They are fetched together and
+     * after the stack trace, so a failure in one leaves that section out
+     * rather than taking the page with it — this checks they answer at all,
+     * which is the part that would silently stop being true on an upgrade.
+     */
+    const issues = await get(`/api/0/organizations/${encodeURIComponent(ORG)}/issues/?limit=1`, {
+      headers: { cookie: `sessionid=${SESSION}` },
+    });
+    assertStatus(issues, 200);
+    const [issue] = await issues.json();
+    if (!issue) return "skip";
+
+    for (const facet of ["comments/", "tags/", "user-reports/", "events/latest/"]) {
+      const res = await get(
+        `/api/0/organizations/${encodeURIComponent(ORG)}/issues/${issue.id}/${facet}`,
+        { headers: { cookie: `sessionid=${SESSION}` } }
+      );
+      assertStatus(res, 200, facet);
+    }
+  });
+
+  await check("an event says which ones sit either side of it", async () => {
+    if (!SESSION || !ORG) return "skip";
+    // previousEventID and nextEventID are what make walking through an
+    // issue's events possible without a second request per step.
+    const issues = await get(`/api/0/organizations/${encodeURIComponent(ORG)}/issues/?limit=1`, {
+      headers: { cookie: `sessionid=${SESSION}` },
+    });
+    const [issue] = await issues.json();
+    if (!issue) return "skip";
+
+    const res = await get(
+      `/api/0/organizations/${encodeURIComponent(ORG)}/issues/${issue.id}/events/latest/`,
+      { headers: { cookie: `sessionid=${SESSION}` } }
+    );
+    assertStatus(res, 200);
+    const event = await res.json();
+    assert("previousEventID" in event, "no previousEventID");
+    assert("nextEventID" in event, "no nextEventID");
   });
 
   await check("allauth publishes what this installation offers", async () => {
