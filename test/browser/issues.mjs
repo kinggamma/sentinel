@@ -391,6 +391,80 @@ async function main() {
       await page.close();
     });
 
+    await test("a fingerprint list that fails says so, rather than looking like one error", async () => {
+      const page = await context.newPage();
+      await page.route(`**/api/0/organizations/${org}/issues/${issueId}/hashes/`, (route) =>
+        route.fulfill({ status: 500, contentType: "application/json", body: "{}" })
+      );
+      await page.goto(detail, { waitUntil: "networkidle" });
+      await page.waitForSelector(".detail-section");
+
+      /**
+       * This section is absent on purpose for an issue with one fingerprint,
+       * so a swallowed failure is indistinguishable from the ordinary case —
+       * and the conclusion the reader draws from its absence, "this is one
+       * error", is the exact thing the failure cannot support.
+       */
+      const merged = await page.evaluate(sectionText("Merged errors"));
+      assert(merged, "the fingerprint section vanished on a failure");
+      assert(
+        /Couldn't load this \(500\)/.test(merged),
+        `it said nothing about why: ${JSON.stringify(merged)}`
+      );
+      await page.close();
+    });
+
+    // ------------------------------------------------ the summary and the whole
+
+    await test("the summary shows a few tag values and the screen behind it shows them all", async () => {
+      /**
+       * GlitchTip returns every value in the tags call — `topValues` is
+       * named for its ordering, not for being a slice — so both views drew
+       * the same list and "See every value →" led to the page you were
+       * already on. A tag with more values than the summary shows is the
+       * only way to tell those apart, and the seeded data has one value per
+       * tag, so this supplies one.
+       */
+      const values = Array.from({ length: 8 }, (_, i) => ({
+        name: `/page/${i}`,
+        value: `/page/${i}`,
+        count: 8 - i,
+        key: "url",
+      }));
+      const fixture = [
+        { key: "url", name: "url", topValues: values, uniqueValues: 8, totalValues: 36 },
+      ];
+
+      const page = await context.newPage();
+      await page.route(`**/api/0/organizations/${org}/issues/${issueId}/tags/`, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(fixture),
+        })
+      );
+
+      await page.goto(detail, { waitUntil: "networkidle" });
+      await page.waitForSelector(".tag-groups");
+
+      const summary = await page.$$eval(".tag-groups .tag-value", (ns) => ns.length);
+      assert(summary === 5, `the summary listed ${summary} values, wanted 5`);
+      const more = await page.textContent(".tag-groups .tag-group p.muted");
+      assert(/\+3 more values/.test(more || ""), `no honest count of the rest: ${more}`);
+
+      await page.click("text=See every value →");
+      await page.waitForSelector("#view h2", { timeout: 10_000 });
+      await page.waitForFunction(() => document.querySelectorAll(".tag-values li").length > 0);
+
+      const every = await page.$$eval(".tag-values li", (ns) => ns.length);
+      assert(every === 8, `the screen behind the link showed ${every} values, wanted all 8`);
+      assert(
+        every > summary,
+        "the link went to a screen showing no more than the summary it came from"
+      );
+      await page.close();
+    });
+
     // --------------------------------------------------------------- on a phone
 
     /**

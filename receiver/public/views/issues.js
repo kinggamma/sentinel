@@ -492,6 +492,26 @@ export async function issuesListView({ outlet, query, signal }, { org, orgs = []
  * is the fastest way to tell "everybody" from "one browser on one machine",
  * which is usually the first thing worth knowing about an error.
  */
+/**
+ * How many of a tag's values the summary shows before it stops.
+ *
+ * GlitchTip's tags call returns every value it has, not a top slice —
+ * `topValues` is named for its ordering, which is by count, and
+ * `uniqueValues` is simply how many of them there are. Rendering all of them
+ * here made this section the longest thing on the screen for any tag with
+ * real spread: a url or a release or a user, one line per distinct value,
+ * pushing the stack trace and the notes below all of it.
+ *
+ * It also made "See every value →" a link to the page you were already on.
+ * Both views drew the same list from the same data, so the only screen that
+ * could answer "what are all of them" was already answering it, at the cost
+ * of being unreadable.
+ *
+ * Five is enough to see the shape — whether it is one value or a spread —
+ * which is the question a summary answers. The rest have a screen.
+ */
+const SUMMARY_VALUES = 5;
+
 function tagsSection(tags, { href = null } = {}) {
   if (!tags?.length) return null;
 
@@ -501,15 +521,18 @@ function tagsSection(tags, { href = null } = {}) {
     h(
       "div",
       { className: "tag-groups" },
-      tags.map((tag) =>
-        h(
+      tags.map((tag) => {
+        const values = tag.topValues || [];
+        const hidden = Math.max(0, (tag.uniqueValues ?? values.length) - SUMMARY_VALUES);
+
+        return h(
           "div",
           { className: "tag-group" },
           h("h4", { text: tag.name || tag.key }),
           h(
             "ul",
             {},
-            (tag.topValues || []).map((value) => {
+            values.slice(0, SUMMARY_VALUES).map((value) => {
               const share = tag.totalValues
                 ? Math.round((value.count / tag.totalValues) * 100)
                 : null;
@@ -523,9 +546,18 @@ function tagsSection(tags, { href = null } = {}) {
                 })
               );
             })
-          )
-        )
-      )
+          ),
+          // Said per tag, because "5 of 40 urls" and "5 of 6 browsers" are
+          // different situations and one count for the section would hide
+          // which is which.
+          hidden
+            ? h("p", {
+                className: "muted",
+                text: `+${hidden} more ${hidden === 1 ? "value" : "values"}`,
+              })
+            : null
+        );
+      })
     )
   );
 }
@@ -1168,7 +1200,21 @@ export async function issueDetailView(
 
     eventBody(parsed),
 
-    hashes.failed === undefined ? hashesSection(hashes.data) : null,
+    /**
+     * The one facet that was still allowed to disappear quietly, and the one
+     * where disappearing says something false.
+     *
+     * Its section is absent on purpose when an issue has a single
+     * fingerprint, because saying "1 fingerprint" every time is noise — so a
+     * failed request rendered as nothing looks exactly like the ordinary
+     * case. "This is one error" is precisely what the reader concludes, and
+     * precisely what a failure here cannot support: the whole reason to show
+     * this is that two fingerprints under one issue means two distinct
+     * failures being counted, resolved and ignored as one.
+     */
+    hashes.failed !== undefined
+      ? unavailable("Merged errors", hashes.failed)
+      : hashesSection(hashes.data),
 
     tags.failed !== undefined
       ? unavailable("Tags across all events", tags.failed)
