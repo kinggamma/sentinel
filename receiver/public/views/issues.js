@@ -69,9 +69,15 @@ function readFilters(query = {}) {
   };
 }
 
-/** Only what differs from the default, so a plain list has a plain URL. */
-function search(filters, { cursor = filters.cursor } = {}) {
+/**
+ * Only what differs from the default, so a plain list has a plain URL — plus
+ * the organisation, whenever there is more than one to be confused between.
+ * Without it a link from an account in two organisations opens whichever one
+ * the reader last looked at, which is a different list of errors.
+ */
+function search(filters, { cursor = filters.cursor, org = null } = {}) {
   const params = new URLSearchParams();
+  if (org) params.set("org", org);
   if (filters.query !== DEFAULT_QUERY) params.set("q", filters.query);
   if (filters.sort !== DEFAULT_SORT) params.set("sort", filters.sort);
   if (filters.range !== DEFAULT_RANGE) params.set("range", filters.range);
@@ -161,7 +167,7 @@ function trend(stats) {
   return wrap;
 }
 
-function issueRow(issue, { filters, selected, onPick }) {
+function issueRow(issue, { filters, selected, onPick, org = null }) {
   const box = h("input", {
     type: "checkbox",
     checked: selected.has(issue.id),
@@ -191,7 +197,7 @@ function issueRow(issue, { filters, selected, onPick }) {
       // with it so coming back lands on the list that was actually open.
       h("a", {
         className: "issue-title",
-        href: routeHref(`/issues/${encodeURIComponent(issue.id)}${search(filters)}`),
+        href: routeHref(`/issues/${encodeURIComponent(issue.id)}${search(filters, { org })}`),
         text: issue.title || issue.metadata?.value || "(no title)",
       }),
       h("div", { className: "issue-sub muted", text: subtitle })
@@ -308,14 +314,17 @@ function toolbar(filters, navigate) {
  * "has this screen gone", and a second flag tracking the same fact could
  * only ever drift from it.
  */
-export async function issuesListView({ outlet, query, signal }, { org } = {}) {
+export async function issuesListView({ outlet, query, signal }, { org, orgs = [] } = {}) {
+  // Written into links only when there is a choice to be wrong about: on a
+  // single-organisation install every URL stays as short as it was.
+  const linkOrg = orgs.length > 1 ? org : null;
   if (!org) {
     fill(outlet, emptyState("No organisation to browse errors under."));
     return;
   }
 
   const filters = readFilters(query);
-  const navigate = (next) => go(`/issues${search(next)}`);
+  const navigate = (next) => go(`/issues${search(next, { org: linkOrg })}`);
 
   const rows = h("tbody", { attrs: { id: "issue-rows" } });
   const table = h(
@@ -429,7 +438,7 @@ export async function issuesListView({ outlet, query, signal }, { org } = {}) {
         "aria-disabled": cursor ? null : "true",
         // Nowhere to go is a link with no href, which is also how a browser
         // and a screen reader are told it isn't clickable.
-        href: cursor ? routeHref(`/issues${search(filters, { cursor })}`) : null,
+        href: cursor ? routeHref(`/issues${search(filters, { cursor, org: linkOrg })}`) : null,
       },
     });
 
@@ -446,7 +455,7 @@ export async function issuesListView({ outlet, query, signal }, { org } = {}) {
     }
     fill(
       rows,
-      issues.map((issue) => issueRow(issue, { filters, selected, onPick: paintBulk }))
+      issues.map((issue) => issueRow(issue, { filters, selected, onPick: paintBulk, org: linkOrg }))
     );
   };
 
@@ -483,11 +492,12 @@ export async function issuesListView({ outlet, query, signal }, { org } = {}) {
  * is the fastest way to tell "everybody" from "one browser on one machine",
  * which is usually the first thing worth knowing about an error.
  */
-function tagsSection(tags) {
+function tagsSection(tags, { href = null } = {}) {
   if (!tags?.length) return null;
 
   return detailSection(
     "Tags across all events",
+    href ? h("p", {}, h("a", { className: "linky", href, text: "See every value →" })) : null,
     h(
       "div",
       { className: "tag-groups" },
@@ -640,6 +650,140 @@ function commentsSection({ comments, onAdd, onDelete, me }) {
     list,
     h("div", { className: "comment-form" }, text, submit),
     error
+  );
+}
+
+/**
+ * The fingerprints grouped into this issue.
+ *
+ * An issue is not one error, it is everything GlitchTip decided was the same
+ * error — and when that decision is wrong, this is the only screen that says
+ * so. Two fingerprints under one issue means two distinct failures being
+ * counted, resolved and ignored as one, and nothing else on the screen
+ * hints at it.
+ *
+ * Shown only when there is more than one. A single fingerprint is the
+ * ordinary case and saying so every time is noise.
+ */
+function hashesSection(hashes) {
+  if (!hashes?.length || hashes.length < 2) return null;
+
+  return detailSection(
+    `Merged errors (${hashes.length})`,
+    h("p", {
+      className: "muted",
+      text:
+        "GlitchTip grouped these fingerprints together. Resolving the issue resolves all of them, " +
+        "so if one of these is really a different bug, unmerge it in GlitchTip.",
+    }),
+    h(
+      "ul",
+      { className: "hash-list" },
+      hashes.map((hash) =>
+        h(
+          "li",
+          {},
+          h("span", { className: "mono", text: hash.id }),
+          h("span", {
+            className: "muted",
+            text: hash.latestEvent?.title || hash.latestEvent?.culprit || "",
+          })
+        )
+      )
+    )
+  );
+}
+
+/**
+ * Every value of every tag, for one issue.
+ *
+ * The detail screen shows each tag's top few values, which answers "mostly
+ * what?" and not "all of what?" — and the second question is the one you ask
+ * when you suspect an error belongs to one customer, one release or one
+ * browser. GlitchTip has no per-tag endpoint, so this is the same aggregate
+ * shown in full rather than summarised.
+ */
+export async function issueTagsView(
+  { outlet, params, query, signal },
+  { org, orgs = [] } = {}
+) {
+  if (!org) {
+    fill(outlet, emptyState("No organisation to browse errors under."));
+    return;
+  }
+
+  const linkOrg = orgs.length > 1 ? org : null;
+  const issueId = params.id;
+  const filters = search(readFilters(query), { org: linkOrg });
+  const base = `/organizations/${encodeURIComponent(org)}/issues/${encodeURIComponent(issueId)}`;
+
+  const back = h("a", {
+    className: "linky",
+    href: routeHref(`/issues/${encodeURIComponent(issueId)}${filters}`),
+    text: "← Back to the issue",
+  });
+
+  let tags;
+  try {
+    tags = await glitchtip.get(`${base}/tags/`, { signal, ...NO_REDIRECT });
+  } catch (error) {
+    throwIfAborted(signal);
+    fill(
+      outlet,
+      h(
+        "div",
+        { className: "issues-view" },
+        back,
+        h("p", { className: "error", text: readFailure(error?.status ?? 0, { subject: "issue" }) })
+      )
+    );
+    return;
+  }
+  throwIfAborted(signal);
+
+  fill(
+    outlet,
+    h(
+      "div",
+      { className: "issues-view" },
+      h(
+        "section",
+        { className: "issue-detail" },
+        back,
+        h("header", { className: "detail-head" }, h("h2", { text: "Tags" })),
+        tags?.length
+          ? h(
+              "div",
+              {},
+              tags.map((tag) =>
+                detailSection(
+                  `${tag.name || tag.key} · ${tag.uniqueValues ?? (tag.topValues || []).length} value${
+                    (tag.uniqueValues ?? 1) === 1 ? "" : "s"
+                  }`,
+                  h(
+                    "ul",
+                    { className: "tag-values" },
+                    (tag.topValues || []).map((value) => {
+                      const share = tag.totalValues
+                        ? Math.round((value.count / tag.totalValues) * 100)
+                        : null;
+                      return h(
+                        "li",
+                        {},
+                        h("span", { className: "tag-value", text: value.value ?? value.name }),
+                        h("span", {
+                          className: "muted",
+                          text: share === null ? String(value.count) : `${share}% · ${value.count}`,
+                        })
+                      );
+                    })
+                  )
+                )
+              )
+            )
+          : emptyState("Nothing has been tagged on this issue.")
+      )
+    )
   );
 }
 
@@ -797,7 +941,11 @@ function eventBody(event) {
 }
 
 /** Same as the list above: the signal is the only teardown state it needs. */
-export async function issueDetailView({ outlet, params, query, signal }, { org, me = null } = {}) {
+export async function issueDetailView(
+  { outlet, params, query, signal },
+  { org, orgs = [], me = null } = {}
+) {
+  const linkOrg = orgs.length > 1 ? org : null;
   /**
    * Which event of this issue to show. An issue is a group of them, and the
    * newest is only the default — walking back through them is how you find
@@ -819,7 +967,7 @@ export async function issueDetailView({ outlet, params, query, signal }, { org, 
   // list that was open rather than to an unfiltered one.
   const back = h("a", {
     className: "linky",
-    href: routeHref(`/issues${search(readFilters(query))}`),
+    href: routeHref(`/issues${search(readFilters(query), { org: linkOrg })}`),
     text: "← All issues",
   });
 
@@ -952,18 +1100,45 @@ export async function issueDetailView({ outlet, params, query, signal }, { org, 
    * one of them leaves that section out rather than taking the page with
    * it — a missing note list is not a reason to hide a stack trace.
    */
-  const filters = search(readFilters(query));
+  const filters = search(readFilters(query), { org: linkOrg });
   const eventHref = (id) =>
     routeHref(
       `/issues/${encodeURIComponent(issueId)}${filters ? `${filters}&` : "?"}event=${encodeURIComponent(id)}`
     );
 
-  const [tags, reports, comments] = await Promise.all([
-    glitchtip.get(`${base}/tags/`, { signal, ...NO_REDIRECT }).catch(() => null),
-    glitchtip.get(`${base}/user-reports/`, { signal, ...NO_REDIRECT }).catch(() => null),
-    glitchtip.get(`${base}/comments/`, { signal, ...NO_REDIRECT }).catch(() => null),
+  /**
+   * Each of these is a separate call, and each is allowed to fail on its own
+   * — but not silently.
+   *
+   * The first version turned a failure into null and rendered nothing, so a
+   * notes list that would not load looked exactly like an issue nobody had
+   * commented on. That is the worst of both: no data and no reason, with the
+   * screen quietly asserting something false. Notes matter most, because
+   * somebody may be reading them to find out what has already been tried.
+   */
+  const settle = (promise) =>
+    promise.then((data) => ({ data }), (error) => ({ failed: error?.status ?? 0 }));
+
+  const [tags, reports, comments, hashes] = await Promise.all([
+    settle(glitchtip.get(`${base}/tags/`, { signal, ...NO_REDIRECT })),
+    settle(glitchtip.get(`${base}/user-reports/`, { signal, ...NO_REDIRECT })),
+    settle(glitchtip.get(`${base}/comments/`, { signal, ...NO_REDIRECT })),
+    settle(glitchtip.get(`${base}/hashes/`, { signal, ...NO_REDIRECT })),
   ]);
   throwIfAborted(signal);
+
+  /** A section that says what is missing, instead of not being there. */
+  const unavailable = (title, status) =>
+    detailSection(
+      title,
+      h("p", {
+        className: "muted",
+        text:
+          status === 403
+            ? "You don't have access to this part of the issue."
+            : `Couldn't load this (${status || "no answer"}). Refresh to try again.`,
+      })
+    );
 
   fill(
     body,
@@ -992,12 +1167,26 @@ export async function issueDetailView({ outlet, params, query, signal }, { org, 
       : null,
 
     eventBody(parsed),
-    tagsSection(tags),
-    userReportsSection(reports),
 
-    comments
-      ? commentsSection({
-          comments,
+    hashes.failed === undefined ? hashesSection(hashes.data) : null,
+
+    tags.failed !== undefined
+      ? unavailable("Tags across all events", tags.failed)
+      : tagsSection(tags.data, {
+          // Every value of every tag is its own screen, because the summary
+          // shows the top few and the question "what are all of them" has
+          // nowhere else to go.
+          href: routeHref(`/issues/${encodeURIComponent(issueId)}/tags${filters}`),
+        }),
+
+    reports.failed !== undefined
+      ? unavailable("What people said", reports.failed)
+      : userReportsSection(reports.data),
+
+    comments.failed !== undefined
+      ? unavailable("Notes", comments.failed)
+      : commentsSection({
+          comments: comments.data,
           me,
           onAdd: async (text) => {
             await glitchtip.post(`${base}/comments/`, { data: { text } }, { signal, ...NO_REDIRECT });
@@ -1011,6 +1200,5 @@ export async function issueDetailView({ outlet, params, query, signal }, { org, 
             return glitchtip.get(`${base}/comments/`, { signal, ...NO_REDIRECT });
           },
         })
-      : null
   );
 }
