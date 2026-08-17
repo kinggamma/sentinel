@@ -65,12 +65,46 @@ function seedSession() {
   return { key, org };
 }
 
-/** Ask GlitchTip directly, so the screen's claims can be checked against it. */
-async function api(path, key, init = {}) {
-  const response = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { Cookie: `sessionid=${key}`, ...(init.headers || {}) },
+/**
+ * A CSRF token for this session, minted the way the server side already
+ * mints one: allauth hands one back on a GET, and it is read off the
+ * Set-Cookie header rather than a cookie jar this has none of.
+ *
+ * Fetched once and reused. Django binds the token to the session, so one
+ * lasts as long as the session does.
+ */
+let csrf = null;
+
+async function csrfFor(key) {
+  if (csrf) return csrf;
+  const response = await fetch(`${BASE}/_allauth/browser/v1/auth/session`, {
+    headers: { Cookie: `sessionid=${key}` },
   });
+  csrf = (response.headers.get("set-cookie") || "").match(/csrftoken=([^;]+)/)?.[1] || null;
+  return csrf;
+}
+
+/**
+ * Ask GlitchTip directly, so the screen's claims can be checked against it.
+ *
+ * Writes from here carry a token like any other session write. They did not,
+ * and the only writes this file makes are the ones that clean up after
+ * itself — so every run refused its own tidying with a 403, swallowed it,
+ * and left its notes on a real issue. Six of them accumulated before anybody
+ * looked.
+ */
+async function api(path, key, init = {}) {
+  const method = (init.method || "GET").toUpperCase();
+  const headers = { Cookie: `sessionid=${key}`, ...(init.headers || {}) };
+
+  if (!["GET", "HEAD"].includes(method)) {
+    const token = await csrfFor(key);
+    assert(token, "allauth offered no csrftoken to write with");
+    headers.Cookie = `sessionid=${key}; csrftoken=${token}`;
+    headers["x-csrftoken"] = token;
+  }
+
+  const response = await fetch(`${BASE}${path}`, { ...init, headers });
   const text = await response.text();
   let body = null;
   try {
@@ -106,15 +140,35 @@ const MARK = `browser-suite-${process.pid}`;
 const NOTE = `typed ${MARK}`;
 const CSRF_NOTE = `token check ${MARK}`;
 
-/** Whatever this run wrote, gone, even if it failed in the middle of writing it. */
+/**
+ * Whatever this run wrote, gone, even if it failed in the middle of writing
+ * it — and loudly if it cannot be. This writes to a real issue in a real
+ * installation, so failing to tidy is a result, not a detail: silence here
+ * is what let six notes pile up on somebody's issue across six runs.
+ *
+ * It sweeps every run's marker, not just this one's, so a run that was
+ * killed before its own cleanup is repaired by the next.
+ */
 async function removeOurNotes(key, org, issueId) {
   const comments = `/api/0/organizations/${encodeURIComponent(org)}/issues/${issueId}/comments/`;
-  const { body } = await api(comments, key);
-  if (!Array.isArray(body)) return;
-  for (const comment of body) {
-    if (comment?.data?.text?.includes("browser-suite-")) {
-      await api(`${comments}${comment.id}/`, key, { method: "DELETE" });
-    }
+  const { status, body } = await api(comments, key);
+  if (!Array.isArray(body)) {
+    process.stdout.write(`\n  ! could not list notes to clean up (${status})\n`);
+    return;
+  }
+
+  const ours = body.filter((comment) => comment?.data?.text?.includes("browser-suite-"));
+  const stranded = [];
+  for (const comment of ours) {
+    const gone = await api(`${comments}${comment.id}/`, key, { method: "DELETE" });
+    if (gone.status >= 400) stranded.push(`${comment.id} (${gone.status})`);
+  }
+
+  if (stranded.length) {
+    process.stdout.write(
+      `\n  ! left ${stranded.length} note(s) behind on issue ${issueId}: ${stranded.join(", ")}\n` +
+        `    they are real and want deleting by hand\n`
+    );
   }
 }
 
