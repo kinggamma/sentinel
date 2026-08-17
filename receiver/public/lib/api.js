@@ -63,15 +63,37 @@ export function csrfToken() {
  * cheapest correct way to ask. Once fetched the cookie serves every later
  * write, and concurrent writes share one request rather than each starting
  * their own.
+ *
+ * It is only there to ask on one of the two mounts, though. Behind the
+ * shared origin GlitchTip answers /_allauth and this works; on the
+ * receiver's own port nothing does, because GlitchTip is not there at all —
+ * /api/0 is equally absent, so no write that needs a token can be attempted
+ * from that mount in the first place, and the receiver's own writes never
+ * wanted one. A 404 there is the origin saying "not here", which is a
+ * permanent answer, so it is remembered rather than re-asked before every
+ * write forever.
+ *
+ * Anything else that goes wrong — offline, a 5xx, a token that does not
+ * arrive — is not permanent and is left retryable. Latching on those would
+ * turn one bad moment into an app that quietly cannot write until it is
+ * reloaded.
  */
 let minting = null;
+let mintable = true;
 
 async function ensureCsrfToken() {
   const held = csrfToken();
   if (held) return held;
+  if (!mintable) return "";
 
   minting ??= fetch("/_allauth/browser/v1/config", { credentials: "same-origin" })
-    .catch(() => null)
+    .then((response) => {
+      // Not "the request failed" — "allauth is not part of this origin."
+      if (response.status === 404) mintable = false;
+    })
+    .catch(() => {
+      // Offline or blocked: worth trying again on the next write.
+    })
     .then(() => {
       minting = null;
       return csrfToken();
