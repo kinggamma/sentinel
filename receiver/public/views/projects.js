@@ -124,7 +124,10 @@ function projectCard(project, hue, onOpenReports) {
  *   than it does on that report's own project chip. Falls back to a
  *   projects-only version so this view still works on its own.
  */
-export async function projectsView({ outlet, signal }, { onOpenReports, hueFor }) {
+export async function projectsView(
+  { outlet, signal },
+  { onOpenReports, hueFor, org = null, orgs = [] }
+) {
   let body;
   try {
     body = await sentinel.get("/projects", { signal });
@@ -135,9 +138,37 @@ export async function projectsView({ outlet, signal }, { onOpenReports, hueFor }
   }
   throwIfAborted(signal);
 
-  const projects = body.projects || [];
+  const all = body.projects || [];
+
+  /**
+   * One organisation at a time, once there is more than one.
+   *
+   * The sidebar names an organisation and everything else on screen obeys
+   * it, so a grid quietly showing every app you can reach anywhere
+   * contradicts the thing above it — you switch organisation, the issue list
+   * changes, and these cards do not. Apps that report to no project yet
+   * belong to no organisation, so they stay: hiding them would make an app
+   * unreachable at the exact moment somebody is setting it up, which is when
+   * this screen matters most.
+   *
+   * With one organisation nothing is filtered and nothing is said, because
+   * there is no other scope for this to be mistaken for.
+   */
+  const scoped = orgs.length > 1 && org;
+  const projects = scoped ? all.filter((p) => !p.org || p.org === org) : all;
+  const elsewhere = all.length - projects.length;
+
   if (!projects.length) {
-    fill(outlet, emptyState("No app has reported yet."));
+    fill(
+      outlet,
+      emptyState(
+        elsewhere
+          ? `No app in ${org} has reported yet. ${elsewhere} ${
+              elsewhere === 1 ? "app reports" : "apps report"
+            } to your other organisations.`
+          : "No app has reported yet."
+      )
+    );
     return;
   }
 
@@ -150,7 +181,23 @@ export async function projectsView({ outlet, signal }, { onOpenReports, hueFor }
   // The grid lives on a wrapper this view owns, not on the outlet: every
   // screen renders into that same outlet, and a layout class left on it
   // would apply to whichever one came next.
-  fill(outlet, h("div", { className: "projects" }, cards.map((c) => c.node)));
+  fill(
+    outlet,
+    h("div", { className: "projects" }, cards.map((c) => c.node)),
+    // Said, rather than left to be inferred from a grid that is quietly
+    // shorter than it was. Somebody who cannot find an app they know exists
+    // needs to be told where it went, not left to wonder.
+    elsewhere
+      ? h("p", {
+          className: "muted",
+          text: `${elsewhere} more ${
+            elsewhere === 1 ? "app reports" : "apps report"
+          } to your other organisations. Switch organisation to see ${
+            elsewhere === 1 ? "it" : "them"
+          }.`,
+        })
+      : null
+  );
 
   return () => cards.forEach((c) => c.cleanup());
 }

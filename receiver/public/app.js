@@ -178,7 +178,14 @@ const landing = (ctx) => {
   // that app until this line: the topbar was only ever repainted by the two
   // routes that happened to remember to.
   paintChrome();
-  return scopedApp ? undefined : projectsView(ctx, { onOpenReports: showReports, hueFor: appHue });
+  return scopedApp
+    ? undefined
+    : projectsView(ctx, {
+        onOpenReports: showReports,
+        hueFor: appHue,
+        org: organisation,
+        orgs: organisations,
+      });
 };
 
 // layer() rather than calling one and returning the other: two views in one
@@ -300,7 +307,12 @@ if (!scopedApp) {
   // ever see the project half of that list.
   route("/", guarded((ctx) => {
     paintChrome();
-    return projectsView(ctx, { onOpenReports: showReports, hueFor: appHue });
+    return projectsView(ctx, {
+      onOpenReports: showReports,
+      hueFor: appHue,
+      org: organisation,
+      orgs: organisations,
+    });
   }));
 }
 

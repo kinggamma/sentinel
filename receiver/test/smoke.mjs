@@ -251,6 +251,35 @@ async function embeddedBearerViewer() {
     assertStatus(await get("/sentinel/api/projects", { headers: noCookies }), 200);
   });
 
+  await check("every app says which organisation it reports into", async () => {
+    if (!TOKEN) return "skip";
+    /**
+     * The landing grid shows one organisation at a time once somebody
+     * belongs to two, and it can only do that if each card knows which one
+     * it belongs to. Without this field the filter silently keeps
+     * everything — a grid contradicting the organisation named beside it,
+     * failing in the direction that shows too much.
+     *
+     * Null is a legitimate answer: an app that reports to no project yet is
+     * in nobody's organisation, and those stay visible everywhere.
+     */
+    const res = await get("/sentinel/api/projects", { headers: noCookies });
+    assertStatus(res, 200);
+    const { projects } = await res.json();
+    assert(Array.isArray(projects), "projects were not a list");
+    for (const project of projects) {
+      assert("org" in project, `${project.appName} does not say which organisation it is in`);
+      assert(
+        project.org === null || typeof project.org === "string",
+        `${project.appName} has a strange org: ${JSON.stringify(project.org)}`
+      );
+      assert(
+        !project.glitchtipProject || project.org,
+        `${project.appName} reports to a project but names no organisation`
+      );
+    }
+  });
+
   await check("a bearer write needs no CSRF token and no cookie", async () => {
     if (!TOKEN) return "skip";
     // The apps' own SDKs post exactly like this. Requiring CSRF here would
