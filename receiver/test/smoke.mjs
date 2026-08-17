@@ -158,15 +158,35 @@ async function shellServed() {
   }
 
   await check("the shell carries a sidebar with only real destinations", async () => {
-    // GlitchTip's own nav also has Uptime, Logs, Performance, Releases and
-    // Projects. Those are later phases, and a link to a screen that does not
-    // exist is worse than no link — so this fails if one appears early.
+    /**
+     * Two kinds of destination, and the difference is the point.
+     *
+     * Sentinel's own screens are links in the served HTML, because they
+     * exist whatever the install looks like. The rest of the product is
+     * still GlitchTip's own screens, and where those live depends on which
+     * organisation you are in — so they ship with no href at all and get one
+     * from app.js once it knows. An href baked in here would be a guess
+     * about somebody else's URL, and wrong for every install but this one.
+     *
+     * What has to stay true is that nothing renders as a link to nowhere.
+     */
     const body = await (await get("/sentinel/", { headers: { accept: "text/html" } })).text();
     for (const id of ["nav-issues", "nav-reports", "nav-requests", "nav-settings"]) {
       assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
     }
-    for (const absent of ["nav-uptime", "nav-logs", "nav-performance", "nav-releases"]) {
-      assert(!body.includes(`id="${absent}"`), `${absent} points at a screen that does not exist`);
+    for (const external of [
+      "nav-projects",
+      "nav-performance",
+      "nav-uptime",
+      "nav-logs",
+      "nav-releases",
+      "nav-org-settings",
+      "nav-profile",
+    ]) {
+      const anchor = body.match(new RegExp(`<a[^>]*id="${external}"[^>]*>`))?.[0];
+      assert(anchor, `the sidebar is missing ${external}`);
+      assert(!/\shref=/.test(anchor), `${external} ships with a guessed href: ${anchor}`);
+      assert(/\shidden/.test(anchor), `${external} is visible before it has anywhere to go`);
     }
   });
 
@@ -478,12 +498,48 @@ async function authBoundaries() {
     const [issue] = await issues.json();
     if (!issue) return "skip";
 
-    for (const facet of ["comments/", "tags/", "user-reports/", "events/latest/"]) {
+    /**
+     * Answering is not enough. The screen reads particular fields out of
+     * these — a comment's `data.text`, a tag's `topValues`, a fingerprint's
+     * `id` — and GlitchTip renaming one of them is exactly the kind of
+     * upgrade that leaves every endpoint returning 200 and every section
+     * rendering blank. So each shape is checked where it is relied on.
+     */
+    const facets = {
+      "comments/": (body) => {
+        assert(Array.isArray(body), "comments should be a list");
+        for (const comment of body) {
+          assert(comment.id !== undefined, "a comment with no id cannot be deleted");
+          assert(typeof comment.data?.text === "string", "a comment's text lives at data.text");
+        }
+      },
+      "tags/": (body) => {
+        assert(Array.isArray(body), "tags should be a list");
+        for (const tag of body) {
+          assert(typeof tag.key === "string", "a tag needs a key");
+          assert(Array.isArray(tag.topValues), "the detail screen shows topValues");
+        }
+      },
+      "hashes/": (body) => {
+        assert(Array.isArray(body), "hashes should be a list");
+        for (const hash of body) assert(hash.id !== undefined, "a fingerprint needs an id");
+      },
+      "user-reports/": (body) => {
+        assert(Array.isArray(body), "user reports should be a list");
+      },
+      "events/latest/": (body) => {
+        assert(body && typeof body === "object", "an event should be an object");
+        assert(Array.isArray(body.entries), "the stack trace is read out of entries");
+      },
+    };
+
+    for (const [facet, shaped] of Object.entries(facets)) {
       const res = await get(
         `/api/0/organizations/${encodeURIComponent(ORG)}/issues/${issue.id}/${facet}`,
         { headers: { cookie: `sessionid=${SESSION}` } }
       );
       assertStatus(res, 200, facet);
+      shaped(await res.json());
     }
   });
 

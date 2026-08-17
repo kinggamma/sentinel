@@ -35,7 +35,7 @@ import { requestsView } from "./views/requests.js";
 import { settingsView } from "./views/settings.js";
 import { projectsView } from "./views/projects.js";
 import { reportsView } from "./views/reports.js";
-import { issuesListView, issueDetailView } from "./views/issues.js";
+import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import {
   signInView,
   signUpView,
@@ -47,6 +47,7 @@ import {
 } from "./views/auth.js";
 import { session, forget as forgetSession } from "./lib/session.js";
 import { reportPresence, stopReportingPresence } from "./lib/presence.js";
+import { activeOrg, remember, withOrg } from "./lib/org.js";
 
 /** Left over from when the viewer kept a bearer token here. Clear it out. */
 try {
@@ -119,18 +120,14 @@ function guarded(view, { needs = "canRead" } = {}) {
 
     if (me.can?.[needs]) {
       paintShell({ signedIn: true });
-      // Which organisation to browse errors under, and whether there is one
-      // to offer. Known here because the guard already asked; the screens
-      // behind it never ask again.
-      organisation = (me.orgs || [])[0] || null;
+      // Which organisation this screen is about. Re-decided on every render
+      // because the address can say, and a link to one organisation's issue
+      // list must not open somebody else's just because that is the one this
+      // browser last chose.
+      organisations = me.orgs || [];
+      organisation = activeOrg({ orgs: organisations, query: ctx.query });
       el("nav-issues").hidden = !organisation;
-
-      // Whose data this is. GlitchTip puts it at the top of its sidebar and
-      // it answers a real question on a shared install — one day there will
-      // be more than one to choose between, and this is where that goes.
-      const org = el("org-name");
-      org.hidden = !organisation;
-      org.textContent = organisation || "";
+      paintOrg();
       await ensureData();
       void refreshRequestCount();
       return view(ctx, me);
@@ -261,7 +258,7 @@ const issuesRoute = (view) => (ctx, me) => {
   // on an issue is signed, and only its author is offered a way to remove
   // it — GlitchTip enforces that too, but a button that always fails is its
   // own kind of rude.
-  return view(ctx, { org: organisation, me: me?.email || null });
+  return view(ctx, { org: organisation, orgs: organisations, me: me?.email || null });
 };
 /**
  * Anything else. The router has always supported this and nothing ever
@@ -289,6 +286,8 @@ setNotFound(({ outlet, path }) => {
 
 route("/issues", guarded(issuesRoute(issuesListView)));
 route("/issues/:id", guarded(issuesRoute(issueDetailView)));
+// Every value of every tag, which the detail screen only summarises.
+route("/issues/:id/tags", guarded(issuesRoute(issueTagsView)));
 
 route("/reports/:app", guarded(reportsRoute));
 route("/reports/:app/:id", guarded(reportsRoute));
@@ -369,11 +368,20 @@ const viewOutlet = el("view");
 let bearerToken = "";
 
 /**
- * The GlitchTip organisation this account browses errors under. Discovered at
- * sign-in, read by the issue routes when they run — they're registered at
- * module load, long before anyone has signed in.
+ * The organisation currently being looked at, and every organisation this
+ * account belongs to.
+ *
+ * Both, because they answer different questions: one decides which errors
+ * are fetched, the other decides whether there is a choice to offer. Chosen
+ * per render from the URL, this browser's last choice, or the first — see
+ * lib/org.js — rather than being fixed to orgs[0], which was right for one
+ * organisation and silently wrong for two.
  */
 let organisation = null;
+let organisations = [];
+
+/** What this installation has switched on, for gating the links below. */
+let features = { enabledFeatures: [], glitchtipUrl: null };
 
 let projects = [];
 let reports = [];
@@ -520,6 +528,68 @@ function sectionFor(path) {
   return null;
 }
 
+/**
+ * The organisation, and everything that depends on which one it is.
+ *
+ * With one, its name. With several, a control — because the alternative is
+ * that the others have no address at all, which is what "orgs[0] and nothing
+ * else" quietly meant.
+ */
+function paintOrg() {
+  const name = el("org-name");
+  const switcher = el("org-switch");
+  const several = organisations.length > 1;
+
+  name.hidden = several || !organisation;
+  name.textContent = organisation || "";
+
+  switcher.hidden = !several;
+  if (several) {
+    fill(
+      switcher,
+      organisations.map((slug) => h("option", { value: slug, text: slug }))
+    );
+    switcher.value = organisation || organisations[0];
+  }
+
+  paintExternalLinks();
+}
+
+/**
+ * The parts of the product that are still GlitchTip's own screens.
+ *
+ * Real links to real pages, per organisation, rather than a nav of things
+ * that do not exist — each becomes an internal route as its phase lands.
+ * Uptime and Logs are optional, so they are shown only where GlitchTip says
+ * they are switched on; offering a link to a feature an installation does
+ * not have is the same mistake as offering one to a screen not yet written.
+ */
+function paintExternalLinks() {
+  const root = (features.glitchtipUrl || glitchtipRoot || "").replace(/\/+$/, "");
+  const enabled = features.enabledFeatures || [];
+
+  const links = [
+    ["nav-projects", organisation && `${root}/${organisation}/projects`, true],
+    ["nav-performance", organisation && `${root}/${organisation}/performance`, true],
+    ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
+    ["nav-logs", organisation && `${root}/${organisation}/logs`, enabled.includes("logs")],
+    ["nav-releases", organisation && `${root}/${organisation}/releases`, true],
+    ["nav-org-settings", organisation && `${root}/${organisation}/settings`, true],
+    ["nav-profile", root && `${root}/profile`, true],
+  ];
+
+  let anyShown = false;
+  for (const [id, href, allowed] of links) {
+    const node = el(id);
+    const show = Boolean(root && href && allowed);
+    node.hidden = !show;
+    if (show) node.href = href;
+    anyShown = anyShown || show;
+  }
+  // A heading over nothing is worse than no heading.
+  el("nav-external-heading").hidden = !anyShown;
+}
+
 /** The chrome, for whatever the route is showing. */
 function paintChrome() {
   const appName = routedApp();
@@ -634,6 +704,21 @@ function labelThemeToggle(theme) {
 themeToggle.addEventListener("click", () => labelThemeToggle(cycleTheme()));
 
 el("refresh").addEventListener("click", () => void refresh());
+
+/**
+ * Changing organisation is a navigation, not a mode.
+ *
+ * The address carries it, so the screen you are looking at can be sent to
+ * somebody and open the same way for them; the choice is also remembered, so
+ * the next plain link opens where you left off.
+ */
+el("org-switch").addEventListener("change", (event) => {
+  const slug = event.target.value;
+  if (!slug || !organisations.includes(slug)) return;
+  remember(slug);
+  invalidateData();
+  void goRoute(withOrg(currentPath() + location.search, slug, { orgs: organisations }));
+});
 el("forget").addEventListener("click", () => void signOut());
 
 async function refresh() {
@@ -750,7 +835,33 @@ async function boot() {
   // Started before anything navigates: every routeHref() the views build
   // resolves against the mount, which would otherwise still be the default
   // "/sentinel" on the standalone port.
+  /**
+   * Which optional features exist here, and where GlitchTip's own screens
+   * are. Read once: both change only when GlitchTip is reconfigured, which
+   * restarts it.
+   *
+   * Deliberately not awaited. It decides nothing except which links the
+   * sidebar's second block can offer, and paintOrg() puts them up whenever
+   * the answer arrives — so waiting for it here would delay the first paint
+   * of every screen, sign-in included, on two requests that screen does not
+   * need. Awaiting it did exactly that, and made a sign-in test that checks
+   * the screen the instant it loads start losing a race it used to win.
+   */
+  void Promise.all([
+    fetch("/api/settings/", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null),
+    sentinelApi.get("/auth/config", { signalUnauthorized: false }).catch(() => null),
+  ]).then(([settings, config]) => {
+    features = {
+      enabledFeatures: settings?.enabledFeatures || [],
+      glitchtipUrl: config?.glitchtipUrl || null,
+    };
+    paintExternalLinks();
+  });
+
   await startRouter({ outlet: viewOutlet, mount: MOUNT });
+
 
   // Static markup in index.html, so it can't read MOUNT itself.
   el("nav-requests").href = routeHref("/requests");

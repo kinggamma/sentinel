@@ -52,7 +52,11 @@
       <aside id="sidebar" class="sidebar">
         <div class="sidebar-brand">
           <a id="home-link" href="/">Sentinel</a>
+          <!-- One organisation: its name. Several: a way to change which one
+               you are looking at, because otherwise the others have no
+               address at all. -->
           <span id="org-name" class="muted" hidden></span>
+          <select id="org-switch" class="org-switch" aria-label="Organisation" hidden></select>
         </div>
 
         <nav class="sidebar-nav" aria-label="Sections">
@@ -61,6 +65,23 @@
           <!-- Only worth offering when somebody is waiting on it. -->
           <a id="nav-requests" href="/requests" hidden>Requests</a>
           <a id="nav-settings" href="/settings">Settings</a>
+        </nav>
+
+        <!-- The rest of the product, which is still GlitchTip's own screens.
+             They are real destinations today; each becomes an internal route
+             as its phase lands, and until then a link that works beats a
+             section of the app you cannot reach at all. Uptime and Logs are
+             optional features, so they appear only where they are switched
+             on. -->
+        <nav class="sidebar-nav sidebar-external" aria-label="In GlitchTip">
+          <h2 id="nav-external-heading" class="sidebar-heading" hidden>In GlitchTip</h2>
+          <a id="nav-projects" target="_blank" rel="noreferrer noopener" hidden>Projects ↗</a>
+          <a id="nav-performance" target="_blank" rel="noreferrer noopener" hidden>Performance ↗</a>
+          <a id="nav-uptime" target="_blank" rel="noreferrer noopener" hidden>Uptime ↗</a>
+          <a id="nav-logs" target="_blank" rel="noreferrer noopener" hidden>Logs ↗</a>
+          <a id="nav-releases" target="_blank" rel="noreferrer noopener" hidden>Releases ↗</a>
+          <a id="nav-org-settings" target="_blank" rel="noreferrer noopener" hidden>Organisation ↗</a>
+          <a id="nav-profile" target="_blank" rel="noreferrer noopener" hidden>Your profile ↗</a>
         </nav>
 
         <div class="sidebar-foot">

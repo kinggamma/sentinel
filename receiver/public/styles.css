@@ -280,6 +280,27 @@ button.ghost {
   gap: 2px;
 }
 
+.org-switch {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  max-width: 100%;
+}
+
+/* GlitchTip's own screens, set apart from Sentinel's so it is obvious which
+   ones leave. Each moves up into the list above as its phase lands. */
+.sidebar-heading {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.sidebar-external a {
+  font-size: var(--text-sm);
+}
+
 .sidebar-nav a {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
@@ -350,6 +371,13 @@ button.ghost {
     gap: var(--space-3);
     border-right: none;
     border-bottom: 1px solid var(--border);
+    /* A grid item will not go narrower than its own content unless it is
+       told it may, and this bar now contains a row that is deliberately
+       wider than the screen. Without this it ignored its 390px column,
+       stood 752px wide, and stretched the page — every screen scrolling
+       sideways because of the nav above it. The row inside does the
+       scrolling; the bar holding it does not. */
+    min-width: 0;
   }
 
   .sidebar-nav {
@@ -375,6 +403,35 @@ button.ghost {
   .sidebar-nav a {
     font-size: var(--text-sm);
     padding: var(--space-1) var(--space-2);
+  }
+
+  /* Seven links to GlitchTip's own screens, and wrapped into rows they took
+     more of a phone than the content underneath them — the bar reached far
+     enough down that an issue began below the fold. So this block takes the
+     trade the comment at the top of this one already describes, and becomes
+     the row that scrolls: every destination still reachable, in one line
+     instead of three. */
+  .sidebar-external {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    /* Without this the row cannot be narrower than the links inside it, so
+       it sets the width of the page instead of scrolling — the sidebar grew
+       to 752px in a 390px window and took every screen with it. A flex
+       item's floor is its content unless it is told otherwise, and
+       overflow-x only starts working once there is a width to overflow. */
+    min-width: 0;
+    /* A reserved gutter would cost most of the height this just saved. */
+    scrollbar-width: none;
+  }
+
+  .sidebar-external::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sidebar-external a,
+  .sidebar-heading {
+    white-space: nowrap;
   }
 
   .sidebar-brand a {
@@ -1375,6 +1432,25 @@ button.danger:hover {
 }
 
 .tag-value {
+  overflow-wrap: anywhere;
+}
+
+.hash-list,
+.tag-values {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.hash-list li,
+.tag-values li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
 
