@@ -5,7 +5,8 @@
   "description": "Browser regressions that need a real browser, kept out of receiver/ so the image build never installs them.",
   "scripts": {
     "test:browser": "node test/browser/run.mjs",
-    "test:webauthn": "node test/browser/webauthn.mjs"
+    "test:webauthn": "node test/browser/webauthn.mjs",
+    "test:issues": "node test/browser/issues.mjs"
   },
   "devDependencies": {
     "playwright": "^1.47.0"

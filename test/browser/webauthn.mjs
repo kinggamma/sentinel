@@ -286,8 +286,14 @@ try {
     await context.clearCookies();
     await page.goto(`${BASE}/sentinel/signin?next=%2Fissues`, { waitUntil: "load" });
 
+    // Waited for, not counted. Whether passkey login is on at all comes from
+    // allauth's capability document, which the screen fetches after it
+    // paints — so asking the instant the page loads is a race, and one this
+    // test lost the moment anything else was added to boot.
     const passkey = page.locator(".gate-card button", { hasText: "Use a passkey instead" });
-    assert(await passkey.count(), "the sign-in screen offered no passkey option");
+    await passkey
+      .waitFor({ state: "visible", timeout: 15_000 })
+      .catch(() => assert(false, "the sign-in screen offered no passkey option"));
 
     // No email, no password typed. Just the key.
     await passkey.click();
