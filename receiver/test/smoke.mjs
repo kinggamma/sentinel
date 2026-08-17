@@ -665,9 +665,19 @@ async function authBoundaries() {
 
   await check("saying 'still here' costs nothing and answers nothing", async () => {
     // Called as often as somebody moves a mouse, so it must not become a
-    // question that reaches GlitchTip.
-    const res = await fetch(`${BASE}/sentinel/api/auth/touch`, { method: "POST" });
+    // question that reaches GlitchTip. It is still a write against a
+    // session, so it carries a token like every other one.
+    const token = await sentinelCsrf();
+    const res = await fetch(`${BASE}/sentinel/api/auth/touch`, {
+      method: "POST",
+      headers: { cookie: `sentinel-csrf=${token}`, "x-sentinel-csrf": token },
+    });
     assertStatus(res, 204);
+  });
+
+  await check("keeping a session alive cannot be done from another site", async () => {
+    const res = await fetch(`${BASE}/sentinel/api/auth/touch`, { method: "POST" });
+    assertStatus(res, 403, "an untokened touch");
   });
 
   await check("token sign-in is gone, and says so rather than 404ing", async () => {
@@ -682,11 +692,16 @@ async function authBoundaries() {
   await check("silent sign-in is gone entirely", async () => {
     if (!SESSION) return "skip";
     // Asked with a session good enough that the old endpoint would have
-    // answered it. Anonymously this only ever proves the guard runs first,
-    // since the guard on /sentinel/api refuses before routing reaches a 404.
+    // answered it, and with a CSRF token — both guards on /sentinel/api run
+    // before routing reaches a 404, so without either this would only ever
+    // prove that a guard ran, not that the endpoint is gone.
+    const token = await sentinelCsrf();
     const res = await fetch(`${BASE}/sentinel/api/auth/sso`, {
       method: "POST",
-      headers: { cookie: `sessionid=${SESSION}` },
+      headers: {
+        cookie: `sessionid=${SESSION}; sentinel-csrf=${token}`,
+        "x-sentinel-csrf": token,
+      },
     });
     assertStatus(res, 404, "POST /auth/sso with a valid session");
   });
@@ -816,8 +831,101 @@ async function authBoundaries() {
 
 // ----------------------------------------------------------------- CSRF
 
+/** A token from the page, the way a browser gets one. */
+async function sentinelCsrf() {
+  const res = await get("/sentinel/");
+  const token = (res.headers.get("set-cookie") || "").match(/sentinel-csrf=([^;]+)/)?.[1];
+  assert(token, "the shell issued no CSRF token");
+  return token;
+}
+
+/**
+ * Read before writing, so a test that must write puts back what it found.
+ *
+ * It refuses rather than guesses. An earlier version returned [] when the
+ * read failed, which would have written an empty allow-list over a real one
+ * — a test quietly turning off every app's ability to report, on the way to
+ * checking something else entirely. It read the wrong path and did exactly
+ * that, harmlessly, only because this installation's list was empty.
+ */
+async function currentOrigins() {
+  const res = await get("/sentinel/api/settings/origins", {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  assert(res.status === 200, `couldn't read the origins to put back (${res.status})`);
+  const body = await res.json();
+  assert(Array.isArray(body?.origins), `origins came back as ${JSON.stringify(body)}`);
+  return body.origins;
+}
+
 async function csrfIsEnforced() {
   process.stdout.write("\nCSRF on session-authenticated writes\n");
+
+  /**
+   * The receiver's own writes, which Django knows nothing about.
+   *
+   * These were protected by the client choosing to send a header, which is
+   * no protection: the attacker writes the client. SameSite=Lax on the
+   * session cookie was the whole defence, and that is one browser-side
+   * control granted by the cookie's issuer — worth having, not worth being
+   * the only thing.
+   */
+  await check("the receiver hands every browser a CSRF token", async () => {
+    const res = await get("/sentinel/");
+    const cookie = res.headers.get("set-cookie") || "";
+    assert(/sentinel-csrf=/.test(cookie), `no token was issued: ${cookie || "(no Set-Cookie)"}`);
+    assert(!/sentinel-csrf=[^;]*;[^]*httponly/i.test(cookie), "the page cannot read it back");
+    assert(/samesite=lax/i.test(cookie), `it should be SameSite=Lax: ${cookie}`);
+  });
+
+  await check("a receiver write with no token is refused", async () => {
+    if (!SESSION) return "skip";
+    const res = await fetch(`${BASE}/sentinel/api/settings/origins`, {
+      method: "PUT",
+      headers: { cookie: `sessionid=${SESSION}`, "content-type": "application/json" },
+      body: JSON.stringify({ origins: [] }),
+    });
+    assertStatus(res, 403, "a receiver write with no CSRF header");
+  });
+
+  await check("a receiver write whose header disagrees with its cookie is refused", async () => {
+    if (!SESSION) return "skip";
+    // The shape of the attack this stops: a cross-site page can cause the
+    // cookie to be sent, and cannot read it to produce a matching header.
+    const issued = await get("/sentinel/");
+    const token = (issued.headers.get("set-cookie") || "").match(/sentinel-csrf=([^;]+)/)?.[1];
+    assert(token, "no token to test with");
+
+    const res = await fetch(`${BASE}/sentinel/api/settings/origins`, {
+      method: "PUT",
+      headers: {
+        cookie: `sessionid=${SESSION}; sentinel-csrf=${token}`,
+        "x-sentinel-csrf": "a-guess-of-the-right-length-but-wrong",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ origins: [] }),
+    });
+    assertStatus(res, 403, "a receiver write with a mismatched CSRF header");
+  });
+
+  await check("a receiver write that echoes its cookie is allowed", async () => {
+    if (!SESSION) return "skip";
+    const issued = await get("/sentinel/");
+    const token = (issued.headers.get("set-cookie") || "").match(/sentinel-csrf=([^;]+)/)?.[1];
+    assert(token, "no token to test with");
+
+    const res = await fetch(`${BASE}/sentinel/api/settings/origins`, {
+      method: "PUT",
+      headers: {
+        cookie: `sessionid=${SESSION}; sentinel-csrf=${token}`,
+        "x-sentinel-csrf": token,
+        "content-type": "application/json",
+      },
+      // What is already there, so a passing test changes nothing.
+      body: JSON.stringify({ origins: await currentOrigins() }),
+    });
+    assert(res.status !== 403, `refused a properly tokened write (${res.status})`);
+  });
 
   await check("a session write without a token is refused", async () => {
     if (!SESSION || !ORG) return "skip";

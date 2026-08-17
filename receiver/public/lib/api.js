@@ -36,9 +36,15 @@ export class ApiError extends Error {
  * whole protocol. Session-authenticated writes are rejected without it, and
  * the failure is a bare 403 that says nothing, so it's applied centrally.
  */
-export function csrfToken() {
-  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+function readCookie(name) {
+  const match = document.cookie.match(
+    new RegExp(`(?:^|;\\s*)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=([^;]+)`)
+  );
   return match ? decodeURIComponent(match[1]) : "";
+}
+
+export function csrfToken() {
+  return readCookie("csrftoken");
 }
 
 /**
@@ -146,7 +152,12 @@ async function request(
   // A bearer token authenticates by header and is exempt; a browser session
   // is not. GET/HEAD are exempt either way.
   if (!bearerToken && !["GET", "HEAD"].includes(method)) {
+    // Two backends, two tokens, and each ignores the other's. Django's is
+    // fetched when missing; the receiver issues its own on any safe request,
+    // so by the time anything is written it is simply there — including on
+    // the receiver's own port, where Django's cannot be had at all.
     init.headers["x-csrftoken"] = await ensureCsrfToken();
+    init.headers["x-sentinel-csrf"] = readCookie("sentinel-csrf");
   }
 
   let response;

@@ -65,12 +65,20 @@ network access beyond its own origin.
 
    ```bash
    npm run test:browser && npm run test:issues && npm run test:webauthn
+   npm run test:orgs
    ```
 
    These are the regressions no HTTP call can see: the embedded viewer
    booting in a real iframe, the issue screen writing and deleting notes with
    a CSRF token and reporting a facet that will not load, passkey sign-in
    against a virtual authenticator, and every screen at 390px.
+
+   `test:orgs` is the one that reconfigures things. Belonging to two
+   organisations is unreachable on a single-organisation install, so it
+   builds the situation: a second organisation, a real project moved into
+   it, and the receiver restarted with `GLITCHTIP_ORG` empty. It puts all
+   three back, and checks that it did. If it is killed part-way,
+   `docker compose up -d` restores the pin.
 
    Browser-level tests live in the root package rather than `receiver/`, on
    purpose: the image's assets stage installs that package's dev

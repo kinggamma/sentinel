@@ -16,6 +16,24 @@
 import { chromium } from "playwright";
 import { execFileSync } from "node:child_process";
 
+/**
+ * Signing out the way the app does, token and all.
+ *
+ * The receiver refuses a session write that cannot prove it came from this
+ * origin, and sign-out is one. A bare POST from here used to work and now
+ * returns 403 — which left this test still signed in, walking into a
+ * password screen that skipped straight past the second factor it was
+ * written to check.
+ */
+const signOut = () => {
+  const token = document.cookie.match(/(?:^|;\s*)sentinel-csrf=([^;]+)/)?.[1] || "";
+  return fetch("/sentinel/api/auth/logout", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "x-sentinel-csrf": decodeURIComponent(token) },
+  });
+};
+
 const BASE = (process.env.BASE_URL || "http://localhost:8000").replace(/\/+$/, "");
 const EMAIL = process.env.SMOKE_EMAIL || "sentinel-smoke@example.com";
 
@@ -171,9 +189,7 @@ try {
     assert(registered.ok, `could not register a key: ${registered.why}`);
 
     // Now sign out and back in: the password alone should no longer be enough.
-    await page.evaluate(() =>
-      fetch("/sentinel/api/auth/logout", { method: "POST", credentials: "same-origin" })
-    );
+    await page.evaluate(signOut);
     await page.goto(`${BASE}/sentinel/signin?next=%2Fissues`, { waitUntil: "load" });
     await page.fill("#email-input", EMAIL);
     await page.fill("#password-input", password);
@@ -280,9 +296,7 @@ try {
     assert(registered.ok, `could not register a passkey: ${registered.why}`);
 
     // Throw the session away entirely, so nothing but the key remains.
-    await page.evaluate(() =>
-      fetch("/sentinel/api/auth/logout", { method: "POST", credentials: "same-origin" })
-    );
+    await page.evaluate(signOut);
     await context.clearCookies();
     await page.goto(`${BASE}/sentinel/signin?next=%2Fissues`, { waitUntil: "load" });
 

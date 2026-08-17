@@ -11,6 +11,7 @@ import { glitchtipConfigured, glitchtipInfo } from "./glitchtip.js";
 import { startRetentionSweeps } from "./retention.js";
 import { initSettings, allowedOrigins } from "./settings.js";
 import { settingsRouter } from "./routes/settings.js";
+import { issueCsrfCookie, requireCsrf } from "./middleware/csrf.js";
 import { accessRouter } from "./routes/access.js";
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -146,7 +147,11 @@ function renderShell(mount) {
     .replace(SCRIPT_PLACEHOLDER, APP_SCRIPT);
 }
 function sendShell(mount) {
-  return (_req, res) => res.type("html").send(renderShell(mount));
+  return (req, res) => {
+    // With the page, so it is in hand before anything on it can write.
+    issueCsrfCookie(req, res);
+    res.type("html").send(renderShell(mount));
+  };
 }
 
 // The trailing slash isn't cosmetic: asset paths are relative, so at
@@ -215,14 +220,14 @@ app.use("/api", authRouter);
 // sits behind a weaker guard than everything else — and on its own prefix,
 // because a guard mounted at /api runs for every /api request, refusing the
 // bearer-token calls that post reports.
-app.use(`${VIEWER_API}/access`, requireSignedIn, accessRouter);
-app.use("/api/access", requireSignedIn, accessRouter);
+app.use(`${VIEWER_API}/access`, requireCsrf, requireSignedIn, accessRouter);
+app.use("/api/access", requireCsrf, requireSignedIn, accessRouter);
 
-app.use(VIEWER_API, requireStaffToken, settingsRouter);
-app.use(VIEWER_API, requireStaffToken, reportRouter);
+app.use(VIEWER_API, requireCsrf, requireStaffToken, settingsRouter);
+app.use(VIEWER_API, requireCsrf, requireStaffToken, reportRouter);
 
 // The path apps' SDKs post to, and the embedded viewer reads from.
-app.use("/api", requireStaffToken, reportRouter);
+app.use("/api", requireCsrf, requireStaffToken, reportRouter);
 
 await initSettings();
 

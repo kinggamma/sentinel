@@ -6,6 +6,7 @@ import {
   GLITCHTIP_SESSION_COOKIE,
 } from "../glitchtip.js";
 import { currentUser, readCookie, presentsStaffToken } from "../middleware/auth.js";
+import { requireCsrf } from "../middleware/csrf.js";
 import { STATES } from "../auth/state.js";
 import { describe as describeState } from "../auth/state.js";
 import { present, forget, touch } from "../auth/identity.js";
@@ -108,7 +109,14 @@ authRouter.post("/auth/login", (_req, res) => {
  * Cheap on purpose. It touches a map and returns; it never asks GlitchTip
  * anything, so a page can call it as often as somebody moves a mouse.
  */
-authRouter.post("/auth/touch", (req, res) => {
+/*
+ * Guarded, unlike the two tombstones elsewhere in this file. Keeping a
+ * session alive is a small thing to be able to do from another site, but it
+ * is still doing something to somebody's session from another site — and
+ * unlike an endpoint whose whole job is to say "this is gone", refusing a
+ * forged one costs nothing.
+ */
+authRouter.post("/auth/touch", requireCsrf, (req, res) => {
   if (!idleEnabled) return res.status(204).end();
   touch(readCookie(req, GLITCHTIP_SESSION_COOKIE));
   res.status(204).end();
@@ -124,7 +132,7 @@ authRouter.get("/auth/idle", (_req, res) => {
  * and leaving GlitchTip signed in after "Sign out" is the sort of thing
  * that reminds everyone they aren't.
  */
-authRouter.post("/auth/logout", async (req, res) => {
+authRouter.post("/auth/logout", requireCsrf, async (req, res) => {
   const sessionId = readCookie(req, GLITCHTIP_SESSION_COOKIE);
   const csrfToken = readCookie(req, "csrftoken");
 
