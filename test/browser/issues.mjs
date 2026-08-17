@@ -141,10 +141,13 @@ const NOTE = `typed ${MARK}`;
 const CSRF_NOTE = `token check ${MARK}`;
 
 /**
- * Whatever this run wrote, gone, even if it failed in the middle of writing
- * it — and loudly if it cannot be. This writes to a real issue in a real
- * installation, so failing to tidy is a result, not a detail: silence here
- * is what let six notes pile up on somebody's issue across six runs.
+ * Whatever this run wrote, gone — and a failed run if it cannot be.
+ *
+ * This writes to a real issue in a real installation, so failing to tidy is
+ * a result and not a detail. Printing a warning was not enough: the run
+ * still exited zero, which in CI is indistinguishable from having cleaned
+ * up, and leaked notes would go on accumulating exactly as they did before
+ * anybody noticed the first six. Cleanup is checked like anything else here.
  *
  * It sweeps every run's marker, not just this one's, so a run that was
  * killed before its own cleanup is repaired by the next.
@@ -152,10 +155,7 @@ const CSRF_NOTE = `token check ${MARK}`;
 async function removeOurNotes(key, org, issueId) {
   const comments = `/api/0/organizations/${encodeURIComponent(org)}/issues/${issueId}/comments/`;
   const { status, body } = await api(comments, key);
-  if (!Array.isArray(body)) {
-    process.stdout.write(`\n  ! could not list notes to clean up (${status})\n`);
-    return;
-  }
+  assert(Array.isArray(body), `could not list notes to clean up (${status})`);
 
   const ours = body.filter((comment) => comment?.data?.text?.includes("browser-suite-"));
   const stranded = [];
@@ -164,12 +164,71 @@ async function removeOurNotes(key, org, issueId) {
     if (gone.status >= 400) stranded.push(`${comment.id} (${gone.status})`);
   }
 
-  if (stranded.length) {
-    process.stdout.write(
-      `\n  ! left ${stranded.length} note(s) behind on issue ${issueId}: ${stranded.join(", ")}\n` +
-        `    they are real and want deleting by hand\n`
-    );
-  }
+  assert(
+    !stranded.length,
+    `left ${stranded.length} note(s) on issue ${issueId}: ${stranded.join(", ")} — ` +
+      `they are real and want deleting by hand`
+  );
+
+  // Proof rather than assumption: a DELETE can answer 204 and change
+  // nothing. Ask again.
+  const after = await api(comments, key);
+  const left = Array.isArray(after.body)
+    ? after.body.filter((c) => c?.data?.text?.includes("browser-suite-"))
+    : [];
+  assert(
+    !left.length,
+    `${left.length} note(s) survived deletion on issue ${issueId}: ${left
+      .map((c) => c.id)
+      .join(", ")}`
+  );
+}
+
+/**
+ * A tag with more values than the summary shows, put into GlitchTip itself.
+ *
+ * Aggregated tags have no write API, so these go in through the ORM — the
+ * same way the passkey suite sets up what it needs. Written as its own key
+ * per run so two runs cannot collide, and removed again whatever happens.
+ */
+const TAG_VALUES = 8;
+
+function django(python) {
+  return execFileSync(
+    "docker",
+    ["compose", "exec", "-T", "glitchtip-web", "./manage.py", "shell", "-c", python],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+  );
+}
+
+function seedTagValues(issueId, tagKey, count) {
+  const out = django(`
+import datetime
+from django.apps import apps
+IssueTag = apps.get_model('issue_events','IssueTag')
+TagKey = apps.get_model('issue_events','TagKey')
+TagValue = apps.get_model('issue_events','TagValue')
+Issue = apps.get_model('issue_events','Issue')
+issue = Issue.objects.get(id=${Number(issueId)})
+key, _ = TagKey.objects.get_or_create(key=${JSON.stringify(tagKey)})
+for i in range(${count}):
+    value, _ = TagValue.objects.get_or_create(value=f"spread-{i}")
+    IssueTag.objects.get_or_create(
+        issue=issue, organization_id=issue.project.organization_id,
+        tag_key=key, tag_value=value, date=datetime.date(2026, 8, 17),
+        defaults={"count": ${count} - i})
+print("seeded", IssueTag.objects.filter(issue=issue, tag_key=key).count())`);
+  assert(out.includes(`seeded ${count}`), `could not seed a spread of tag values: ${out.trim()}`);
+}
+
+function removeTagValues(tagKey) {
+  django(`
+from django.apps import apps
+IssueTag = apps.get_model('issue_events','IssueTag')
+TagKey = apps.get_model('issue_events','TagKey')
+IssueTag.objects.filter(tag_key__key=${JSON.stringify(tagKey)}).delete()
+TagKey.objects.filter(key=${JSON.stringify(tagKey)}).delete()
+print("cleaned")`);
 }
 
 /** The section headed `title`, or null. Sections are found by their heading. */
@@ -418,51 +477,71 @@ async function main() {
 
     await test("the summary shows a few tag values and the screen behind it shows them all", async () => {
       /**
-       * GlitchTip returns every value in the tags call — `topValues` is
-       * named for its ordering, not for being a slice — so both views drew
-       * the same list and "See every value →" led to the page you were
-       * already on. A tag with more values than the summary shows is the
-       * only way to tell those apart, and the seeded data has one value per
-       * tag, so this supplies one.
+       * Seeded into GlitchTip, not stubbed into the page.
+       *
+       * The claim being tested is partly GlitchTip's: that its tags call
+       * returns every value it holds rather than a top slice, which is why
+       * `topValues` can be rendered as "every value" at all. A fulfilled
+       * route proves only that this code renders whatever it is handed, and
+       * would keep passing if GlitchTip started truncating tomorrow — which
+       * is the exact change that would turn the screen into a lie.
+       *
+       * So the rows go in the database, the live response is checked for
+       * all of them first, and only then is the screen asked what it shows.
+       * Eight values, because the seeded data has one per tag and one value
+       * cannot tell a summary apart from a whole.
        */
-      const values = Array.from({ length: 8 }, (_, i) => ({
-        name: `/page/${i}`,
-        value: `/page/${i}`,
-        count: 8 - i,
-        key: "url",
-      }));
-      const fixture = [
-        { key: "url", name: "url", topValues: values, uniqueValues: 8, totalValues: 36 },
-      ];
+      const KEY = `suite.spread.${process.pid}`;
+      seedTagValues(issueId, KEY, TAG_VALUES);
 
-      const page = await context.newPage();
-      await page.route(`**/api/0/organizations/${org}/issues/${issueId}/tags/`, (route) =>
-        route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify(fixture),
-        })
-      );
+      try {
+        const live = await api(
+          `/api/0/organizations/${encodeURIComponent(org)}/issues/${issueId}/tags/?key=${encodeURIComponent(KEY)}`,
+          key
+        );
+        const tag = (Array.isArray(live.body) ? live.body : []).find((t) => t.key === KEY);
+        assert(tag, `GlitchTip did not report the tag that was just seeded (${live.status})`);
+        assert(
+          tag.topValues.length === TAG_VALUES && tag.uniqueValues === TAG_VALUES,
+          `GlitchTip returned ${tag.topValues.length} of ${tag.uniqueValues} values — ` +
+            `it truncates, so "every value" cannot come from this call`
+        );
 
-      await page.goto(detail, { waitUntil: "networkidle" });
-      await page.waitForSelector(".tag-groups");
+        const page = await context.newPage();
+        await page.goto(detail, { waitUntil: "networkidle" });
+        await page.waitForSelector(".tag-groups");
 
-      const summary = await page.$$eval(".tag-groups .tag-value", (ns) => ns.length);
-      assert(summary === 5, `the summary listed ${summary} values, wanted 5`);
-      const more = await page.textContent(".tag-groups .tag-group p.muted");
-      assert(/\+3 more values/.test(more || ""), `no honest count of the rest: ${more}`);
+        const group = page.locator(".tag-group", { has: page.locator(`h4:text-is("${KEY}")`) });
+        assert(await group.count(), "the seeded tag did not reach the summary");
 
-      await page.click("text=See every value →");
-      await page.waitForSelector("#view h2", { timeout: 10_000 });
-      await page.waitForFunction(() => document.querySelectorAll(".tag-values li").length > 0);
+        const summary = await group.locator(".tag-value").count();
+        assert(summary === 5, `the summary listed ${summary} values, wanted 5`);
+        const more = await group.locator("p.muted").textContent();
+        assert(
+          new RegExp(`\\+${TAG_VALUES - 5} more values`).test(more || ""),
+          `no honest count of the rest: ${more}`
+        );
 
-      const every = await page.$$eval(".tag-values li", (ns) => ns.length);
-      assert(every === 8, `the screen behind the link showed ${every} values, wanted all 8`);
-      assert(
-        every > summary,
-        "the link went to a screen showing no more than the summary it came from"
-      );
-      await page.close();
+        await page.click("text=See every value →");
+        await page.waitForSelector("#view h2", { timeout: 10_000 });
+        await page.waitForFunction(() => document.querySelectorAll(".tag-values li").length > 0);
+
+        const every = await page
+          .locator(".detail-section", { hasText: KEY })
+          .locator(".tag-values li")
+          .count();
+        assert(
+          every === TAG_VALUES,
+          `the screen behind the link showed ${every} values, wanted all ${TAG_VALUES}`
+        );
+        assert(
+          every > summary,
+          "the link went to a screen showing no more than the summary it came from"
+        );
+        await page.close();
+      } finally {
+        removeTagValues(KEY);
+      }
     });
 
     // --------------------------------------------------------------- on a phone
@@ -538,7 +617,11 @@ async function main() {
       await page.close();
     });
   } finally {
-    await removeOurNotes(key, org, issueId).catch(() => {});
+    // Counted as a check, so a run that cannot clean up after itself is a
+    // failed run. It has to happen even when the tests above threw, which
+    // is what puts it here rather than in the list with them.
+    await test("it leaves no notes behind", () => removeOurNotes(key, org, issueId));
+
     await browser.close();
     try {
       script("--clear", key);
