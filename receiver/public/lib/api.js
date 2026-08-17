@@ -41,6 +41,45 @@ export function csrfToken() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+/**
+ * Having one, rather than assuming one.
+ *
+ * Nothing Sentinel serves can set that cookie. Django writes it from a view
+ * that asks for a token, and every page here comes from the receiver, which
+ * is not Django — so the only reason a token was ever present is that the
+ * browser had been through allauth to sign in, and that cookie outlived the
+ * flow.
+ *
+ * Which held often enough to hide the hole completely. Sign-in mints one,
+ * so a person who signs in can write, and the whole app was tested that way.
+ * A session that arrives any other way — the cookie cleared on its own
+ * schedule while the session stayed, a browser restored from a profile that
+ * kept one and not the other — got a bare 403 on every write, on a screen
+ * that offered the buttons anyway. Resolving an issue, ignoring it, leaving
+ * a note: all refused, none of them explicably.
+ *
+ * So the token is fetched when it is missing. allauth's capability document
+ * is a GET that changes nothing and hands one back, which makes it the
+ * cheapest correct way to ask. Once fetched the cookie serves every later
+ * write, and concurrent writes share one request rather than each starting
+ * their own.
+ */
+let minting = null;
+
+async function ensureCsrfToken() {
+  const held = csrfToken();
+  if (held) return held;
+
+  minting ??= fetch("/_allauth/browser/v1/config", { credentials: "same-origin" })
+    .catch(() => null)
+    .then(() => {
+      minting = null;
+      return csrfToken();
+    });
+
+  return minting;
+}
+
 let onUnauthorized = null;
 
 /** What to do when a session has gone: set once, at boot. */
@@ -85,7 +124,7 @@ async function request(
   // A bearer token authenticates by header and is exempt; a browser session
   // is not. GET/HEAD are exempt either way.
   if (!bearerToken && !["GET", "HEAD"].includes(method)) {
-    init.headers["x-csrftoken"] = csrfToken();
+    init.headers["x-csrftoken"] = await ensureCsrfToken();
   }
 
   let response;
