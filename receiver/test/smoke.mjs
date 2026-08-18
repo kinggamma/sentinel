@@ -119,9 +119,19 @@ async function shellServed() {
     "/sentinel/accept/12/ddar27-abc123",
     "/sentinel/issues",
     "/sentinel/settings/teams",
-    "/sentinel/requests",
-    "/sentinel/people",
+    // Phases 4 and 5. Every one of these is a real address now, and the
+    // shell has to be served for all of them or a reload lands on nothing.
     "/sentinel/projects",
+    "/sentinel/projects/new",
+    "/sentinel/projects/e-library",
+    "/sentinel/people",
+    "/sentinel/teams",
+    "/sentinel/teams/new",
+    "/sentinel/teams/just-me",
+    // Addresses that used to be screens of their own and now redirect in the
+    // client. The server still has to answer them: a bookmark that 404s is
+    // the same to whoever saved it as a screen that was deleted.
+    "/sentinel/requests",
     "/sentinel/settings",
     "/sentinel/settings/apps/e-library-admin",
     // Reports, the last screen to stop being a mode of "/" — one app's list,
@@ -299,6 +309,38 @@ async function embeddedBearerViewer() {
       }),
     });
     assertStatus(res, 201);
+
+    /**
+     * And taken away again. This writes a real report into a real
+     * installation, and it wrote one on every run — thirty-eight of them had
+     * collected before anybody counted, sitting in the list beside the
+     * reports somebody actually needs to read. Deleting it also exercises
+     * the delete path, which nothing else here did.
+     */
+    const { id } = await res.json();
+    const gone = await fetch(`${BASE}/api/reports/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: noCookies,
+    });
+    assertStatus(gone, 204, "deleting the report this test just posted");
+  });
+
+  await check("it leaves no reports of its own behind", async () => {
+    if (!TOKEN) return "skip";
+    // Sweeps every run's, not just this one's, so a run killed midway is
+    // repaired by the next rather than adding to the pile.
+    const res = await get("/api/reports", { headers: noCookies });
+    assertStatus(res, 200);
+    const mine = (await res.json()).filter((report) => report.appName === "smoke-test");
+    for (const report of mine) {
+      await fetch(`${BASE}/api/reports/${encodeURIComponent(report.id)}`, {
+        method: "DELETE",
+        headers: noCookies,
+      });
+    }
+    const after = await (await get("/api/reports", { headers: noCookies })).json();
+    const left = after.filter((report) => report.appName === "smoke-test");
+    assert(!left.length, `${left.length} smoke-test report(s) survived cleanup`);
   });
 
   await check("nothing it does ever hands it a session", async () => {

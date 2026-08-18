@@ -17,7 +17,7 @@
  */
 
 import { sentinel, glitchtip } from "../lib/api.js";
-import { h, fill, emptyState, field } from "../lib/dom.js";
+import { h, fill, emptyState, field, confirmAction } from "../lib/dom.js";
 import { throwIfAborted } from "../lib/abort.js";
 import { href as routeHref, go } from "../lib/router.js";
 import { withOrg } from "../lib/org.js";
@@ -77,9 +77,15 @@ export async function projectsListView({ outlet, signal }, { org, orgs = [], me 
     return;
   }
 
+  /**
+   * Keyed by slug, but only for apps in the organisation on screen. A slug
+   * identifies a project inside its organisation and nowhere else, so two
+   * organisations may each have an "admin" — and matching on slug alone put
+   * one organisation's report counts and origins on the other's project.
+   */
   const reporting = new Map(
     (apps.data?.projects || [])
-      .filter((app) => app.glitchtipProject)
+      .filter((app) => app.glitchtipProject && app.org === org)
       .map((app) => [app.glitchtipProject, app])
   );
 
@@ -184,7 +190,12 @@ export async function projectDetailView({ outlet, params, signal }, { org, orgs 
   ]);
   throwIfAborted(signal);
 
-  const app = (apps.data?.projects || []).find((one) => one.glitchtipProject === slug) || null;
+  // Organisation as well as slug: see the list view above — the same slug in
+  // two organisations is two different projects.
+  const app =
+    (apps.data?.projects || []).find(
+      (one) => one.glitchtipProject === slug && one.org === org
+    ) || null;
 
   fill(
     outlet,
@@ -312,6 +323,15 @@ function keysSection(keys, { base, can, signal }) {
             text: "Revoke",
             on: {
               click: async () => {
+                const sure = await confirmAction({
+                  title: "Revoke this key?",
+                  detail:
+                    "Anything still reporting with this DSN stops being able to, immediately and " +
+                    "without an error anybody will see. A revoked key cannot be restored.",
+                  confirm: "Revoke it",
+                });
+                if (!sure) return;
+
                 error.hidden = true;
                 try {
                   await glitchtip.del(`${base}/keys/${encodeURIComponent(key.id)}/`, { signal });

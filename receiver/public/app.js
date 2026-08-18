@@ -248,12 +248,27 @@ route("/settings/apps/:app", guarded(async (ctx) => {
   const app = ctx.params.app;
   const forApp = (await sentinelApi.get("/projects", { signal: ctx.signal }).catch(() => null))
     ?.projects?.find((one) => one.appName === app);
-  return goRoute(
-    forApp?.glitchtipProject
-      ? withOrg(`/projects/${encodeURIComponent(forApp.glitchtipProject)}`, organisation, { orgs: organisations })
-      : "/settings",
-    { replace: true }
-  );
+
+  /**
+   * An app with a project goes to that project's screen, where its addresses
+   * now live beside the DSN they are addresses for.
+   *
+   * An app without one stays here. That is a real state and not a broken
+   * one: an app is registered before it has ever reported, and provisioning
+   * only creates its project on the first report — so between those two
+   * moments this is the only place its addresses can be set, and sending it
+   * to global Settings took that away at exactly the wrong moment. It is
+   * also where an app lands when GlitchTip is not configured at all.
+   */
+  if (forApp?.glitchtipProject) {
+    return goRoute(
+      withOrg(`/projects/${encodeURIComponent(forApp.glitchtipProject)}`, organisation, {
+        orgs: organisations,
+      }),
+      { replace: true }
+    );
+  }
+  return layer(landing, (inner) => settingsView(inner, { onSaved: refreshRoute }))(ctx);
 }));
 // Scoped and embedded sessions are locked to one app's reports and have no
 // "all projects" to come home to — showProjects() already refused to show
@@ -678,7 +693,11 @@ function paintChrome() {
    */
   const titles = {
     issues: "Issues",
-    requests: "Access requests",
+    // Phase 4 and 5 screens. Without these the bar rendered empty on every
+    // one of them — a page that looks like its header failed to load, which
+    // is exactly what the comment above says this exists to prevent.
+    projects: "Projects",
+    people: currentPath().startsWith("/teams") ? "Teams" : "People",
     settings: "Settings",
     reports: appName || "Your apps",
   };

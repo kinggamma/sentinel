@@ -140,3 +140,54 @@ export function modal({ title, body, actions = [], onClose } = {}) {
   document.addEventListener("keydown", onKey);
   return { close, panel };
 }
+
+/**
+ * "Are you sure?", for the things that cannot be taken back.
+ *
+ * Removing somebody from an organisation, deleting a team, revoking a key:
+ * each was one click, next to ordinary buttons, with no step between
+ * deciding and having done it. None of them undo — a revoked key cannot be
+ * un-revoked, and a deleted team takes everyone's route to its projects with
+ * it — so each is worth one deliberate second.
+ *
+ * The message says what will happen rather than asking whether the person is
+ * sure, because "are you sure?" is answerable without reading and "this
+ * stops every app reporting" is not.
+ *
+ * @param {object} options
+ * @param {string} options.title - what is about to happen.
+ * @param {string} options.detail - what it means, in a sentence.
+ * @param {string} [options.confirm] - the label on the button that does it.
+ * @returns {Promise<boolean>} whether to go ahead.
+ */
+export function confirmAction({ title, detail, confirm = "Yes, do it" } = {}) {
+  return new Promise((resolve) => {
+    let answered = false;
+    const answer = (value) => {
+      if (answered) return;
+      answered = true;
+      resolve(value);
+      dialog.close();
+    };
+
+    const go = h("button", {
+      type: "button",
+      className: "danger",
+      text: confirm,
+      on: { click: () => answer(true) },
+    });
+
+    const dialog = modal({
+      title,
+      body: h("p", { className: "muted", text: detail }),
+      actions: [
+        h("button", { type: "button", className: "ghost", text: "Cancel", on: { click: () => answer(false) } }),
+        go,
+      ],
+      // Escape and clicking away are answers too, and the answer is no.
+      onClose: () => answer(false),
+    });
+
+    go.focus();
+  });
+}

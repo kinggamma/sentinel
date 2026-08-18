@@ -260,14 +260,45 @@ await test("asking for access belongs to the two states that have nothing yet", 
   assert(!can(STATES.ANONYMOUS), "anonymous cannot");
 });
 
-await test("managing access needs a live session and an organisation to manage", () => {
+await test("deciding who gets in needs the role that inviting needs", () => {
+  /**
+   * Membership used to be enough, and that was the wrong way round.
+   *
+   * Approving runs on Sentinel's service token rather than the approver's
+   * credentials, so GlitchTip never checks their role — which meant any
+   * member could read every applicant's address and note, and then let
+   * somebody into the organisation using a credential far stronger than
+   * their own. Inviting through GlitchTip needs manager; inviting through
+   * Sentinel now asks for the same.
+   */
   const of = (facts) => capabilities(facts).canManageAccess;
+  const user = { email: "a@b.c" };
+  const asMember = { acme: { role: "member", canManageMembers: false } };
+  const asManager = { acme: { role: "manager", canManageMembers: true } };
+
   assert(
-    of({ state: STATES.AUTHENTICATED, user: { email: "a@b.c" }, orgs: ["acme"] }),
-    "member may manage"
+    of({ state: STATES.AUTHENTICATED, user, orgs: ["acme"], orgRoles: asManager }),
+    "a manager may decide"
   );
-  assert(!of({ state: STATES.AUTHENTICATED, user: { email: "a@b.c" }, orgs: [] }), "no org");
-  assert(!of({ state: STATES.PENDING, user: { email: "a@b.c" }, orgs: [] }), "pending");
+  assert(
+    !of({ state: STATES.AUTHENTICATED, user, orgs: ["acme"], orgRoles: asMember }),
+    "an ordinary member may not"
+  );
+  assert(
+    !of({ state: STATES.AUTHENTICATED, user, orgs: ["acme"] }),
+    "no roles known is not permission"
+  );
+  assert(
+    of({
+      state: STATES.AUTHENTICATED,
+      user,
+      orgs: ["acme", "other"],
+      orgRoles: { acme: { canManageMembers: false }, other: { canManageMembers: true } },
+    }),
+    "manager of one organisation may decide — the route checks which"
+  );
+  assert(!of({ state: STATES.AUTHENTICATED, user, orgs: [], orgRoles: {} }), "no org");
+  assert(!of({ state: STATES.PENDING, user, orgs: [], orgRoles: {} }), "pending");
   assert(!of({ state: STATES.ANONYMOUS }), "anonymous");
 });
 

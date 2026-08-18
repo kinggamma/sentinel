@@ -267,8 +267,29 @@ export async function identify(req, { accessRequestFor = null } = {}) {
    * GlitchTip actually said, and a fault has already thrown above.
    */
   const visible = projectsRes.data;
+
+  /**
+   * Each project as the pair that identifies it, and narrowed to the
+   * organisations this person is allowed to see here.
+   *
+   * It was a flat list of slugs, collected from every organisation the
+   * account belongs to, and compared by slug alone. Two things went wrong
+   * with that, and both of them granted access rather than withholding it.
+   *
+   * GLITCHTIP_ORG narrows `orgs` and narrowed nothing else, so on a shared
+   * GlitchTip somebody restricted to one organisation still carried the
+   * project list of every other organisation they were in — and an app
+   * mapped to one of those projects was readable here. The restriction
+   * announced itself as a gate and was not one.
+   *
+   * And a slug is only unique within an organisation. Two organisations may
+   * each have a project called "admin", so slug-only matching let one
+   * organisation's membership unlock the other's reports.
+   */
   const projects = Array.isArray(visible)
-    ? visible.map((project) => project.slug).filter(Boolean)
+    ? visible
+        .map((project) => ({ slug: project.slug, org: project.organization?.slug || null }))
+        .filter((pair) => pair.slug && pair.org && orgs.includes(pair.org))
     : [];
 
   /**

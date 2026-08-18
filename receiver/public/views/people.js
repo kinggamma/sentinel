@@ -20,7 +20,7 @@
  */
 
 import { sentinel, glitchtip } from "../lib/api.js";
-import { h, fill, emptyState, field } from "../lib/dom.js";
+import { h, fill, emptyState, field, confirmAction } from "../lib/dom.js";
 import { throwIfAborted } from "../lib/abort.js";
 import { href as routeHref } from "../lib/router.js";
 import { withOrg } from "../lib/org.js";
@@ -56,11 +56,19 @@ export async function peopleView({ outlet, signal }, { org, orgs = [], me } = {}
   const can = me?.orgRoles?.[org] || {};
   const linkOrg = orgs.length > 1 ? org : null;
 
+  /**
+   * The queue is only fetched by somebody who may act on it.
+   *
+   * It contains the email address and words of a person asking to be let in,
+   * and the server now refuses it to anyone below manager. Asking anyway
+   * would put a 403 on the screen for an ordinary member on a screen that is
+   * otherwise entirely theirs to look at.
+   */
   const [members, queue] = await Promise.all([
     settle(glitchtip.get(`/organizations/${encodeURIComponent(org)}/members/`, { signal })),
-    // Sentinel's own, and only its own: somebody who has not asked here is
-    // simply not in this list.
-    settle(sentinel.get("/access/requests", { signal })),
+    can.canManageMembers
+      ? settle(sentinel.get("/access/requests", { signal }))
+      : Promise.resolve({ data: { requests: [] } }),
   ]);
   throwIfAborted(signal);
 
@@ -220,9 +228,16 @@ function memberList(rows, { org, can, me, repaint, say, signal }) {
    */
   const change = async (row, role) => {
     try {
+      /**
+       * Role only. `teamRoles: []` was also being sent, which this endpoint
+       * ignores — it sets the role and never reads the field — but sending
+       * an empty list of somebody's teams while changing their role is a
+       * sentence waiting to be taken literally. The field is optional, so
+       * the safe version is not to say it.
+       */
       await glitchtip.put(
         `/organizations/${encodeURIComponent(org)}/members/${encodeURIComponent(row.id)}/`,
-        { orgRole: role, teamRoles: [] },
+        { orgRole: role },
         { signal }
       );
       say("");
@@ -236,6 +251,15 @@ function memberList(rows, { org, can, me, repaint, say, signal }) {
   };
 
   const remove = async (row) => {
+    const sure = await confirmAction({
+      title: `Remove ${row.email}?`,
+      detail:
+        "They lose access to this organisation's projects and everything Sentinel shows for them. " +
+        "Their reports and notes stay. You can invite them back, but they will have to accept again.",
+      confirm: "Remove them",
+    });
+    if (!sure) return;
+
     try {
       await glitchtip.del(
         `/organizations/${encodeURIComponent(org)}/members/${encodeURIComponent(row.id)}/`,

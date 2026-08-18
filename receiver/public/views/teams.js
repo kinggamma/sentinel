@@ -17,7 +17,7 @@
  */
 
 import { glitchtip } from "../lib/api.js";
-import { h, fill, emptyState, field } from "../lib/dom.js";
+import { h, fill, emptyState, field, confirmAction } from "../lib/dom.js";
 import { throwIfAborted } from "../lib/abort.js";
 import { href as routeHref, go } from "../lib/router.js";
 import { withOrg } from "../lib/org.js";
@@ -315,14 +315,22 @@ export async function teamDetailView({ outlet, params, signal }, { org, orgs = [
       "Couldn't add them"
     );
 
-  const detach = (member) =>
-    act(
+  const detach = async (member) => {
+    const sure = await confirmAction({
+      title: `Take ${member.email} out of ${slug}?`,
+      detail:
+        "They lose sight of every project this team reaches, unless another team they are in has it too.",
+      confirm: "Remove them",
+    });
+    if (!sure) return;
+    return act(
       () => glitchtip.del(
         `/organizations/${encodeURIComponent(org)}/members/${encodeURIComponent(member.id)}/teams/${encodeURIComponent(slug)}/`,
         { signal }
       ),
       "Couldn't remove them"
     );
+  };
 
   const link = (project) =>
     act(
@@ -334,14 +342,22 @@ export async function teamDetailView({ outlet, params, signal }, { org, orgs = [
       "Couldn't add that project"
     );
 
-  const unlink = (project) =>
-    act(
+  const unlink = async (project) => {
+    const sure = await confirmAction({
+      title: `Take ${project.name || project.slug} out of ${slug}?`,
+      detail:
+        "Everybody in this team loses sight of that project's errors, unless another team they are in reaches it.",
+      confirm: "Remove it",
+    });
+    if (!sure) return;
+    return act(
       () => glitchtip.del(
         `/projects/${encodeURIComponent(org)}/${encodeURIComponent(project.slug)}/teams/${encodeURIComponent(slug)}/`,
         { signal }
       ),
       "Couldn't remove that project"
     );
+  };
 
   function adder(candidates) {
     const pick = h("select", { attrs: { "aria-label": "Somebody to add" } },
@@ -415,6 +431,15 @@ export async function teamDetailView({ outlet, params, signal }, { org, orgs = [
         text: "Delete this team",
         on: {
           click: async () => {
+            const sure = await confirmAction({
+              title: `Delete the ${slug} team?`,
+              detail:
+                "Its projects survive. What goes is everybody's route to them — for anyone not in " +
+                "another team with the same projects, that is the same thing as losing them.",
+              confirm: "Delete it",
+            });
+            if (!sure) return;
+
             try {
               await glitchtip.del(`${base}/`, { signal });
               go(withOrg("/teams", linkOrg, { orgs }));

@@ -60,9 +60,20 @@ async function visibleTo(viewer, appName) {
   const allowed = viewer?.projects;
   if (!Array.isArray(allowed)) return false;
 
+  /**
+   * Both halves, because a slug only identifies a project inside its own
+   * organisation. Comparing slugs alone meant membership of one
+   * organisation unlocked an identically named project in another, and it
+   * meant GLITCHTIP_ORG — which narrows which organisations count — did not
+   * narrow what could be read.
+   */
   const projectSlug = await slugForApp(appName);
   if (!projectSlug) return false;
-  return allowed.includes(projectSlug);
+
+  const org = await orgForProject(projectSlug);
+  if (!org) return false;
+
+  return allowed.some((pair) => pair.slug === projectSlug && pair.org === org);
 }
 
 

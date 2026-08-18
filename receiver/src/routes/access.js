@@ -13,6 +13,36 @@ import { inviteToOrg } from "../glitchtip.js";
 export const accessRouter = Router();
 
 /**
+ * Who may see and decide these.
+ *
+ * The queue holds the email address and words of somebody asking to be let
+ * in, and acting on it invites them with Sentinel's service token — a
+ * credential far more privileged than any person's. Membership was the only
+ * guard, so any member could read all of it and let anybody in. It asks for
+ * manager now, the same role GlitchTip asks for its own invitations.
+ *
+ * A viewer authenticated by the staff token is not a person and holds no
+ * role, so it is refused here too: it has no organisation to vouch for and
+ * nothing to attribute a decision to.
+ */
+function mayDecide(req, res, next) {
+  const roles = req.viewer?.orgRoles || {};
+  const anywhere = Object.values(roles).some((one) => one?.canManageMembers);
+  if (!anywhere) {
+    return res.status(403).json({
+      error: "deciding who gets in needs the manager role",
+      needsRole: true,
+    });
+  }
+  return next();
+}
+
+/** Manager in this particular organisation, not merely somewhere. */
+function mayDecideFor(req, org) {
+  return Boolean(req.viewer?.orgRoles?.[org]?.canManageMembers);
+}
+
+/**
  * Where the person asking stands. Answers for members too — they have no
  * request, which is how the viewer knows not to offer one.
  */
@@ -67,7 +97,7 @@ accessRouter.post("/request", async (req, res) => {
  * this router refuses a pending session — and approving needs somewhere to
  * put them, which is one of the approver's own organisations.
  */
-accessRouter.get("/requests", async (req, res) => {
+accessRouter.get("/requests", mayDecide, async (req, res) => {
   if (req.viewer?.pending) return res.status(403).json({ error: "awaiting access" });
   res.json({
     requests: await listRequests(),
@@ -77,7 +107,7 @@ accessRouter.get("/requests", async (req, res) => {
   });
 });
 
-accessRouter.post("/requests/:id/approve", async (req, res) => {
+accessRouter.post("/requests/:id/approve", mayDecide, async (req, res) => {
   if (req.viewer?.pending) return res.status(403).json({ error: "awaiting access" });
 
   const org = String(req.body?.organisation || "").trim();
@@ -89,6 +119,12 @@ accessRouter.post("/requests/:id/approve", async (req, res) => {
   const mine = req.viewer?.orgs;
   if (!Array.isArray(mine) || !mine.includes(org)) {
     return res.status(403).json({ error: `you're not a member of ${org}` });
+  }
+
+  // Manager somewhere is not manager here. Approving into an organisation is
+  // an act inside that organisation, so the role is checked against it.
+  if (!mayDecideFor(req, org)) {
+    return res.status(403).json({ error: `you're not a manager of ${org}`, needsRole: true });
   }
 
   const request = await findById(req.params.id);
@@ -120,7 +156,7 @@ accessRouter.post("/requests/:id/approve", async (req, res) => {
   }
 });
 
-accessRouter.post("/requests/:id/decline", async (req, res) => {
+accessRouter.post("/requests/:id/decline", mayDecide, async (req, res) => {
   if (req.viewer?.pending) return res.status(403).json({ error: "awaiting access" });
 
   const request = await findById(req.params.id);

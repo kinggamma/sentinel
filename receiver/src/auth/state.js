@@ -220,7 +220,7 @@ export function derive({
  * Unknown reads as "no" throughout. These gate actions, and a fact we could
  * not establish must never open a door.
  */
-export function capabilities({ state, user = null, orgs = [] } = {}) {
+export function capabilities({ state, user = null, orgs = [], orgRoles = {} } = {}) {
   /**
    * Two different questions, and conflating them produced a contradiction.
    *
@@ -254,12 +254,20 @@ export function capabilities({ state, user = null, orgs = [] } = {}) {
     /**
      * Approving somebody is performed with Sentinel's own service token
      * rather than the approver's credentials (glitchtip.js: inviteToOrg), so
-     * GlitchTip never checks the caller's role and the only real guard is
-     * membership. Encoded as it actually behaves. If approval is ever meant
-     * to need manager or above, this is the line that changes, and the lie
-     * would have been telling the UI it already does.
+     * GlitchTip never checks the caller's role — which meant the only guard
+     * was membership, and any member at all could read the queue of
+     * applicants, their email addresses and whatever they wrote in it, and
+     * then let somebody into the organisation using a credential far more
+     * privileged than their own.
+     *
+     * That is the wrong way round. Inviting through GlitchTip needs manager,
+     * so inviting through Sentinel's service token should not need less. It
+     * asks the same of the caller now, in whichever organisation they hold
+     * it; the routes check the specific organisation being approved into,
+     * because holding manager in one is not authority over another.
      */
-    canManageAccess: authorised && orgs.length > 0,
+    canManageAccess:
+      authorised && Object.values(orgRoles || {}).some((one) => one?.canManageMembers),
 
     /**
      * Changing a password needs one to exist. A social-only or passkey-only
@@ -322,6 +330,6 @@ export function describe({ state, user = null, orgs = [], orgRoles = {}, allauth
      * reads `can`, and works nothing out for itself.
      */
     orgRoles,
-    can: capabilities({ state, user, orgs }),
+    can: capabilities({ state, user, orgs, orgRoles }),
   };
 }
