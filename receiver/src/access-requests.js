@@ -47,7 +47,7 @@ function key(email) {
 }
 
 /** Raise or refresh a request. Returns the stored request. */
-export async function requestAccess({ email, name, note }) {
+export async function requestAccess({ email, name, note, organisation = null }) {
   const id = key(email);
   if (!id) throw new Error("an email address is required");
 
@@ -63,6 +63,21 @@ export async function requestAccess({ email, name, note }) {
     email: id,
     name: name || existing?.name || null,
     note: String(note || "").slice(0, 500) || existing?.note || null,
+    /**
+     * Which organisation this was aimed at.
+     *
+     * Somebody asking for access belongs to none yet, so they cannot choose
+     * — and asking them to would publish the list of organisations to
+     * anybody who reaches the sign-in page. It is this deployment's own
+     * organisation instead, which is the one they were trying to get into by
+     * arriving here.
+     *
+     * Null on a deployment that serves several and pins none. That is a real
+     * configuration, and the honest answer there is that the request names
+     * no target, so every manager sees it — which is what happened to every
+     * request before this field existed.
+     */
+    organisation: organisation || existing?.organisation || null,
     status: "pending",
     requestedAt: new Date().toISOString(),
     decidedAt: null,

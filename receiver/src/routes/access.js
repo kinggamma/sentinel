@@ -8,7 +8,7 @@ import {
   myRequest,
   requestAccess,
 } from "../access-requests.js";
-import { inviteToOrg } from "../glitchtip.js";
+import { inviteToOrg, orgSlug } from "../glitchtip.js";
 
 export const accessRouter = Router();
 
@@ -40,6 +40,25 @@ function mayDecide(req, res, next) {
 /** Manager in this particular organisation, not merely somewhere. */
 function mayDecideFor(req, org) {
   return Boolean(req.viewer?.orgRoles?.[org]?.canManageMembers);
+}
+
+/**
+ * Whether this request is any of your business.
+ *
+ * A request names the organisation it was aimed at, and a manager of one
+ * organisation has no standing over another's applicants — they could read
+ * the address and note of somebody asking to join a different organisation,
+ * and decline them.
+ *
+ * A request that names none is visible to any manager, because there is
+ * nothing to narrow it by. That is the pre-existing behaviour, kept only for
+ * the case that genuinely cannot be answered: a deployment serving several
+ * organisations with none configured.
+ */
+function concerns(req, request) {
+  const target = request?.organisation;
+  if (!target) return true;
+  return mayDecideFor(req, target);
 }
 
 /**
@@ -84,6 +103,8 @@ accessRouter.post("/request", async (req, res) => {
       email: viewer.email,
       name: viewer.user?.name || null,
       note: req.body?.note,
+      // The organisation they were trying to get into by arriving here.
+      organisation: orgSlug() || null,
     });
     console.log(`access requested by ${viewer.email}`);
     res.status(201).json({ request });
@@ -100,7 +121,7 @@ accessRouter.post("/request", async (req, res) => {
 accessRouter.get("/requests", mayDecide, async (req, res) => {
   if (req.viewer?.pending) return res.status(403).json({ error: "awaiting access" });
   res.json({
-    requests: await listRequests(),
+    requests: (await listRequests()).filter((request) => concerns(req, request)),
     // What the approver may add someone to: their own organisations, never
     // one they don't belong to.
     organisations: req.viewer?.orgs || [],
@@ -129,6 +150,17 @@ accessRouter.post("/requests/:id/approve", mayDecide, async (req, res) => {
 
   const request = await findById(req.params.id);
   if (!request) return res.status(404).json({ error: "not found" });
+  // Same answer as one that isn't there: which organisation somebody applied
+  // to is not a fact to hand to a manager of a different one.
+  if (!concerns(req, request)) return res.status(404).json({ error: "not found" });
+
+  // Approving into an organisation the request was not aimed at would put
+  // somebody somewhere nobody asked for.
+  if (request.organisation && request.organisation !== org) {
+    return res.status(400).json({
+      error: `that request was for ${request.organisation}`,
+    });
+  }
 
   try {
     /**
@@ -176,6 +208,9 @@ accessRouter.post("/requests/:id/decline", mayDecide, async (req, res) => {
 
   const request = await findById(req.params.id);
   if (!request) return res.status(404).json({ error: "not found" });
+  // Declining somebody else's applicant is the quietest of these mistakes:
+  // it leaves no trace on any screen the right manager looks at.
+  if (!concerns(req, request)) return res.status(404).json({ error: "not found" });
 
   const updated = await decide(request.id, {
     status: "declined",

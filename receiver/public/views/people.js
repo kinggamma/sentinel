@@ -141,7 +141,7 @@ export async function peopleView({ outlet, signal }, { org, orgs = [], me } = {}
 
         section("Members", memberList(rows, { org, can, me, repaint, say, signal })),
 
-        can.canManageMembers ? inviteForm({ org, repaint, signal }) : null,
+        can.canManageMembers ? inviteForm({ org, repaint, signal, teams: teamOptions }) : null,
 
         /**
          * Offered to everybody, not only to whoever may change a team.
@@ -182,11 +182,17 @@ function requestList(requests, { org, repaint, signal, teams = [] }) {
    * successfully and finding an empty list. Only asked when there is a
    * choice: with one team it is not a decision, and with none the server
    * falls back to the team Sentinel provisions into.
+   *
+   * Built per row, not once. A node exists in one place — appending the same
+   * select to five rows moves it to the fifth, leaving four rows without one
+   * and every Approve button reading the last row's answer. Whoever was
+   * approved first would have been put in the team chosen for somebody else.
    */
-  const team = teams.length > 1
-    ? h("select", { attrs: { "aria-label": "Team to add them to" } },
-        teams.map((slug) => h("option", { value: slug, text: slug })))
-    : null;
+  const teamPicker = () =>
+    teams.length > 1
+      ? h("select", { attrs: { "aria-label": "Team to add them to" } },
+          teams.map((slug) => h("option", { value: slug, text: slug })))
+      : null;
 
   const act = async (id, path, body) => {
     error.hidden = true;
@@ -201,8 +207,9 @@ function requestList(requests, { org, repaint, signal, teams = [] }) {
 
   return h("div", {},
     h("ul", { className: "origin-list" },
-      requests.map((request) =>
-        h("li", {},
+      requests.map((request) => {
+        const team = teamPicker();
+        return h("li", {},
           h("div", {},
             h("div", { text: request.email }),
             h("div", { className: "muted",
@@ -228,8 +235,8 @@ function requestList(requests, { org, repaint, signal, teams = [] }) {
               on: { click: () => void act(request.id, "decline", {}) },
             })
           )
-        )
-      )
+        );
+      })
     ),
     error
   );
@@ -360,9 +367,22 @@ function memberList(rows, { org, can, me, repaint, say, signal }) {
 }
 
 /** Inviting somebody who has not asked. */
-function inviteForm({ org, repaint, signal }) {
+/**
+ * Inviting somebody directly.
+ *
+ * With a team, for the same reason approving needs one: GlitchTip decides
+ * what a person can see by which teams they are in, so an invitation with
+ * none produces an account that signs in successfully and finds nothing.
+ * This form sent an empty list even after approval stopped doing so, which
+ * left one of the two ways into the organisation still doing the wrong
+ * thing.
+ */
+function inviteForm({ org, repaint, signal, teams = [] }) {
   const email = field({ label: "Email", id: "invite-email", type: "email", placeholder: "them@example.org" });
   const role = h("select", { id: "invite-role" }, ROLES.map((one) => h("option", { value: one, text: one })));
+  const team = teams.length
+    ? h("select", { id: "invite-team" }, teams.map((slug) => h("option", { value: slug, text: slug })))
+    : null;
   const error = h("p", { className: "error" });
   error.hidden = true;
   const note = h("p", { className: "muted" });
@@ -383,7 +403,11 @@ function inviteForm({ org, repaint, signal }) {
           try {
             const created = await glitchtip.post(
               `/organizations/${encodeURIComponent(org)}/members/`,
-              { email: address, orgRole: role.value, teamRoles: [] },
+              {
+                email: address,
+                orgRole: role.value,
+                teamRoles: team ? [{ teamSlug: team.value, role: "contributor" }] : [],
+              },
               { signal }
             );
             email.input.value = "";
@@ -391,9 +415,14 @@ function inviteForm({ org, repaint, signal }) {
             // Shown rather than assumed sent: an installation with no mail
             // configured invites perfectly well and delivers nothing, and
             // this link is then the only way anybody gets in.
-            note.textContent = created?.inviteLink
-              ? `Invited. If no email arrives, send them this: ${created.inviteLink}`
-              : "Invited.";
+            const landed = team ? ` They are in the ${team.value} team.` : "";
+            note.textContent =
+              (created?.inviteLink
+                ? `Invited. If no email arrives, send them this: ${created.inviteLink}`
+                : "Invited.") +
+              // Said, because an invitation into no team looks identical to
+              // one that worked until they sign in and find nothing.
+              (team ? landed : " They are in no team yet, so they will see nothing until added to one.");
             await repaint();
           } catch (failure) {
             error.hidden = false;
@@ -409,6 +438,10 @@ function inviteForm({ org, repaint, signal }) {
     },
       email.node,
       h("label", { className: "field" }, h("span", { className: "field-label", text: "Role" }), role),
+      team
+        ? h("label", { className: "field" },
+            h("span", { className: "field-label", text: "Team" }), team)
+        : null,
       h("div", { className: "form-actions" }, submit)
     ),
     note,

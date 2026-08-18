@@ -363,9 +363,9 @@ reportRouter.get("/reports/:id", async (req, res) => {
     }
 
     const projectSlug = await slugForApp(report.appName);
-    // The same answer visibleTo() uses, so a card cannot claim an
+    // The same answer visibleTo() uses, so a link cannot point into an
     // organisation the guard disagrees with.
-    const org = projectSlug ? await orgOfApp(req.viewer, entry.appName, projectSlug) : null;
+    const org = projectSlug ? await orgOfApp(req.viewer, report.appName, projectSlug) : null;
     if (report.glitchtipEventId) {
       report.glitchtipUrl = glitchtipLink({ projectSlug, org, eventId: report.glitchtipEventId });
     } else {
@@ -374,7 +374,18 @@ reportRouter.get("/reports/:id", async (req, res) => {
       report.glitchtipUrl = projectSlug ? glitchtipLink({ projectSlug, org }) : null;
     }
     res.json(report);
-  } catch {
+  } catch (error) {
+    /**
+     * A report that is not there is a 404. A mistake in here is not, and
+     * conflating them is how `entry.appName` — a name that existed in
+     * another handler and never in this one — reported itself as "not
+     * found" on every detail request while the list beside it answered 200.
+     * A ReferenceError has nothing to do with whether an id exists.
+     */
+    if (error instanceof ReferenceError || error instanceof TypeError) {
+      console.error(`report detail failed for ${req.params.id}:`, error);
+      return res.status(500).json({ error: "couldn't read that report" });
+    }
     res.status(404).json({ error: "not found" });
   }
 });

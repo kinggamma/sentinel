@@ -99,7 +99,21 @@ const bearer = { authorization: `Bearer ${TOKEN}` };
  */
 const REPORT_MARKER = "sentinel-smoke-suite";
 const SMOKE_APP = `${REPORT_MARKER}-${process.pid}`;
-const isOurs = (report) => String(report?.appName || "").startsWith(REPORT_MARKER);
+
+/**
+ * Ours, decided by two things agreeing rather than by how a name begins.
+ *
+ * A prefix is a guess: an app called sentinel-smoke-suite-eu is somebody's
+ * real app and starts with the marker, and this deletes what it matches from
+ * a real installation. So the app name must be exactly one this suite uses —
+ * its own, or a previous run's, which is the marker followed by digits — and
+ * the note must be one this suite writes. A real app would have to match
+ * both to be touched.
+ */
+const OUR_APP = new RegExp(`^${REPORT_MARKER}-\\d+$`);
+const OUR_NOTES = new Set(["embedded bearer regression", "posted by the smoke tests"]);
+const isOurs = (report) =>
+  OUR_APP.test(String(report?.appName || "")) && OUR_NOTES.has(String(report?.note || ""));
 
 const STANDALONE = (process.env.STANDALONE_URL || "http://localhost:4000").replace(/\/+$/, "");
 const getStandalone = (path, init) => fetch(`${STANDALONE}${path}`, { redirect: "manual", ...init });
