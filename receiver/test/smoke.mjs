@@ -120,6 +120,8 @@ async function shellServed() {
     "/sentinel/issues",
     "/sentinel/settings/teams",
     "/sentinel/requests",
+    "/sentinel/people",
+    "/sentinel/projects",
     "/sentinel/settings",
     "/sentinel/settings/apps/e-library-admin",
     // Reports, the last screen to stop being a mode of "/" — one app's list,
@@ -174,7 +176,7 @@ async function shellServed() {
     // nav-projects joined this list in Phase 4: a project's keys, alerts and
     // environments are a screen here now, so linking across to GlitchTip's
     // version of half of it would be a link to somewhere worse.
-    for (const id of ["nav-issues", "nav-projects", "nav-reports", "nav-requests", "nav-settings"]) {
+    for (const id of ["nav-issues", "nav-projects", "nav-people", "nav-reports", "nav-settings"]) {
       assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
     }
     for (const external of [
@@ -204,7 +206,8 @@ async function shellServed() {
     "lib/dom.js",
     "lib/router.js",
     "lib/abort.js",
-    "views/requests.js",
+    "views/people.js",
+    "views/project.js",
     "views/settings.js",
     "views/projects.js",
     "views/reports.js",

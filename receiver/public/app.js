@@ -31,11 +31,11 @@ import {
   currentPath,
   href as routeHref,
 } from "./lib/router.js";
-import { requestsView } from "./views/requests.js";
 import { settingsView } from "./views/settings.js";
 import { projectsView } from "./views/projects.js";
 import { reportsView } from "./views/reports.js";
 import { projectsListView, projectDetailView, projectNewView } from "./views/project.js";
+import { peopleView } from "./views/people.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import {
   signInView,
@@ -232,7 +232,10 @@ route("/access", async (ctx) => {
   });
 });
 
-route("/requests", guarded(layer(landing, requestsView)));
+// The queue moved into People (Phase 5), where the people asking and the
+// people already in sit in one list. The address stays, because it was
+// linkable and because a badge in somebody's bookmark bar should not 404.
+route("/requests", guarded(() => goRoute("/people", { replace: true })));
 route("/settings", guarded(layer(landing, (ctx) => settingsView(ctx))));
 // A per-app save changes what a project card shows (its origin count, or —
 // for "add an app" — whether the card exists at all), so it's the one
@@ -314,6 +317,8 @@ const projectsRoute = (view) => (ctx, me) => {
   paintChrome();
   return view(ctx, { org: organisation, orgs: organisations, me });
 };
+
+route("/people", guarded(projectsRoute(peopleView)));
 
 route("/projects", guarded(projectsRoute(projectsListView)));
 // Before the :slug route, which would otherwise match "new" as a project.
@@ -561,7 +566,8 @@ function routedApp() {
 function sectionFor(path) {
   if (path.startsWith("/issues")) return "issues";
   if (path.startsWith("/projects")) return "projects";
-  if (path.startsWith("/requests")) return "requests";
+  if (path.startsWith("/people")) return "people";
+  if (path.startsWith("/requests")) return "people";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
   // Somewhere that isn't a section. Falling through to "reports" would have
@@ -644,8 +650,8 @@ function paintChrome() {
   for (const [id, name] of [
     ["nav-issues", "issues"],
     ["nav-projects", "projects"],
+    ["nav-people", "people"],
     ["nav-reports", "reports"],
-    ["nav-requests", "requests"],
     ["nav-settings", "settings"],
   ]) {
     el(id).classList.toggle("current", section === name);
@@ -707,7 +713,7 @@ function showReports(appName) {
 
 // ------------------------------------------------------- access requests
 //
-// The screen itself is views/requests.js, mounted by the router. Registered
+// The queue is part of views/people.js now. Registered
 // down in boot(), where the router starts — this comment marks where it
 // used to live so the history of what moved is easy to find later.
 
@@ -718,9 +724,11 @@ async function refreshRequestCount() {
   if (!res.ok) return;
   const body = await res.json().catch(() => ({}));
   const pending = (body.requests || []).filter((r) => r.status === "pending").length;
-  const link = el("nav-requests");
-  link.hidden = pending === 0;
-  link.textContent = pending === 1 ? "Requests (1)" : `Requests (${pending})`;
+  // On People, because that is where deciding happens. Nothing is hidden
+  // when the queue is empty — People is a real destination either way, and a
+  // nav entry that comes and goes is harder to find than one that stays.
+  const link = el("nav-people");
+  link.textContent = pending ? `People (${pending})` : "People";
 }
 
 
@@ -908,10 +916,10 @@ async function boot() {
 
 
   // Static markup in index.html, so it can't read MOUNT itself.
-  el("nav-requests").href = routeHref("/requests");
   el("nav-settings").href = routeHref("/settings");
   el("nav-issues").href = routeHref("/issues");
   el("nav-projects").href = routeHref("/projects");
+  el("nav-people").href = routeHref("/people");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.
   const home = routeHref(scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/");
