@@ -131,15 +131,30 @@ accessRouter.post("/requests/:id/approve", mayDecide, async (req, res) => {
   if (!request) return res.status(404).json({ error: "not found" });
 
   try {
-    const { inviteLink } = await inviteToOrg({ org, email: request.email });
+    /**
+     * Which team they land in. The approver may name one; otherwise the
+     * configured service team, which is the team Sentinel's own projects
+     * belong to and therefore the one that can see them.
+     */
+    const team = String(req.body?.team || "").trim();
+    const { inviteLink, teams } = await inviteToOrg({
+      org,
+      email: request.email,
+      teams: team ? [team] : null,
+    });
     const updated = await decide(request.id, {
       status: "approved",
       decidedBy: req.viewer.email || null,
       organization: org,
       inviteLink,
     });
-    console.log(`${request.email} approved for ${org} by ${req.viewer.email || "staff token"}`);
-    res.json({ request: updated });
+    console.log(
+      `${request.email} approved for ${org} by ${req.viewer.email || "staff token"}` +
+        (teams.length ? ` (team: ${teams.join(", ")})` : " (no team — they will see nothing yet)")
+    );
+    // Said back, because an approval that grants sight of nothing looks
+    // exactly like one that worked.
+    res.json({ request: updated, teams });
   } catch (err) {
     // 409 means GlitchTip already has them as a member or invitee: the
     // outcome we wanted, so record it rather than reporting a failure.

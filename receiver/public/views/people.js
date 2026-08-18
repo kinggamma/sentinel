@@ -64,12 +64,18 @@ export async function peopleView({ outlet, signal }, { org, orgs = [], me } = {}
    * would put a 403 on the screen for an ordinary member on a screen that is
    * otherwise entirely theirs to look at.
    */
-  const [members, queue] = await Promise.all([
+  const [members, queue, teams] = await Promise.all([
     settle(glitchtip.get(`/organizations/${encodeURIComponent(org)}/members/`, { signal })),
     can.canManageMembers
       ? settle(sentinel.get("/access/requests", { signal }))
       : Promise.resolve({ data: { requests: [] } }),
+    // Approving somebody into no team lets them in to see nothing, so the
+    // approver is offered the choice rather than left to discover it.
+    can.canManageMembers
+      ? settle(glitchtip.get(`/organizations/${encodeURIComponent(org)}/teams/`, { signal }))
+      : Promise.resolve({ data: [] }),
   ]);
+  const teamOptions = (teams.data || []).map((one) => one.slug);
   throwIfAborted(signal);
 
   if (members.failed !== undefined) {
@@ -127,21 +133,31 @@ export async function peopleView({ outlet, signal }, { org, orgs = [], me } = {}
           ? section("Waiting to be let in",
               h("p", { className: "muted", text: readFailure(requests.failed, "the request queue") }))
           : waiting.length
-            ? section("Waiting to be let in", requestList(waiting, { org, repaint, signal }))
+            ? section(
+                "Waiting to be let in",
+                requestList(waiting, { org, repaint, signal, teams: teamOptions })
+              )
             : null,
 
         section("Members", memberList(rows, { org, can, me, repaint, say, signal })),
 
         can.canManageMembers ? inviteForm({ org, repaint, signal }) : null,
 
-        can.canManageTeams
-          ? h("p", {},
-              h("a", {
-                className: "linky",
-                href: routeHref(withOrg("/teams", linkOrg, { orgs })),
-                text: "Teams →",
-              }))
-          : null
+        /**
+         * Offered to everybody, not only to whoever may change a team.
+         *
+         * The screen it leads to answers "why can't they see that app's
+         * errors" — which is a question an ordinary member has about
+         * themselves as often as a manager has about somebody else — and it
+         * hides its own controls from anyone who cannot use them. Gating the
+         * link as well left members with no way to see who is in what.
+         */
+        h("p", {},
+          h("a", {
+            className: "linky",
+            href: routeHref(withOrg("/teams", linkOrg, { orgs })),
+            text: "Teams →",
+          }))
       )
     );
   }
@@ -157,9 +173,20 @@ export async function peopleView({ outlet, signal }, { org, orgs = [], me } = {}
  * question when the approver belongs to more than one. With one it is not
  * asked, because the only possible answer is not a decision.
  */
-function requestList(requests, { org, repaint, signal }) {
+function requestList(requests, { org, repaint, signal, teams = [] }) {
   const error = h("p", { className: "error" });
   error.hidden = true;
+
+  /**
+   * Which team they arrive in, because arriving in none means signing in
+   * successfully and finding an empty list. Only asked when there is a
+   * choice: with one team it is not a decision, and with none the server
+   * falls back to the team Sentinel provisions into.
+   */
+  const team = teams.length > 1
+    ? h("select", { attrs: { "aria-label": "Team to add them to" } },
+        teams.map((slug) => h("option", { value: slug, text: slug })))
+    : null;
 
   const act = async (id, path, body) => {
     error.hidden = true;
@@ -182,10 +209,17 @@ function requestList(requests, { org, repaint, signal }) {
               text: [request.note, when(request.createdAt)].filter(Boolean).join(" · ") })
           ),
           h("div", { className: "row-actions" },
+            team,
             h("button", {
               type: "button",
               text: "Approve",
-              on: { click: () => void act(request.id, "approve", { organisation: org }) },
+              on: {
+                click: () =>
+                  void act(request.id, "approve", {
+                    organisation: org,
+                    ...(team ? { team: team.value } : {}),
+                  }),
+              },
             }),
             h("button", {
               type: "button",
