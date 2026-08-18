@@ -296,7 +296,7 @@ export function capabilities({ state, user = null, orgs = [] } = {}) {
  * The `/auth/me` body. One shape, whatever the state, so the client never has
  * to branch on which keys are present.
  */
-export function describe({ state, user = null, orgs = [], allauth = null } = {}) {
+export function describe({ state, user = null, orgs = [], orgRoles = {}, allauth = null } = {}) {
   return {
     state,
     email: user?.email || null,
@@ -307,6 +307,21 @@ export function describe({ state, user = null, orgs = [], allauth = null } = {})
     // "change password" needs the fact, not just the verdict.
     hasPasswordAuth: user?.hasPasswordAuth ?? null,
     available: allauth?.available || [],
+    /**
+     * What this person may do, per organisation.
+     *
+     * Beside `can` rather than inside it, because these answers depend on
+     * which organisation is being looked at and the ones in `can` do not.
+     * Folding them together would mean either publishing the most a person
+     * can do anywhere — offering controls that fail in the organisation
+     * actually on screen — or making `can` change meaning when the switcher
+     * moves.
+     *
+     * Still the server's conclusions and not the client's: a screen looks up
+     * the organisation it is showing and reads the answer, exactly as it
+     * reads `can`, and works nothing out for itself.
+     */
+    orgRoles,
     can: capabilities({ state, user, orgs }),
   };
 }

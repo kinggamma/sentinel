@@ -24,6 +24,7 @@ import {
 } from "../glitchtip.js";
 import { idleEnabled, isIdle, touch, begin, forgetIdle } from "./idle.js";
 import { rememberProjectOrgs } from "../project-map.js";
+import { abilities } from "./roles.js";
 import { readAllauth, derive, describe, STATES } from "./state.js";
 
 /**
@@ -225,6 +226,37 @@ export async function identify(req, { accessRequestFor = null } = {}) {
   const orgs = restrictTo ? memberOf.filter((slug) => slug === restrictTo) : memberOf;
 
   /**
+   * What this person may do in each organisation they belong to.
+   *
+   * GlitchTip decides it by role, and every write endpoint refuses a role
+   * without the scope by answering 404 — the same answer as a route that
+   * does not exist. There is no way to turn that into a sentence for
+   * somebody, so the role has to be known before a control is offered
+   * rather than discovered by pressing it.
+   *
+   * There is no endpoint for "my role": /organizations/ does not carry it
+   * and /members/me/ does not exist, so it comes from the organisation's
+   * member list, matched on the account this session already resolved to.
+   * One extra call per organisation, on the same ten-second cache as the
+   * rest of this, and usually one organisation.
+   *
+   * A list that will not load leaves the role null, which grants nothing.
+   * That is the safe direction: the screens hide controls they cannot prove
+   * are usable, rather than offering ones that answer 404.
+   */
+  const roleEntries = await Promise.all(
+    orgs.map(async (slug) => {
+      const members = await askGlitchtip(`/api/0/organizations/${encodeURIComponent(slug)}/members/`, sessionId);
+      const rows = Array.isArray(members.data) ? members.data : [];
+      const mine = rows.find(
+        (row) => row?.email && user?.email && row.email.toLowerCase() === user.email.toLowerCase()
+      );
+      return [slug, abilities(mine?.role ?? null)];
+    })
+  );
+  const orgRoles = Object.fromEntries(roleEntries);
+
+  /**
    * The list of projects this person may see, and for a person it is always
    * a list.
    *
@@ -287,6 +319,7 @@ export async function identify(req, { accessRequestFor = null } = {}) {
     sessionId,
     user,
     orgs,
+    orgRoles,
     projects,
     allauth,
     // Read straight off the identity by the access routes, which care about
