@@ -80,10 +80,17 @@ function projectCard(project, hue, onOpenReports) {
   }
 
   // Where this app runs. Kept on the card because that's where you are when
-  // you notice an app has moved, or that a new one can't report yet.
+  // you notice an app has moved, or that a new one can't report yet — but it
+  // now leads to the project's own screen, where the addresses sit beside the
+  // DSN they are addresses for, rather than to a settings page about one
+  // half of the same app.
   actions.append(
     h("a", {
-      href: routeHref(`/settings/apps/${encodeURIComponent(project.appName)}`),
+      href: routeHref(
+        project.glitchtipProject
+          ? `/projects/${encodeURIComponent(project.glitchtipProject)}`
+          : `/settings/apps/${encodeURIComponent(project.appName)}`
+      ),
       className: "button-link",
       text: project.origins?.length
         ? `Runs at ${project.origins.length === 1 ? project.origins[0] : `${project.origins.length} addresses`}`

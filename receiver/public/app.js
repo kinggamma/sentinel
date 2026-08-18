@@ -35,7 +35,7 @@ import { requestsView } from "./views/requests.js";
 import { settingsView } from "./views/settings.js";
 import { projectsView } from "./views/projects.js";
 import { reportsView } from "./views/reports.js";
-import { projectsListView, projectDetailView } from "./views/project.js";
+import { projectsListView, projectDetailView, projectNewView } from "./views/project.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import {
   signInView,
@@ -237,7 +237,20 @@ route("/settings", guarded(layer(landing, (ctx) => settingsView(ctx))));
 // A per-app save changes what a project card shows (its origin count, or —
 // for "add an app" — whether the card exists at all), so it's the one
 // caller that needs to know when settingsView has saved something.
-route("/settings/apps/:app", guarded(layer(landing, (ctx) => settingsView(ctx, { onSaved: refresh }))));
+// /settings/apps/:app was where one app's addresses were edited. That is
+// part of the project's own screen now (views/project.js), so the address
+// redirects rather than 404ing — it was linkable, and links outlive screens.
+route("/settings/apps/:app", guarded(async (ctx) => {
+  const app = ctx.params.app;
+  const forApp = (await sentinelApi.get("/projects", { signal: ctx.signal }).catch(() => null))
+    ?.projects?.find((one) => one.appName === app);
+  return goRoute(
+    forApp?.glitchtipProject
+      ? withOrg(`/projects/${encodeURIComponent(forApp.glitchtipProject)}`, organisation, { orgs: organisations })
+      : "/settings",
+    { replace: true }
+  );
+}));
 // Scoped and embedded sessions are locked to one app's reports and have no
 // "all projects" to come home to — showProjects() already refused to show
 // it for the same reason, this is that same refusal at the address level.
@@ -303,6 +316,8 @@ const projectsRoute = (view) => (ctx, me) => {
 };
 
 route("/projects", guarded(projectsRoute(projectsListView)));
+// Before the :slug route, which would otherwise match "new" as a project.
+route("/projects/new", guarded(projectsRoute(projectNewView)));
 route("/projects/:slug", guarded(projectsRoute(projectDetailView)));
 
 route("/issues", guarded(issuesRoute(issuesListView)));

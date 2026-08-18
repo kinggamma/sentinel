@@ -118,7 +118,7 @@ export async function projectsListView({ outlet, signal }, { org, orgs = [], me 
           ? h("button", {
               type: "button",
               text: "New project",
-              on: { click: () => go(routeHref(withOrg("/projects/new", linkOrg, { orgs }))) },
+              on: { click: () => go(withOrg("/projects/new", linkOrg, { orgs })) },
             })
           : null
       ),
@@ -196,12 +196,16 @@ export async function projectDetailView({ outlet, params, signal }, { org, orgs 
           h("span", { className: "muted", text: project.platform || "" })
         ),
 
+        can.canManageProjects
+          ? generalSection(project, { base, signal })
+          : null,
+
         keys.failed !== undefined
           ? unavailable("Where this project's errors come from", keys.failed, "its keys")
           : keysSection(keys.data, { base, can, signal }),
 
         app
-          ? sentinelSection(app, { linkOrg, orgs })
+          ? sentinelSection(app, { linkOrg, orgs, can, signal })
           : section(
               "Reports",
               h("p", { className: "muted",
@@ -218,6 +222,68 @@ export async function projectDetailView({ outlet, params, signal }, { org, orgs 
       )
     )
   );
+}
+
+/**
+ * Renaming a project, and saying what it is written in.
+ *
+ * The slug is deliberately not editable. It is in every SDK's DSN and in
+ * every link into GlitchTip, and changing it here would break reporting for
+ * a running app with no warning worth the risk — GlitchTip's own settings
+ * screen is one click away for anyone who genuinely means to.
+ */
+function generalSection(project, { base, signal }) {
+  const name = field({ label: "Name", id: "project-name", value: project.name || "" });
+  const platform = field({
+    label: "Platform",
+    id: "project-platform",
+    value: project.platform || "",
+    placeholder: "javascript, php, python…",
+  });
+  const saved = h("span", { className: "muted" });
+  saved.hidden = true;
+  const error = h("p", { className: "error" });
+  error.hidden = true;
+
+  const submit = h("button", { type: "submit", text: "Save" });
+
+  const form = h(
+    "form",
+    {
+      className: "project-general",
+      on: {
+        submit: async (event) => {
+          event.preventDefault();
+          error.hidden = true;
+          saved.hidden = true;
+          submit.disabled = true;
+          try {
+            await glitchtip.put(
+              `${base}/`,
+              {
+                name: name.input.value.trim() || project.name,
+                slug: project.slug,
+                platform: platform.input.value.trim() || null,
+              },
+              { signal }
+            );
+            saved.hidden = false;
+            saved.textContent = "Saved.";
+          } catch (failure) {
+            error.hidden = false;
+            error.textContent = `Couldn't save that (${failure?.status ?? 0}).`;
+          } finally {
+            submit.disabled = false;
+          }
+        },
+      },
+    },
+    name.node,
+    platform.node,
+    h("div", { className: "form-actions" }, submit, saved)
+  );
+
+  return section("Settings", form, h("p", { className: "muted mono", text: project.slug }), error);
 }
 
 /**
@@ -261,17 +327,121 @@ function keysSection(keys, { base, can, signal }) {
     )
   );
 
+  const add = can.canManageProjects
+    ? h("button", {
+        type: "button",
+        className: "ghost",
+        text: "Add a key",
+        on: {
+          click: async () => {
+            error.hidden = true;
+            try {
+              await glitchtip.post(`${base}/keys/`, { name: "" }, { signal });
+              location.reload();
+            } catch (failure) {
+              error.hidden = false;
+              error.textContent = `Couldn't add a key (${failure?.status ?? 0}).`;
+            }
+          },
+        },
+      })
+    : null;
+
   return section(
     "Where this project's errors come from",
     list.length
       ? h("div", {}, rows)
       : h("p", { className: "muted", text: "This project has no key, so nothing can report to it yet." }),
+    // The last key is not revocable: removing it silently stops every app
+    // reporting to this project, and there would be nothing left to point
+    // them at.
+    add,
     error
   );
 }
 
-/** Sentinel's half: the app, its reports, and where it may report from. */
-function sentinelSection(app, { linkOrg, orgs }) {
+/**
+ * Sentinel's half: the app, its reports, and where its browser code may
+ * report from.
+ *
+ * The origins list used to be its own screen under Settings, reached from a
+ * project card, and it was the clearest case of one thing managed in two
+ * places — a project's DSN was here in GlitchTip while the list of addresses
+ * allowed to use that DSN was over there. Same object, same page now.
+ *
+ * Note what an empty list means, because it is not "nothing may report":
+ * server-side reporting needs no entry at all, and only pages running in a
+ * browser are checked against this.
+ */
+function sentinelSection(app, { linkOrg, orgs, can, signal }) {
+  const error = h("p", { className: "error" });
+  error.hidden = true;
+  const list = h("ul", { className: "origin-list" });
+
+  const paint = (origins) => {
+    if (!origins.length) {
+      fill(list, h("li", { className: "muted",
+        text: "No addresses yet. An app reporting from its own server does not need one." }));
+      return;
+    }
+    fill(
+      list,
+      origins.map((origin) =>
+        h("li", {},
+          h("span", { className: "mono", text: origin }),
+          can.canManageProjects
+            ? h("button", {
+                type: "button",
+                className: "ghost danger",
+                text: "Remove",
+                on: { click: () => void save(origins.filter((one) => one !== origin)) },
+              })
+            : null
+        )
+      )
+    );
+  };
+
+  const save = async (next) => {
+    error.hidden = true;
+    try {
+      const body = await sentinel.put(
+        `/settings/apps/${encodeURIComponent(app.appName)}`,
+        { origins: next },
+        { signal }
+      );
+      const updated = (body?.apps || []).find((one) => one.appName === app.appName);
+      paint(updated?.origins || next);
+      return true;
+    } catch (failure) {
+      error.hidden = false;
+      error.textContent = failure?.message || "Couldn't save that.";
+      return false;
+    }
+  };
+
+  const input = h("input", {
+    type: "text",
+    attrs: { placeholder: "https://app.example.org", "aria-label": "Address this app reports from" },
+  });
+
+  const form = can.canManageProjects
+    ? h("form", {
+        className: "origin-add",
+        on: {
+          submit: async (event) => {
+            event.preventDefault();
+            const value = input.value.trim();
+            if (!value) return;
+            const current = [...list.querySelectorAll(".mono")].map((node) => node.textContent);
+            if (await save([...current, value])) input.value = "";
+          },
+        },
+      }, input, h("button", { type: "submit", text: "Add" }))
+    : null;
+
+  paint(app.origins || []);
+
   return section(
     "Reports",
     h("p", {},
@@ -281,10 +451,10 @@ function sentinelSection(app, { linkOrg, orgs }) {
         text: `${app.total} report${app.total === 1 ? "" : "s"} from ${app.appName} →`,
       })
     ),
-    h("p", { className: "muted",
-      text: app.origins?.length
-        ? `Reports accepted from: ${app.origins.join(", ")}`
-        : "No origins are allowed to post reports for this app yet." })
+    h("h4", { text: "Where its browser code may report from" }),
+    list,
+    form,
+    error
   );
 }
 
@@ -331,5 +501,130 @@ function alertsSection(alerts, { can }) {
           text: can.canManageProjects
             ? "No alert rules, so nobody is told when this project starts failing."
             : "No alert rules on this project." })
+  );
+}
+
+/**
+ * Making a project.
+ *
+ * GlitchTip creates projects under a team rather than under the
+ * organisation, so this has to ask which — and a team is not something most
+ * people here think about, so it picks the only one when there is only one
+ * and explains itself when there is a choice.
+ *
+ * The slug is derived rather than asked for. It is what goes in the DSN and
+ * in every link, it has to be URL-safe, and offering a second box that must
+ * "usually match the first" is a way to get two names for one thing.
+ */
+export async function projectNewView({ outlet, signal }, { org, orgs = [], me } = {}) {
+  const can = me?.orgRoles?.[org] || {};
+  const linkOrg = orgs.length > 1 ? org : null;
+  const back = h("a", {
+    className: "linky",
+    href: routeHref(withOrg("/projects", linkOrg, { orgs })),
+    text: "← All projects",
+  });
+
+  if (!org || !can.canManageProjects) {
+    /**
+     * Reachable by typing the address, so it is refused here as well as
+     * hidden on the list. GlitchTip would refuse it too, with a 404 that
+     * explains nothing — this at least says which of the two it is.
+     */
+    fill(
+      outlet,
+      h("div", { className: "issues-view" }, back,
+        h("p", { className: "muted",
+          text: "Creating a project needs the admin role in this organisation. Ask an owner." }))
+    );
+    return;
+  }
+
+  const teams = await settle(glitchtip.get(`/organizations/${encodeURIComponent(org)}/teams/`, { signal }));
+  throwIfAborted(signal);
+
+  if (teams.failed !== undefined) {
+    fill(outlet, h("div", { className: "issues-view" }, back,
+      h("p", { className: "error", text: readFailure(teams.failed, "the teams to create it under") })));
+    return;
+  }
+
+  const available = teams.data || [];
+  if (!available.length) {
+    fill(outlet, h("div", { className: "issues-view" }, back,
+      h("p", { className: "muted",
+        text: "There is no team to create a project under yet. GlitchTip keeps projects in teams; make one there first." })));
+    return;
+  }
+
+  const name = field({ label: "Name", id: "new-project-name", placeholder: "Admin panel" });
+  const team = h(
+    "select",
+    { id: "new-project-team" },
+    available.map((one) => h("option", { value: one.slug, text: one.slug }))
+  );
+  const error = h("p", { className: "error" });
+  error.hidden = true;
+  const submit = h("button", { type: "submit", text: "Create project" });
+
+  const slugify = (value) =>
+    value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+  const form = h(
+    "form",
+    {
+      on: {
+        submit: async (event) => {
+          event.preventDefault();
+          error.hidden = true;
+          const label = name.input.value.trim();
+          const slug = slugify(label);
+          if (!slug) {
+            error.hidden = false;
+            error.textContent = "Give it a name with some letters or numbers in it.";
+            return;
+          }
+
+          submit.disabled = true;
+          try {
+            const created = await glitchtip.post(
+              `/teams/${encodeURIComponent(org)}/${encodeURIComponent(team.value)}/projects/`,
+              { name: label, slug, platform: null },
+              { signal }
+            );
+            go(withOrg(`/projects/${encodeURIComponent(created.slug || slug)}`, linkOrg, { orgs }));
+          } catch (failure) {
+            error.hidden = false;
+            error.textContent =
+              failure?.status === 400
+                ? `Something already uses "${slug}".`
+                : `Couldn't create that (${failure?.status ?? 0}).`;
+            submit.disabled = false;
+          }
+        },
+      },
+    },
+    name.node,
+    available.length > 1
+      ? h("label", { className: "field" },
+          h("span", { className: "field-label", text: "Team" }), team)
+      : null,
+    h("div", { className: "form-actions" }, submit)
+  );
+
+  fill(
+    outlet,
+    h("div", { className: "issues-view" },
+      h("section", { className: "issue-detail" },
+        back,
+        h("header", { className: "detail-head" }, h("h2", { text: "New project" })),
+        h("p", { className: "muted",
+          text: available.length === 1
+            ? `It will be created in the ${available[0].slug} team.`
+            : "GlitchTip keeps projects in teams; pick the one this belongs to." }),
+        form,
+        error
+      )
+    )
   );
 }
