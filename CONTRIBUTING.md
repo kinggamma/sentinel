@@ -74,13 +74,22 @@ network access beyond its own origin.
    against a virtual authenticator, and every screen at 390px.
 
    `test:manage` presses the buttons that write: making a project, renaming
-   it, adding and revoking keys, creating an alert and testing it, hiding an
-   environment, building a team and pointing it at a project, and the role
-   rules on People. It is safe by construction — every object it touches is
-   one it made, named after the run, and removed again — with two stated
-   exceptions: it raises the smoke account's role and puts it back, and it
-   hides one existing environment and unhides it. It sweeps anything a
-   previous run stranded, and its last check is that it left nothing.
+   it, adding and revoking keys, creating an alert and editing, testing and
+   deleting it, hiding and showing an environment, building a team, pointing
+   it at a project and deleting it from its own screen, and — on People —
+   inviting somebody, promoting them, removing them, and declining a request
+   somebody really made.
+
+   Everything it touches is its own. The project, team, alert, environment,
+   the invited member and the applicant who asks for access are all created
+   by the run, named after it, and removed again; its last check is that
+   nothing was left, and it sweeps what an earlier run stranded. It asks the
+   API which organisation it is in rather than assuming one.
+
+   The single exception is stated because it is shared: it raises the smoke
+   account's role, since that is the account it can sign in as and the whole
+   point is what a role permits. It puts it back in a `finally` and then
+   checks that it did.
 
    `test:orgs` is the one that reconfigures things. Belonging to two
    organisations is unreachable on a single-organisation install, so it

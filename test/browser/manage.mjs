@@ -32,9 +32,12 @@ const MOUNT = `${BASE}/sentinel`;
 const EMAIL = process.env.SMOKE_EMAIL || "sentinel-smoke@example.com";
 
 /** Named after the run, so two runs cannot collide and cleanup is exact. */
-const RUN = `suite${process.pid}`;
+const MARKER = "sentinel-manage-suite";
+const RUN = `${MARKER}-${process.pid}`;
 const PROJECT = `${RUN}-project`;
 const TEAM = `${RUN}-team`;
+/** Invited, promoted, demoted and removed by this suite. Never a real person. */
+const GUEST = `${RUN}@example.com`;
 
 let passed = 0;
 const failures = [];
@@ -96,15 +99,161 @@ from django.apps import apps
 from django.contrib.auth import get_user_model
 OrgUser = apps.get_model('organizations_ext','OrganizationUser')
 u = get_user_model().objects.get(email=${JSON.stringify(EMAIL)})
-ou = OrgUser.objects.get(user=u, organization__slug=${JSON.stringify(process.env.GLITCHTIP_ORG || "almareem")})
+ou = OrgUser.objects.get(user=u, organization__slug=${JSON.stringify(ORG)})
 ou.role = [r for r in ou._meta.get_field('role').choices if r[1].lower()==${JSON.stringify(role)}][0][0]
 ou.save()
 print("role", ou.get_role_display())`);
   assert(out.toLowerCase().includes(role), `could not set the role to ${role}: ${out.trim()}`);
 }
 
-const ORG = process.env.GLITCHTIP_ORG || "almareem";
+/**
+ * Which organisation, asked rather than assumed.
+ *
+ * This was the name of one particular installation's organisation, written
+ * into a file in a public repository, and every check in here would have
+ * failed on anybody else's deployment for a reason that looked like a bug in
+ * the code under test.
+ */
+let ORG = "";
+
+async function organisationOf(key) {
+  const me = await api("/sentinel/api/auth/me", key);
+  const [first] = me?.orgs || [];
+  assert(first, "the smoke account belongs to no organisation");
+  return first;
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A pending request, put straight into the receiver's own store.
+ *
+ * The queue is Sentinel's, not GlitchTip's, and the only way to get into it
+ * is to be somebody with no organisation asking — which this account cannot
+ * be while it is a manager. So the record goes in directly, and comes out
+ * again by the same route.
+ */
+function receiverFile(python) {
+  return execFileSync(
+    "docker",
+    ["compose", "exec", "-T", "feedback-receiver", "node", "-e", python],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+  );
+}
+
+/**
+ * Somebody with no organisation, who asks to be let in.
+ *
+ * The queue is Sentinel's own and is only written by the endpoint an
+ * applicant posts to, from a session that belongs to nobody yet. Writing the
+ * file directly does not work — the receiver reads it once and keeps it —
+ * and restarting the receiver to make it notice would make this suite the
+ * thing it was written not to be.
+ *
+ * So it makes a real applicant: a throwaway GlitchTip account in no
+ * organisation, signed in the way the smoke script signs in, posting the
+ * request itself. Deleted afterwards, account and all. Nothing shared is
+ * touched, and the path being tested is the one people actually walk.
+ */
+function makeApplicant(email) {
+  const password = `Ap-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+  django(`
+from django.contrib.auth import get_user_model
+User = get_user_model()
+user, _ = User.objects.get_or_create(email=${JSON.stringify(email)})
+user.set_password(${JSON.stringify(password)})
+user.is_active = True
+user.save()
+print("made")`);
+  return { email, password };
+}
+
+function removeApplicant(email) {
+  django(`
+from django.contrib.auth import get_user_model
+get_user_model().objects.filter(email=${JSON.stringify(email)}).delete()
+print("removed")`);
+}
+
+/** Signs in as them and asks, which is the only way into the queue. */
+async function askForAccess({ email, password }) {
+  const jar = [];
+  const keep = (res) => {
+    for (const value of (res.headers.getSetCookie?.() || [])) jar.push(value.split(";")[0]);
+  };
+  const cookie = () => jar.join("; ");
+
+  keep(await fetch(`${BASE}/_allauth/browser/v1/auth/session`, { headers: { cookie: cookie() } }));
+  const csrf = jar.join("; ").match(/csrftoken=([^;]+)/)?.[1] || "";
+
+  const login = await fetch(`${BASE}/_allauth/browser/v1/auth/login`, {
+    method: "POST",
+    headers: { cookie: cookie(), "content-type": "application/json", "x-csrftoken": csrf },
+    body: JSON.stringify({ email, password }),
+  });
+  keep(login);
+  const session = jar.join("; ").match(/sessionid=([^;]+)/)?.[1];
+  assert(session, `the applicant could not sign in (${login.status})`);
+
+  const token = await receiverToken();
+  const asked = await fetch(`${BASE}/sentinel/api/access/request`, {
+    method: "POST",
+    headers: {
+      cookie: `sessionid=${session}; sentinel-csrf=${token}`,
+      "x-sentinel-csrf": token,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ note: "put here by the management suite" }),
+  });
+  assert(asked.status === 201, `asking for access answered ${asked.status}`);
+  return session;
+}
+
+function seedRequest(email) {
+  receiverFile(`
+const fs = require("fs");
+const path = "/data/access-requests.json";
+const all = JSON.parse(fs.readFileSync(path, "utf8") || "{}");
+all[${JSON.stringify(email)}] = {
+  id: ${JSON.stringify(email)},
+  email: ${JSON.stringify(email)},
+  name: null,
+  note: "put here by the management suite",
+  organisation: ${JSON.stringify(ORG)},
+  status: "pending",
+  requestedAt: new Date().toISOString(),
+  decidedAt: null,
+};
+fs.writeFileSync(path, JSON.stringify(all, null, 2));
+console.log("seeded");`);
+}
+
+function clearRequest(email) {
+  receiverFile(`
+const fs = require("fs");
+const path = "/data/access-requests.json";
+const all = JSON.parse(fs.readFileSync(path, "utf8") || "{}");
+delete all[${JSON.stringify(email)}];
+fs.writeFileSync(path, JSON.stringify(all, null, 2));
+console.log("cleared");`);
+}
+
+/**
+ * The receiver's own CSRF token, which its writes require.
+ *
+ * Fetched once and kept. Calling this twice — once for the cookie and once
+ * for the header — hands out two different tokens, and a double-submit check
+ * comparing two different tokens refuses every time. Which is exactly what
+ * it did.
+ */
+let receiverCsrf = null;
+
+async function receiverToken() {
+  if (receiverCsrf) return receiverCsrf;
+  const res = await fetch(`${BASE}/sentinel/`, { headers: { accept: "text/html" } });
+  receiverCsrf = (res.headers.get("set-cookie") || "").match(/sentinel-csrf=([^;]+)/)?.[1] || "";
+  return receiverCsrf;
+}
 
 /** Ask GlitchTip what is actually there, rather than trusting the screen. */
 async function api(path, key) {
@@ -120,22 +269,39 @@ async function main() {
   let elevated = false;
 
   try {
+    // Before anything else: the role fixture and the sweep both name it.
+    const opening = session();
+    ORG = await organisationOf(opening.key);
+    process.stdout.write(`  (organisation: ${ORG})\n`);
+
     /**
-     * Anything a previous run left, before this one adds to it.
+     * Anything a previous run of *this* suite left, and nothing else.
      *
-     * Earlier versions of this suite failed partway and stranded a project
-     * and two teams, which then sat in a real organisation looking like
-     * somebody's work. Sweeping every run's prefix rather than only this
-     * one's means a run that dies is repaired by the next instead of
-     * accumulating.
+     * The sweep matched slug__startswith='suite', which would have deleted a
+     * real project or team belonging to somebody whose naming happened to
+     * begin that way. The names this suite makes are a fixed marker followed
+     * by the process id, so that is exactly what it removes — a pattern
+     * nothing chosen by a person looks like.
      */
     django(`
+import re
 from django.apps import apps
 Project = apps.get_model('projects','Project')
 Team = apps.get_model('teams','Team')
-project = Project.objects.filter(slug__startswith='suite', slug__endswith='-project').delete()
-team = Team.objects.filter(slug__startswith='suite', slug__endswith='-team').delete()
-print("swept", project, team)`);
+mine = re.compile(r"^sentinel-manage-suite-\\d+-(project|team)$")
+projects = [p.id for p in Project.objects.filter(slug__startswith=${JSON.stringify(MARKER)}) if mine.match(p.slug)]
+teams = [t.id for t in Team.objects.filter(slug__startswith=${JSON.stringify(MARKER)}) if mine.match(t.slug)]
+Project.objects.filter(id__in=projects).delete()
+Team.objects.filter(id__in=teams).delete()
+# And the throwaway accounts, which are only ever made by this suite.
+# Matched in Python, not with startswith: the email column has a
+# nondeterministic collation and Postgres refuses LIKE against it.
+from django.contrib.auth import get_user_model
+User = get_user_model()
+stale = [u.id for u in User.objects.only("id", "email")
+         if str(u.email or "").startswith(${JSON.stringify(MARKER)})]
+User.objects.filter(id__in=stale).delete()
+print("swept", len(projects), "project(s),", len(teams), "team(s),", len(stale), "account(s)")`);
 
     setRole("manager");
     elevated = true;
@@ -152,6 +318,37 @@ print("swept", project, team)`);
 
     const section = (title) =>
       page.locator(".detail-section").filter({ has: page.locator("h3", { hasText: title }) });
+
+    /**
+     * A window of its own, on a session minted for it.
+     *
+     * The long-lived context loses its session partway through a run that
+     * changes roles — /auth/me answers 200 and answers it as nobody, and the
+     * app correctly goes to sign-in. Why the cookie stops being sent is not
+     * understood and deserves chasing on its own; what it must not do is
+     * turn a real check into a timeout waiting for a selector.
+     *
+     * It is also the better fixture where a check depends on a role: a
+     * session created after the role was set is the one that has it.
+     */
+    const freshWindow = async () => {
+      const fresh = session();
+      const own = await browser.newContext();
+      await own.addCookies([
+        { name: "sessionid", value: fresh.key, domain: "localhost", path: "/", httpOnly: true },
+      ]);
+      const view = await own.newPage();
+      view.on("pageerror", (error) => broke.push(error.message));
+      return {
+        view,
+        // The session this window is using, for the checks that call the API
+        // directly and must do so as whoever the window is.
+        key: fresh.key,
+        close: () => own.close(),
+        section: (title) =>
+          view.locator(".detail-section").filter({ has: view.locator("h3", { hasText: title }) }),
+      };
+    };
 
     // ------------------------------------------------------------ projects
 
@@ -215,7 +412,7 @@ print("swept", project, team)`);
 
     // -------------------------------------------------------------- alerts
 
-    await test("an alert can be made, tested and deleted", async () => {
+    await test("an alert can be made, edited, tested and deleted", async () => {
       await page.goto(`${MOUNT}/projects/${PROJECT}`, { waitUntil: "networkidle" });
       await page.waitForSelector("#alert-quantity", { timeout: 15_000 });
 
@@ -229,8 +426,23 @@ print("swept", project, team)`);
       assert(made.length === 1, `expected one alert, GlitchTip has ${made.length}`);
       assert(made[0].quantity === 5 && made[0].timespanMinutes === 30, "the numbers did not arrive");
 
+      // Editing the threshold, which is the half of a rule most likely to be
+      // wrong on the first attempt and was previously unchangeable.
       const row = section("Alerts").locator("li").filter({ hasText: `${RUN} alert` });
-      await row.locator("button", { hasText: "Test" }).click();
+      await row.locator("button", { hasText: "Edit" }).click();
+      await page.waitForSelector(".modal", { timeout: 10_000 });
+      await page.fill(`#edit-quantity-${made[0].id}`, "25");
+      await page.locator(".modal button", { hasText: "Save" }).click();
+      await page.waitForTimeout(4000);
+      const edited = (await api(`/api/0/projects/${ORG}/${PROJECT}/alerts/`, key)) || [];
+      assert(edited[0]?.quantity === 25, `the threshold is ${edited[0]?.quantity}, not 25`);
+      assert(
+        (edited[0]?.alertRecipients || []).length === (made[0].alertRecipients || []).length,
+        "editing the threshold changed who is told about it"
+      );
+
+      await section("Alerts").locator("li").filter({ hasText: `${RUN} alert` })
+        .locator("button", { hasText: "Test" }).click();
       await page.waitForFunction(
         () => /:/.test(document.querySelector(".alert-results")?.textContent || ""),
         { timeout: 20_000 }
@@ -246,7 +458,8 @@ print("swept", project, team)`);
         `the test said nothing useful: ${JSON.stringify(outcome)}`
       );
 
-      await row.locator("button", { hasText: "Delete" }).click();
+      await section("Alerts").locator("li").filter({ hasText: `${RUN} alert` })
+        .locator("button", { hasText: "Delete" }).click();
       await page.waitForSelector(".modal", { timeout: 10_000 });
       await page.locator(".modal button", { hasText: "Delete it" }).click();
       await page.waitForTimeout(4000);
@@ -257,52 +470,64 @@ print("swept", project, team)`);
     // -------------------------------------------------------- environments
 
     await test("an environment can be hidden and shown again", async () => {
-      // On a real project, because a new one has never been reported to.
-      await page.goto(`${MOUNT}/projects/e-library`, { waitUntil: "networkidle" });
-      await page.waitForSelector(".detail-section", { timeout: 15_000 });
-
-      if (!(await section("Environments").locator("button").count())) return; // none reported yet
-
-      const name = (await section("Environments").locator("li .tag-value").first().textContent())
-        .trim();
       /**
-       * Asked for all of them, not the default.
+       * On this suite's own project, with an environment this suite puts
+       * there.
        *
-       * The default view is visible-only, so a hidden environment is simply
-       * absent from it — and "absent" would read here as "unchanged", which
-       * is how this check passed a screen that could hide but never show.
+       * It used to hide and unhide one belonging to a real project, which is
+       * somebody's filter list — and when no environment existed it returned
+       * early and reported a pass, so the check most likely to be skipped was
+       * the one that mattered. An environment only exists once something has
+       * reported under it, so rather than wait for that, the rows go in
+       * directly and come out again.
        */
-      const stateOf = async () => {
-        const all =
-          (await api(`/api/0/projects/${ORG}/e-library/environments/?visibility=all`, key)) || [];
-        const found = all.find((one) => one.name === name);
-        assert(found, `${name} vanished from the environment list entirely`);
-        return found.isHidden;
-      };
+      const NAME = `${RUN}-env`;
+      django(`
+from django.apps import apps
+Environment = apps.get_model('environments','Environment')
+EnvironmentProject = apps.get_model('environments','EnvironmentProject')
+Project = apps.get_model('projects','Project')
+project = Project.objects.get(slug=${JSON.stringify(PROJECT)})
+environment, _ = Environment.objects.get_or_create(
+    name=${JSON.stringify(NAME)}, organization=project.organization)
+EnvironmentProject.objects.get_or_create(
+    environment=environment, project=project, defaults={"is_hidden": False})
+print("seeded")`);
 
-      // Starts from whatever it is, so a previous run or a real preference
-      // does not decide whether this passes — and ends where it started.
-      const started = await stateOf();
-      const flip = async (label) => {
-        await page.goto(`${MOUNT}/projects/e-library`, { waitUntil: "networkidle" });
-        await page.waitForSelector(".detail-section", { timeout: 15_000 });
-        const button = section("Environments").locator("button", { hasText: label }).first();
-        assert(await button.count(), `no ${label} button for ${name}`);
-        await button.click();
-        await page.waitForTimeout(4000);
-      };
+      try {
+        const stateOf = async () => {
+          const all =
+            (await api(`/api/0/projects/${ORG}/${PROJECT}/environments/?visibility=all`, key)) || [];
+          const found = all.find((one) => one.name === NAME);
+          assert(found, `${NAME} is not in the environment list at all`);
+          return found.isHidden;
+        };
+        assert((await stateOf()) === false, "the seeded environment should start visible");
 
-      await flip(started ? "Show" : "Hide");
-      assert(
-        (await stateOf()) === !started,
-        `${name} did not change: still ${(await stateOf()) ? "hidden" : "shown"}`
-      );
+        const flip = async (label) => {
+          await page.goto(`${MOUNT}/projects/${PROJECT}`, { waitUntil: "networkidle" });
+          await page.waitForSelector(".detail-section", { timeout: 15_000 });
+          const row = section("Environments").locator("li").filter({ hasText: NAME });
+          const button = row.locator("button", { hasText: label });
+          assert(await button.count(), `no ${label} button for ${NAME}`);
+          await button.click();
+          await page.waitForTimeout(4000);
+        };
 
-      await flip(started ? "Hide" : "Show");
-      assert(
-        (await stateOf()) === started,
-        `${name} was left ${(await stateOf()) ? "hidden" : "shown"} — it must go back`
-      );
+        await flip("Hide");
+        assert((await stateOf()) === true, `${NAME} was not hidden`);
+
+        // Still reachable, which is the whole difference between hiding and
+        // deleting — the default list would no longer show it at all.
+        await flip("Show");
+        assert((await stateOf()) === false, `${NAME} could not be shown again`);
+      } finally {
+        django(`
+from django.apps import apps
+Environment = apps.get_model('environments','Environment')
+Environment.objects.filter(name=${JSON.stringify(NAME)}).delete()
+print("removed")`);
+      }
     });
 
     // --------------------------------------------------------------- teams
@@ -339,6 +564,24 @@ print("swept", project, team)`);
       assert(!after.some((one) => one.slug === PROJECT), "the project stayed in the team");
     });
 
+    await test("a team can be deleted from its own screen", async () => {
+      /**
+       * Through the button, not through the cleanup that runs afterwards.
+       * Cleanup deleting it proves the API works and says nothing about
+       * whether anybody can reach that from the product.
+       */
+      await page.goto(`${MOUNT}/teams/${TEAM}`, { waitUntil: "networkidle" });
+      await page.waitForSelector("#team-slug", { timeout: 15_000 });
+
+      await page.locator("button", { hasText: "Delete this team" }).click();
+      await page.waitForSelector(".modal", { timeout: 10_000 });
+      await page.locator(".modal button", { hasText: "Delete it" }).click();
+      await page.waitForFunction(() => location.pathname.endsWith("/teams"), { timeout: 20_000 });
+
+      const teams = (await api(`/api/0/organizations/${ORG}/teams/`, key)) || [];
+      assert(!teams.some((one) => one.slug === TEAM), "the team is still there");
+    });
+
     // -------------------------------------------------------------- people
 
     await test("a member sees no queue, and a manager does", async () => {
@@ -362,22 +605,135 @@ print("swept", project, team)`);
       setRole("manager");
     });
 
-    await test("the invitation form offers a team, so nobody is invited into none", async () => {
-      const fresh = session();
-      const other = await browser.newContext();
-      await other.addCookies([
-        { name: "sessionid", value: fresh.key, domain: "localhost", path: "/", httpOnly: true },
-      ]);
-      const view = await other.newPage();
+    await test("somebody can be invited, promoted and removed", async () => {
+      /**
+       * On a guest this suite invites, never on a real member.
+       *
+       * These three are the writes People exists for, and none of them were
+       * covered — the shared selector bug and the empty teamRoles both lived
+       * in this path and were found by reading rather than by running.
+       *
+       * The invitation needs no mail to be configured: GlitchTip creates the
+       * membership either way and hands back a link, and it is the membership
+       * these check.
+       */
+      const { view, close, section: part } = await freshWindow();
+      try {
       await view.goto(`${MOUNT}/people`, { waitUntil: "networkidle" });
       await view.waitForSelector("#invite-email", { timeout: 15_000 });
 
-      const teams = await view.evaluate(() =>
+      // A team is offered at all, which is what stops an invitation landing
+      // somebody in none — the state where they sign in and see nothing.
+      const offered = await view.evaluate(() =>
         [...(document.getElementById("invite-team")?.options || [])].map((o) => o.value)
       );
-      assert(teams.length, "no team to invite into — every invitation would see nothing");
-      assert(teams.includes(TEAM), `the team this run made is not offered: ${teams.join(", ")}`);
-      await other.close();
+      assert(offered.length, "no team offered, so every invitation sees nothing");
+
+      await view.fill("#invite-email", GUEST);
+      await part("Invite somebody").locator("button[type=submit]").click();
+      await view.waitForFunction(
+        (who) => [...document.querySelectorAll("#view tbody tr")].some((r) => r.textContent.includes(who)),
+        GUEST,
+        { timeout: 20_000 }
+      );
+
+      const invited = ((await api(`/api/0/organizations/${ORG}/members/`, key)) || []).find(
+        (one) => one.email === GUEST
+      );
+      assert(invited, "the screen listed them but GlitchTip has no such member");
+      assert(invited.role === "member", `invited as ${invited.role}`);
+
+      // A team, because an invitation into none produces somebody who signs
+      // in and sees nothing — the bug this form used to have.
+      const teams = (await api(`/api/0/organizations/${ORG}/members/${invited.id}/`, key))?.teams;
+      assert(
+        !teams || teams.length,
+        "invited into no team at all, which grants sight of nothing"
+      );
+
+      const row = view.locator("#view tbody tr").filter({ hasText: GUEST });
+      await row.locator("select").selectOption("admin");
+      await view.waitForTimeout(4000);
+      const promoted = ((await api(`/api/0/organizations/${ORG}/members/`, key)) || []).find(
+        (one) => one.email === GUEST
+      );
+      assert(promoted?.role === "admin", `role is ${promoted?.role}, not admin`);
+
+      await view.locator("#view tbody tr").filter({ hasText: GUEST })
+        .locator("button", { hasText: "Remove" }).click();
+      await view.waitForSelector(".modal", { timeout: 10_000 });
+      await view.locator(".modal button", { hasText: "Remove them" }).click();
+      await view.waitForFunction(
+        (who) => ![...document.querySelectorAll("#view tbody tr")].some((r) => r.textContent.includes(who)),
+        GUEST,
+        { timeout: 20_000 }
+      );
+      const gone = ((await api(`/api/0/organizations/${ORG}/members/`, key)) || []).some(
+        (one) => one.email === GUEST
+      );
+      assert(!gone, "removed from the screen but still a member");
+      } finally {
+        await close();
+      }
+    });
+
+    await test("a request can be declined, and approving says why it cannot", async () => {
+      /**
+       * Declining is entirely Sentinel's own and always works. Approving
+       * needs the GlitchTip service token, which an installation may simply
+       * not have configured — so what is checked there is that it says so,
+       * rather than failing silently or pretending it worked.
+       */
+      const applicant = `${RUN}-applicant@example.com`;
+      const who = makeApplicant(applicant);
+      await askForAccess(who);
+
+      const { view, close, key: mine, section: part } = await freshWindow();
+      try {
+      await view.goto(`${MOUNT}/people`, { waitUntil: "networkidle" });
+      await view.waitForSelector(".detail-section", { timeout: 15_000 });
+      const waiting = part("Waiting to be let in").locator("li").filter({ hasText: applicant });
+      assert(await waiting.count(), "the seeded request is not on the screen");
+
+      // The id is the record's own, not the address — they were the same
+      // only in a version of this test that wrote the file by hand.
+      const queued = await api("/sentinel/api/access/requests", mine);
+      const record = (queued?.requests || []).find((one) => one.email === applicant);
+      assert(record, "the request this suite made is not in the queue the API returns");
+
+      const approveToken = await receiverToken();
+      const approve = await fetch(
+        `${BASE}/sentinel/api/access/requests/${encodeURIComponent(record.id)}/approve`,
+        {
+          method: "POST",
+          headers: {
+            Cookie: `sessionid=${mine}; sentinel-csrf=${approveToken}`,
+            "x-sentinel-csrf": approveToken,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ organisation: ORG }),
+        }
+      );
+      const said = await approve.json().catch(() => ({}));
+      assert(
+        approve.status === 200 || (approve.status === 501 && /service token/i.test(said.error || "")),
+        `approving answered ${approve.status}: ${JSON.stringify(said).slice(0, 120)}`
+      );
+
+      await waiting.locator("button", { hasText: "Decline" }).click();
+      await view.waitForFunction(
+        (who) => !document.body.textContent.includes(who),
+        applicant,
+        { timeout: 20_000 }
+      );
+      const queue = await api("/sentinel/api/access/requests", mine);
+      const still = (queue?.requests || []).find((one) => one.email === applicant);
+      assert(still?.status === "declined", `the request is ${still?.status ?? "gone"}, not declined`);
+      clearRequest(applicant);
+      } finally {
+        await close();
+        removeApplicant(applicant);
+      }
     });
 
     await test("nobody may change their own row", async () => {
@@ -439,6 +795,11 @@ print("swept", project, team)`);
       const { key } = session();
       const csrf = await tokenFor(key);
       if (csrf) {
+        // The guest, whether or not the test that removes them got that far.
+        const members = (await api(`/api/0/organizations/${ORG}/members/`, key)) || [];
+        for (const one of members.filter((m) => String(m.email || "").startsWith(MARKER))) {
+          await remove(`/api/0/organizations/${ORG}/members/${one.id}/`, key, csrf);
+        }
         await remove(`/api/0/teams/${ORG}/${TEAM}/`, key, csrf);
         await remove(`/api/0/projects/${ORG}/${PROJECT}/`, key, csrf);
       } else {
@@ -446,6 +807,21 @@ print("swept", project, team)`);
       }
     } catch (error) {
       process.stdout.write(`  ! cleanup could not sign in: ${error.message}\n`);
+    }
+
+    try {
+      // Any request this suite put in the queue, decided or not.
+      receiverFile(`
+const fs = require("fs");
+const path = "/data/access-requests.json";
+const all = JSON.parse(fs.readFileSync(path, "utf8") || "{}");
+for (const key of Object.keys(all)) {
+  if (key.startsWith(${JSON.stringify(MARKER)})) delete all[key];
+}
+fs.writeFileSync(path, JSON.stringify(all, null, 2));
+console.log("swept");`);
+    } catch (error) {
+      process.stdout.write(`  ! could not clear seeded requests: ${error.message}\n`);
     }
 
     try {
@@ -495,7 +871,9 @@ async function remove(path, key, csrf) {
     });
     // Said out loud. A silent cleanup failure is how the check at the end
     // ends up reporting a leak with no clue why it happened.
-    if (res.status >= 400) {
+    // 404 is the outcome cleanup wanted: something already removed it, which
+    // on a good run is the test that deletes it through the screen.
+    if (res.status >= 400 && res.status !== 404) {
       process.stdout.write(`  ! cleanup of ${path} answered ${res.status}\n`);
     }
   } catch (error) {

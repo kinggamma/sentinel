@@ -160,7 +160,16 @@ export function modal({ title, body, actions = [], onClose } = {}) {
  * @param {string} [options.confirm] - the label on the button that does it.
  * @returns {Promise<boolean>} whether to go ahead.
  */
-export function confirmAction({ title, detail, confirm = "Yes, do it" } = {}) {
+/**
+ * @param {object} options
+ * @param {string} options.title
+ * @param {string} [options.detail] - a sentence about the consequence.
+ * @param {Node} [options.body] - fields to fill in, for the times the
+ *   question is "with what?" rather than "are you sure?". Given instead of
+ *   `detail`; a dialog asking both at once is two dialogs wearing one hat.
+ * @param {string} [options.confirm]
+ */
+export function confirmAction({ title, detail, body = null, confirm = "Yes, do it" } = {}) {
   return new Promise((resolve) => {
     let answered = false;
     const answer = (value) => {
@@ -172,14 +181,15 @@ export function confirmAction({ title, detail, confirm = "Yes, do it" } = {}) {
 
     const go = h("button", {
       type: "button",
-      className: "danger",
+      // A form to fill in is not a destructive act; only a warning is.
+      className: body ? "" : "danger",
       text: confirm,
       on: { click: () => answer(true) },
     });
 
     const dialog = modal({
       title,
-      body: h("p", { className: "muted", text: detail }),
+      body: body || h("p", { className: "muted", text: detail }),
       actions: [
         h("button", { type: "button", className: "ghost", text: "Cancel", on: { click: () => answer(false) } }),
         go,

@@ -602,6 +602,76 @@ function alertsSection(alerts, { base, can, signal }) {
     }
   };
 
+  /**
+   * Changing a threshold that is already live.
+   *
+   * The numbers are the whole rule, and getting them wrong is quiet in both
+   * directions — too low and everybody learns to ignore it, too high and
+   * nobody hears anything. Being able to set it once and never adjust it is
+   * how a rule ends up in the first state permanently.
+   *
+   * Recipients are deliberately not edited here. GlitchTip replaces the
+   * whole list on update, so an edit form that showed them would have to
+   * rebuild every one from what it rendered — and getting that wrong silently
+   * detaches the people who were being told. Changing who hears about it is
+   * deleting the rule and making the one you meant, which is two obvious
+   * steps rather than one that looks obvious and is not.
+   */
+  const edit = async (alert) => {
+    say("");
+    const quantity = field({
+      label: "Errors",
+      id: `edit-quantity-${alert.id}`,
+      value: String(alert.quantity ?? ""),
+    });
+    const minutes = field({
+      label: "In how many minutes",
+      id: `edit-minutes-${alert.id}`,
+      value: String(alert.timespanMinutes ?? ""),
+    });
+    const named = field({
+      label: "Name",
+      id: `edit-name-${alert.id}`,
+      value: alert.name || "",
+    });
+
+    const saved = await confirmAction({
+      title: "Change this alert",
+      body: h("div", {}, named.node, quantity.node, minutes.node),
+      confirm: "Save",
+    });
+    if (!saved) return;
+
+    const count = Number(quantity.input.value);
+    const window = Number(minutes.input.value);
+    if (!Number.isFinite(count) || count < 1 || !Number.isFinite(window) || window < 1) {
+      say("How many errors, and over how many minutes — both need to be numbers above zero.");
+      return;
+    }
+
+    try {
+      await glitchtip.put(
+        `${base}/alerts/${encodeURIComponent(alert.id)}/`,
+        {
+          name: named.input.value.trim() || null,
+          timespanMinutes: window,
+          quantity: count,
+          uptime: Boolean(alert.uptime),
+          // Sent back as they came, so saving a threshold does not quietly
+          // rebuild who is told about it.
+          alertRecipients: (alert.alertRecipients || []).map((one) => ({
+            recipientType: one.recipientType,
+            ...(one.url ? { url: one.url } : {}),
+          })),
+        },
+        { signal }
+      );
+      location.reload();
+    } catch (failure) {
+      say(failure?.message || `Couldn't save that (${failure?.status ?? 0}).`);
+    }
+  };
+
   /** What happened, per recipient, in GlitchTip's own words. */
   const test = async (alert) => {
     say("");
@@ -666,6 +736,12 @@ function alertsSection(alerts, { base, can, signal }) {
         ? h(
             "span",
             { className: "row-actions" },
+            h("button", {
+              type: "button",
+              className: "ghost",
+              text: "Edit",
+              on: { click: () => void edit(alert) },
+            }),
             h("button", {
               type: "button",
               className: "ghost",
