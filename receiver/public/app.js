@@ -36,6 +36,7 @@ import { projectsView } from "./views/projects.js";
 import { reportsView } from "./views/reports.js";
 import { projectsListView, projectDetailView, projectNewView } from "./views/project.js";
 import { peopleView } from "./views/people.js";
+import { teamsListView, teamNewView, teamDetailView } from "./views/teams.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import {
   signInView,
@@ -320,6 +321,11 @@ const projectsRoute = (view) => (ctx, me) => {
 
 route("/people", guarded(projectsRoute(peopleView)));
 
+route("/teams", guarded(projectsRoute(teamsListView)));
+// Before :slug, which would otherwise match "new" as a team.
+route("/teams/new", guarded(projectsRoute(teamNewView)));
+route("/teams/:slug", guarded(projectsRoute(teamDetailView)));
+
 route("/projects", guarded(projectsRoute(projectsListView)));
 // Before the :slug route, which would otherwise match "new" as a project.
 route("/projects/new", guarded(projectsRoute(projectNewView)));
@@ -567,6 +573,7 @@ function sectionFor(path) {
   if (path.startsWith("/issues")) return "issues";
   if (path.startsWith("/projects")) return "projects";
   if (path.startsWith("/people")) return "people";
+  if (path.startsWith("/teams")) return "people";
   if (path.startsWith("/requests")) return "people";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";

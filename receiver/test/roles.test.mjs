@@ -39,22 +39,36 @@ process.stdout.write("\nWhat a role may do\n");
 // ------------------------------------------------------- the table itself
 
 const TABLE = [
-  // role,     projects, teams, members
-  ["member",   false,    false, false],
-  ["admin",    true,     true,  false],
-  ["manager",  true,     true,  true],
-  ["owner",    true,     true,  true],
+  // role,     projects, teams, members, project<->team
+  ["member",   false,    false, false,   false],
+  ["admin",    true,     true,  false,   false],
+  ["manager",  true,     true,  true,    true],
+  ["owner",    true,     true,  true,    true],
 ];
 
-for (const [role, projects, teams, members] of TABLE) {
+for (const [role, projects, teams, members, linking] of TABLE) {
   test(`${role}`, () => {
     const can = abilities(role);
     same(can.role, role, `${role}: role`);
     same(can.canManageProjects, projects, `${role}: projects`);
     same(can.canManageTeams, teams, `${role}: teams`);
     same(can.canManageMembers, members, `${role}: members`);
+    same(can.canLinkProjectsToTeams, linking, `${role}: linking projects to teams`);
   });
 }
+
+test("an admin may make a team but not put a project in one", () => {
+  /**
+   * The one place GlitchTip contradicts itself: that endpoint's decorator
+   * asks for project:admin, which an admin has, and then its query asks for
+   * manager, which an admin is not. The query wins and the answer is a 404.
+   * Mirroring the decorator would have shipped a button that fails for
+   * exactly one role.
+   */
+  const can = abilities("admin");
+  assert(can.canManageTeams, "an admin should be able to create a team");
+  assert(!can.canLinkProjectsToTeams, "an admin cannot attach a project to one — verified, 404");
+});
 
 test("a member cannot create a project, which is the case that was found the hard way", () => {
   assert(!abilities("member").canManageProjects, "a member was granted project writes");
@@ -73,7 +87,10 @@ test("no role is no permission, not some permission", () => {
     const can = abilities(nothing);
     same(can.role, null, `${JSON.stringify(nothing)}: role`);
     assert(
-      !can.canManageProjects && !can.canManageTeams && !can.canManageMembers,
+      !can.canManageProjects &&
+        !can.canManageTeams &&
+        !can.canManageMembers &&
+        !can.canLinkProjectsToTeams,
       `${JSON.stringify(nothing)} granted something`
     );
   }
@@ -89,7 +106,10 @@ test("a role nobody here knows grants nothing, rather than being ranked", () => 
     const can = abilities(unknown);
     same(can.role, null, `${JSON.stringify(unknown)}: role`);
     assert(
-      !can.canManageProjects && !can.canManageTeams && !can.canManageMembers,
+      !can.canManageProjects &&
+        !can.canManageTeams &&
+        !can.canManageMembers &&
+        !can.canLinkProjectsToTeams,
       `${JSON.stringify(unknown)} was granted something`
     );
   }

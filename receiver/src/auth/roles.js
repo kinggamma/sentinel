@@ -65,5 +65,23 @@ export function abilities(role) {
      * stays the answer to the other one.
      */
     canManageMembers: Boolean(known) && atLeast(known, "manager"),
+
+    /**
+     * Putting a project in a team, or taking it out.
+     *
+     * Manager, not admin, and it is worth saying why since the two look
+     * identical from outside. GlitchTip declares that endpoint as needing
+     * project:admin — which an admin has — and then looks the project up
+     * with a query that also requires the caller be manager or above. The
+     * decorator and the query disagree, and the query is the one that runs
+     * last, so an admin gets a 404 from an endpoint its own scope check
+     * would have allowed.
+     *
+     * Found by pressing the button: as admin the call answered 404, as
+     * manager the same call answered 201. Mirroring the decorator would
+     * have shipped a control that fails for exactly one role, which is the
+     * hardest kind of gap to notice.
+     */
+    canLinkProjectsToTeams: Boolean(known) && atLeast(known, "manager"),
   });
 }
