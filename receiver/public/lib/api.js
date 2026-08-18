@@ -36,9 +36,76 @@ export class ApiError extends Error {
  * whole protocol. Session-authenticated writes are rejected without it, and
  * the failure is a bare 403 that says nothing, so it's applied centrally.
  */
-export function csrfToken() {
-  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+function readCookie(name) {
+  const match = document.cookie.match(
+    new RegExp(`(?:^|;\\s*)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=([^;]+)`)
+  );
   return match ? decodeURIComponent(match[1]) : "";
+}
+
+export function csrfToken() {
+  return readCookie("csrftoken");
+}
+
+/**
+ * Having one, rather than assuming one.
+ *
+ * Nothing Sentinel serves can set that cookie. Django writes it from a view
+ * that asks for a token, and every page here comes from the receiver, which
+ * is not Django — so the only reason a token was ever present is that the
+ * browser had been through allauth to sign in, and that cookie outlived the
+ * flow.
+ *
+ * Which held often enough to hide the hole completely. Sign-in mints one,
+ * so a person who signs in can write, and the whole app was tested that way.
+ * A session that arrives any other way — the cookie cleared on its own
+ * schedule while the session stayed, a browser restored from a profile that
+ * kept one and not the other — got a bare 403 on every write, on a screen
+ * that offered the buttons anyway. Resolving an issue, ignoring it, leaving
+ * a note: all refused, none of them explicably.
+ *
+ * So the token is fetched when it is missing. allauth's capability document
+ * is a GET that changes nothing and hands one back, which makes it the
+ * cheapest correct way to ask. Once fetched the cookie serves every later
+ * write, and concurrent writes share one request rather than each starting
+ * their own.
+ *
+ * It is only there to ask on one of the two mounts, though. Behind the
+ * shared origin GlitchTip answers /_allauth and this works; on the
+ * receiver's own port nothing does, because GlitchTip is not there at all —
+ * /api/0 is equally absent, so no write that needs a token can be attempted
+ * from that mount in the first place, and the receiver's own writes never
+ * wanted one. A 404 there is the origin saying "not here", which is a
+ * permanent answer, so it is remembered rather than re-asked before every
+ * write forever.
+ *
+ * Anything else that goes wrong — offline, a 5xx, a token that does not
+ * arrive — is not permanent and is left retryable. Latching on those would
+ * turn one bad moment into an app that quietly cannot write until it is
+ * reloaded.
+ */
+let minting = null;
+let mintable = true;
+
+async function ensureCsrfToken() {
+  const held = csrfToken();
+  if (held) return held;
+  if (!mintable) return "";
+
+  minting ??= fetch("/_allauth/browser/v1/config", { credentials: "same-origin" })
+    .then((response) => {
+      // Not "the request failed" — "allauth is not part of this origin."
+      if (response.status === 404) mintable = false;
+    })
+    .catch(() => {
+      // Offline or blocked: worth trying again on the next write.
+    })
+    .then(() => {
+      minting = null;
+      return csrfToken();
+    });
+
+  return minting;
 }
 
 let onUnauthorized = null;
@@ -85,7 +152,12 @@ async function request(
   // A bearer token authenticates by header and is exempt; a browser session
   // is not. GET/HEAD are exempt either way.
   if (!bearerToken && !["GET", "HEAD"].includes(method)) {
-    init.headers["x-csrftoken"] = csrfToken();
+    // Two backends, two tokens, and each ignores the other's. Django's is
+    // fetched when missing; the receiver issues its own on any safe request,
+    // so by the time anything is written it is simply there — including on
+    // the receiver's own port, where Django's cannot be had at all.
+    init.headers["x-csrftoken"] = await ensureCsrfToken();
+    init.headers["x-sentinel-csrf"] = readCookie("sentinel-csrf");
   }
 
   let response;

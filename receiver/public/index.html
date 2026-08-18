@@ -41,35 +41,53 @@
          carrying a key, and a link has to land on a URL. -->
 
     <div id="app">
-      <header id="topbar" class="topbar">
-        <h1 id="app-title">
-          <button id="home-link" type="button" class="linky">Sentinel</button>
-          <span id="crumb" class="breadcrumb" hidden></span>
-        </h1>
+      <!-- Navigation is a sidebar, the way GlitchTip's is, because that is
+           the shape people already know and because a row of tabs stops
+           working once there is more than a handful of destinations.
 
-        <!-- The two halves of an incident: what broke, and what someone said
-             about it. They look like tabs and are ordinary links — each half
-             is an address, so either can be bookmarked, opened in a new tab
-             and come back the same on reload. The hrefs are rewritten with
-             the mount at boot; these are the standalone spellings. -->
-        <nav class="sections" aria-label="Sections">
-          <a id="tab-issues" href="/issues" class="tab">Issues</a>
-          <a id="tab-reports" href="/" class="tab">Reports</a>
+           Only real ones are here. GlitchTip's own nav also carries Uptime,
+           Logs, Performance, Releases and Projects; those are later phases
+           and a link to a screen that does not exist is worse than no link,
+           so they arrive with the screens rather than ahead of them. -->
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-brand">
+          <a id="home-link" href="/">Sentinel</a>
+          <!-- One organisation: its name. Several: a way to change which one
+               you are looking at, because otherwise the others have no
+               address at all. -->
+          <span id="org-name" class="muted" hidden></span>
+          <select id="org-switch" class="org-switch" aria-label="Organisation" hidden></select>
+        </div>
+
+        <nav class="sidebar-nav" aria-label="Sections">
+          <a id="nav-issues" href="/issues">Issues</a>
+          <a id="nav-reports" href="/">Reports</a>
+          <!-- Only worth offering when somebody is waiting on it. -->
+          <a id="nav-requests" href="/requests" hidden>Requests</a>
+          <a id="nav-settings" href="/settings">Settings</a>
         </nav>
-        <!-- Reports' search and source filter used to live here, in the
-             shell, shown and hidden by whichever screen was up. They belong
-             to that screen, and moved into it (views/reports.js). -->
-        <div class="topbar-controls">
+
+        <!-- The rest of the product, which is still GlitchTip's own screens.
+             They are real destinations today; each becomes an internal route
+             as its phase lands, and until then a link that works beats a
+             section of the app you cannot reach at all. Uptime and Logs are
+             optional features, so they appear only where they are switched
+             on. -->
+        <nav class="sidebar-nav sidebar-external" aria-label="In GlitchTip">
+          <h2 id="nav-external-heading" class="sidebar-heading" hidden>In GlitchTip</h2>
+          <a id="nav-projects" target="_blank" rel="noreferrer noopener" hidden>Projects ↗</a>
+          <a id="nav-performance" target="_blank" rel="noreferrer noopener" hidden>Performance ↗</a>
+          <a id="nav-uptime" target="_blank" rel="noreferrer noopener" hidden>Uptime ↗</a>
+          <a id="nav-logs" target="_blank" rel="noreferrer noopener" hidden>Logs ↗</a>
+          <a id="nav-releases" target="_blank" rel="noreferrer noopener" hidden>Releases ↗</a>
+          <a id="nav-org-settings" target="_blank" rel="noreferrer noopener" hidden>Organisation ↗</a>
+          <a id="nav-profile" target="_blank" rel="noreferrer noopener" hidden>Your profile ↗</a>
+        </nav>
+
+        <div class="sidebar-foot">
           <a id="glitchtip-link" class="button-link" target="_blank" rel="noreferrer noopener" hidden>
-            Errors in GlitchTip ↗
+            GlitchTip ↗
           </a>
-          <a id="requests-open" href="/sentinel/requests" class="button-link" title="People asking for access" hidden>
-            Requests
-          </a>
-          <a id="settings-open" href="/sentinel/settings" class="button-link" title="Which apps may report">
-            Settings
-          </a>
-          <button id="refresh" type="button" title="Reload">Refresh</button>
           <button
             id="theme-toggle"
             type="button"
@@ -80,7 +98,15 @@
           </button>
           <button id="forget" type="button" class="ghost" title="Sign out">Sign out</button>
         </div>
-      </header>
+      </aside>
+
+      <div class="content">
+        <!-- What the *page* is, as opposed to where you are in the app: the
+             breadcrumb and the one control that acts on what is shown. -->
+        <header id="topbar" class="topbar">
+          <h1 id="app-title"><span id="crumb" class="breadcrumb" hidden></span></h1>
+          <button id="refresh" type="button" title="Reload">Refresh</button>
+        </header>
 
       <!-- Where every routed screen renders: the landing grid of app cards
            (views/projects.js), one app's reports and the report itself
@@ -92,7 +118,8 @@
            here, filled in by whichever screen opened it. Both belong to the
            screen that shows them, and now live there — the lightbox is
            built and appended by the view, and goes away with it. -->
-      <main id="view" hidden></main>
+        <main id="view" hidden></main>
+      </div>
     </div>
 
     <!-- Relative, resolved by the <base> tag in <head> like the stylesheets.

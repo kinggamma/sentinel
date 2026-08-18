@@ -20,9 +20,11 @@ import {
   callGlitchtip,
   glitchtipConfigured,
   orgSlug,
+  revokeGlitchtipSession,
 } from "../glitchtip.js";
+import { idleEnabled, isIdle, touch, begin, forgetIdle } from "./idle.js";
 import { rememberProjectOrgs } from "../project-map.js";
-import { readAllauth, derive, describe } from "./state.js";
+import { readAllauth, derive, describe, STATES } from "./state.js";
 
 /**
  * Short enough that a change of circumstances is felt within seconds, long
@@ -47,6 +49,9 @@ export function readCookie(req, name) {
 export function forget(sessionId) {
   if (sessionId) cache.delete(sessionId);
 }
+
+/** Re-export so callers have one import for "this session is alive". */
+export { touch };
 
 async function askAllauth(sessionId) {
   try {
@@ -117,6 +122,45 @@ export async function identify(req, { accessRequestFor = null } = {}) {
   if (!glitchtipConfigured || !sessionId) {
     const state = derive({ sawCookie });
     return { state, sessionId, user: null, orgs: [], projects: [], allauth: null };
+  }
+
+  /**
+   * Left alone too long, if this installation asks for that.
+   *
+   * Checked before the cache, because a cached "authenticated" from four
+   * seconds ago is exactly what an idle session looks like — and destroyed
+   * at GlitchTip rather than merely refused here, or the session would go on
+   * working in GlitchTip's own screens and in every other tab, which is not
+   * what anybody means by signing someone out.
+   */
+  if (idleEnabled && isIdle(sessionId)) {
+    cache.delete(sessionId);
+
+    // Reported rather than swallowed: a timeout that fails to end the
+    // session is a timeout that has not happened, and silence is how that
+    // goes unnoticed.
+    const revoked = await revokeGlitchtipSession({ sessionId }).catch(() => false);
+
+    if (revoked) {
+      // Gone for good, so the record has nothing left to say.
+      forgetIdle(sessionId);
+    } else {
+      /**
+       * Kept, deliberately.
+       *
+       * An unknown session is treated as newly arrived rather than idle, so
+       * dropping the record here would hand a session we had just failed to
+       * destroy a fresh window — and it is still alive at GlitchTip, which
+       * is precisely the case where that must not happen. Holding on to it
+       * keeps the answer "expired" and makes every later request try the
+       * revoke again until one of them works.
+       */
+      console.warn(
+        "an idle session could not be ended at GlitchTip — refusing it here and retrying"
+      );
+    }
+
+    return { state: STATES.EXPIRED, sessionId, user: null, orgs: [], projects: [], allauth: null };
   }
 
   const hit = cache.get(sessionId);
@@ -225,6 +269,18 @@ export async function identify(req, { accessRequestFor = null } = {}) {
   if (user && orgs.length === 0 && accessRequestFor) {
     accessRequest = await accessRequestFor(user.email).catch(() => null);
   }
+
+  /**
+   * Start the clock, now that this session has been resolved against
+   * GlitchTip and found to belong to somebody.
+   *
+   * The only place a session enters the idle map. /auth/touch reads a cookie
+   * that nobody has checked yet, so it may refresh a record and never create
+   * one — otherwise inventing session ids would be a way to fill the map,
+   * and filling the map used to evict the records that keep expired sessions
+   * refused.
+   */
+  if (idleEnabled && user) begin(sessionId);
 
   const value = {
     state: derive({ sawCookie, allauth, user, orgs, accessRequest }),

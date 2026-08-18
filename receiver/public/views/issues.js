@@ -18,7 +18,7 @@
  */
 import { glitchtip } from "../lib/api.js";
 import { h, fill, emptyState } from "../lib/dom.js";
-import { since } from "../lib/time.js";
+import { since, at } from "../lib/time.js";
 import { parseLinks } from "../lib/pagination.js";
 import { throwIfAborted } from "../lib/abort.js";
 import { href as routeHref, go, refresh as refreshRoute } from "../lib/router.js";
@@ -69,9 +69,15 @@ function readFilters(query = {}) {
   };
 }
 
-/** Only what differs from the default, so a plain list has a plain URL. */
-function search(filters, { cursor = filters.cursor } = {}) {
+/**
+ * Only what differs from the default, so a plain list has a plain URL — plus
+ * the organisation, whenever there is more than one to be confused between.
+ * Without it a link from an account in two organisations opens whichever one
+ * the reader last looked at, which is a different list of errors.
+ */
+function search(filters, { cursor = filters.cursor, org = null } = {}) {
   const params = new URLSearchParams();
+  if (org) params.set("org", org);
   if (filters.query !== DEFAULT_QUERY) params.set("q", filters.query);
   if (filters.sort !== DEFAULT_SORT) params.set("sort", filters.sort);
   if (filters.range !== DEFAULT_RANGE) params.set("range", filters.range);
@@ -161,7 +167,7 @@ function trend(stats) {
   return wrap;
 }
 
-function issueRow(issue, { filters, selected, onPick }) {
+function issueRow(issue, { filters, selected, onPick, org = null }) {
   const box = h("input", {
     type: "checkbox",
     checked: selected.has(issue.id),
@@ -191,7 +197,7 @@ function issueRow(issue, { filters, selected, onPick }) {
       // with it so coming back lands on the list that was actually open.
       h("a", {
         className: "issue-title",
-        href: routeHref(`/issues/${encodeURIComponent(issue.id)}${search(filters)}`),
+        href: routeHref(`/issues/${encodeURIComponent(issue.id)}${search(filters, { org })}`),
         text: issue.title || issue.metadata?.value || "(no title)",
       }),
       h("div", { className: "issue-sub muted", text: subtitle })
@@ -216,6 +222,35 @@ function toolbar(filters, navigate) {
     environments.map((name) => h("option", { value: name, text: name }))
   );
   environment.value = filters.environment;
+
+  /**
+   * What can be typed into the box.
+   *
+   * The search accepts a small query language and nothing on the screen said
+   * so, which makes it look like a plain text filter that mysteriously
+   * ignores what you type. These are GlitchTip's own terms.
+   */
+  const help = h(
+    "details",
+    { className: "search-help" },
+    h("summary", { text: "Search help" }),
+    h(
+      "dl",
+      {},
+      [
+        ["is:unresolved", "still open — the default"],
+        ["is:resolved", "dealt with"],
+        ["is:ignored", "deliberately set aside"],
+        ["age:-24h", "first seen in the last day"],
+        ["timesSeen:>10", "happened more than ten times"],
+        ["project:my-app", "one project"],
+        ["anything else", "matched against the title and culprit"],
+      ].flatMap(([term, means]) => [
+        h("dt", { className: "mono", text: term }),
+        h("dd", { className: "muted", text: means }),
+      ])
+    )
+  );
 
   const query = h("input", {
     type: "search",
@@ -260,6 +295,7 @@ function toolbar(filters, navigate) {
     { className: "issues-toolbar" },
     environment,
     query,
+    help,
     range,
     sort,
     h("button", {
@@ -278,14 +314,17 @@ function toolbar(filters, navigate) {
  * "has this screen gone", and a second flag tracking the same fact could
  * only ever drift from it.
  */
-export async function issuesListView({ outlet, query, signal }, { org } = {}) {
+export async function issuesListView({ outlet, query, signal }, { org, orgs = [] } = {}) {
+  // Written into links only when there is a choice to be wrong about: on a
+  // single-organisation install every URL stays as short as it was.
+  const linkOrg = orgs.length > 1 ? org : null;
   if (!org) {
     fill(outlet, emptyState("No organisation to browse errors under."));
     return;
   }
 
   const filters = readFilters(query);
-  const navigate = (next) => go(`/issues${search(next)}`);
+  const navigate = (next) => go(`/issues${search(next, { org: linkOrg })}`);
 
   const rows = h("tbody", { attrs: { id: "issue-rows" } });
   const table = h(
@@ -399,7 +438,7 @@ export async function issuesListView({ outlet, query, signal }, { org } = {}) {
         "aria-disabled": cursor ? null : "true",
         // Nowhere to go is a link with no href, which is also how a browser
         // and a screen reader are told it isn't clickable.
-        href: cursor ? routeHref(`/issues${search(filters, { cursor })}`) : null,
+        href: cursor ? routeHref(`/issues${search(filters, { cursor, org: linkOrg })}`) : null,
       },
     });
 
@@ -416,7 +455,7 @@ export async function issuesListView({ outlet, query, signal }, { org } = {}) {
     }
     fill(
       rows,
-      issues.map((issue) => issueRow(issue, { filters, selected, onPick: paintBulk }))
+      issues.map((issue) => issueRow(issue, { filters, selected, onPick: paintBulk, org: linkOrg }))
     );
   };
 
@@ -440,6 +479,342 @@ export async function issuesListView({ outlet, query, signal }, { org } = {}) {
       pageLink(cursorOf(links.next), "›", "Next page")
       ),
       table
+    )
+  );
+}
+
+// -------------------------------------------------- what else is known
+
+/**
+ * Which tag values this issue has been seen with.
+ *
+ * GlitchTip already computes it — top values per key, with counts — and it
+ * is the fastest way to tell "everybody" from "one browser on one machine",
+ * which is usually the first thing worth knowing about an error.
+ */
+/**
+ * How many of a tag's values the summary shows before it stops.
+ *
+ * GlitchTip's tags call returns every value it has, not a top slice —
+ * `topValues` is named for its ordering, which is by count, and
+ * `uniqueValues` is simply how many of them there are. Rendering all of them
+ * here made this section the longest thing on the screen for any tag with
+ * real spread: a url or a release or a user, one line per distinct value,
+ * pushing the stack trace and the notes below all of it.
+ *
+ * It also made "See every value →" a link to the page you were already on.
+ * Both views drew the same list from the same data, so the only screen that
+ * could answer "what are all of them" was already answering it, at the cost
+ * of being unreadable.
+ *
+ * Five is enough to see the shape — whether it is one value or a spread —
+ * which is the question a summary answers. The rest have a screen.
+ */
+const SUMMARY_VALUES = 5;
+
+function tagsSection(tags, { href = null } = {}) {
+  if (!tags?.length) return null;
+
+  return detailSection(
+    "Tags across all events",
+    href ? h("p", {}, h("a", { className: "linky", href, text: "See every value →" })) : null,
+    h(
+      "div",
+      { className: "tag-groups" },
+      tags.map((tag) => {
+        const values = tag.topValues || [];
+        const hidden = Math.max(0, (tag.uniqueValues ?? values.length) - SUMMARY_VALUES);
+
+        return h(
+          "div",
+          { className: "tag-group" },
+          h("h4", { text: tag.name || tag.key }),
+          h(
+            "ul",
+            {},
+            values.slice(0, SUMMARY_VALUES).map((value) => {
+              const share = tag.totalValues
+                ? Math.round((value.count / tag.totalValues) * 100)
+                : null;
+              return h(
+                "li",
+                {},
+                h("span", { className: "tag-value", text: value.value ?? value.name }),
+                h("span", {
+                  className: "muted",
+                  text: share === null ? String(value.count) : `${share}% · ${value.count}`,
+                })
+              );
+            })
+          ),
+          // Said per tag, because "5 of 40 urls" and "5 of 6 browsers" are
+          // different situations and one count for the section would hide
+          // which is which.
+          hidden
+            ? h("p", {
+                className: "muted",
+                text: `+${hidden} more ${hidden === 1 ? "value" : "values"}`,
+              })
+            : null
+        );
+      })
+    )
+  );
+}
+
+/**
+ * What somebody typed into a crash dialog, if an app collects them.
+ *
+ * Rarely present, and worth a lot when it is — this is a person describing
+ * what they were doing, next to the stack trace of it going wrong.
+ */
+function userReportsSection(reports) {
+  if (!reports?.length) return null;
+
+  return detailSection(
+    `What people said (${reports.length})`,
+    h(
+      "div",
+      { className: "user-reports" },
+      reports.map((report) =>
+        h(
+          "article",
+          {},
+          h("p", { className: "report-comment", text: report.comments || "(no comment)" }),
+          h("p", {
+            className: "muted",
+            text: [report.name, report.email, report.dateCreated ? at(report.dateCreated) : null]
+              .filter(Boolean)
+              .join(" · "),
+          })
+        )
+      )
+    )
+  );
+}
+
+/**
+ * Notes people leave each other on an issue.
+ *
+ * The one genuinely collaborative thing on this screen, and the only part of
+ * it that writes: everything else here reports what happened, while this is
+ * two people working out what to do about it.
+ */
+function commentsSection({ comments, onAdd, onDelete, me }) {
+  const list = h("div", { className: "comments" });
+  const error = h("p", { className: "error" });
+  error.hidden = true;
+
+  const paint = (items) => {
+    if (!items.length) {
+      fill(list, emptyState("No notes yet."));
+      return;
+    }
+    fill(
+      list,
+      items.map((comment) =>
+        h(
+          "article",
+          { className: "comment" },
+          h("p", { text: comment.data?.text || "" }),
+          h(
+            "p",
+            { className: "muted" },
+            h("span", {
+              text: [comment.user?.email, comment.dateCreated ? at(comment.dateCreated) : null]
+                .filter(Boolean)
+                .join(" · "),
+            }),
+            // Only your own: GlitchTip decides this too, but offering a
+            // button that always fails is its own kind of rude.
+            me && comment.user?.email === me
+              ? h("button", {
+                  type: "button",
+                  className: "linky danger",
+                  text: "Delete",
+                  on: { click: () => run(remove(comment.id)) },
+                })
+              : null
+          )
+        )
+      )
+    );
+  };
+
+  const remove = async (commentId) => {
+    error.hidden = true;
+    try {
+      paint(await onDelete(commentId));
+    } catch (failure) {
+      error.hidden = false;
+      error.textContent = `Couldn't delete that note (${failure?.status ?? 0}).`;
+    }
+  };
+
+  const text = h("textarea", {
+    attrs: { rows: "2", placeholder: "Leave a note for whoever looks next", "aria-label": "New note" },
+  });
+  const submit = h("button", { type: "button", text: "Add note" });
+
+  submit.addEventListener("click", () =>
+    run(
+      (async () => {
+        const value = text.value.trim();
+        if (!value) return;
+        submit.disabled = true;
+        error.hidden = true;
+        try {
+          paint(await onAdd(value));
+          text.value = "";
+        } catch (failure) {
+          error.hidden = false;
+          error.textContent = `Couldn't add that note (${failure?.status ?? 0}).`;
+        } finally {
+          submit.disabled = false;
+        }
+      })()
+    )
+  );
+
+  paint(comments);
+  return detailSection(
+    "Notes",
+    list,
+    h("div", { className: "comment-form" }, text, submit),
+    error
+  );
+}
+
+/**
+ * The fingerprints grouped into this issue.
+ *
+ * An issue is not one error, it is everything GlitchTip decided was the same
+ * error — and when that decision is wrong, this is the only screen that says
+ * so. Two fingerprints under one issue means two distinct failures being
+ * counted, resolved and ignored as one, and nothing else on the screen
+ * hints at it.
+ *
+ * Shown only when there is more than one. A single fingerprint is the
+ * ordinary case and saying so every time is noise.
+ */
+function hashesSection(hashes) {
+  if (!hashes?.length || hashes.length < 2) return null;
+
+  return detailSection(
+    `Merged errors (${hashes.length})`,
+    h("p", {
+      className: "muted",
+      text:
+        "GlitchTip grouped these fingerprints together. Resolving the issue resolves all of them, " +
+        "so if one of these is really a different bug, unmerge it in GlitchTip.",
+    }),
+    h(
+      "ul",
+      { className: "hash-list" },
+      hashes.map((hash) =>
+        h(
+          "li",
+          {},
+          h("span", { className: "mono", text: hash.id }),
+          h("span", {
+            className: "muted",
+            text: hash.latestEvent?.title || hash.latestEvent?.culprit || "",
+          })
+        )
+      )
+    )
+  );
+}
+
+/**
+ * Every value of every tag, for one issue.
+ *
+ * The detail screen shows each tag's top few values, which answers "mostly
+ * what?" and not "all of what?" — and the second question is the one you ask
+ * when you suspect an error belongs to one customer, one release or one
+ * browser. GlitchTip has no per-tag endpoint, so this is the same aggregate
+ * shown in full rather than summarised.
+ */
+export async function issueTagsView(
+  { outlet, params, query, signal },
+  { org, orgs = [] } = {}
+) {
+  if (!org) {
+    fill(outlet, emptyState("No organisation to browse errors under."));
+    return;
+  }
+
+  const linkOrg = orgs.length > 1 ? org : null;
+  const issueId = params.id;
+  const filters = search(readFilters(query), { org: linkOrg });
+  const base = `/organizations/${encodeURIComponent(org)}/issues/${encodeURIComponent(issueId)}`;
+
+  const back = h("a", {
+    className: "linky",
+    href: routeHref(`/issues/${encodeURIComponent(issueId)}${filters}`),
+    text: "← Back to the issue",
+  });
+
+  let tags;
+  try {
+    tags = await glitchtip.get(`${base}/tags/`, { signal, ...NO_REDIRECT });
+  } catch (error) {
+    throwIfAborted(signal);
+    fill(
+      outlet,
+      h(
+        "div",
+        { className: "issues-view" },
+        back,
+        h("p", { className: "error", text: readFailure(error?.status ?? 0, { subject: "issue" }) })
+      )
+    );
+    return;
+  }
+  throwIfAborted(signal);
+
+  fill(
+    outlet,
+    h(
+      "div",
+      { className: "issues-view" },
+      h(
+        "section",
+        { className: "issue-detail" },
+        back,
+        h("header", { className: "detail-head" }, h("h2", { text: "Tags" })),
+        tags?.length
+          ? h(
+              "div",
+              {},
+              tags.map((tag) =>
+                detailSection(
+                  `${tag.name || tag.key} · ${tag.uniqueValues ?? (tag.topValues || []).length} value${
+                    (tag.uniqueValues ?? 1) === 1 ? "" : "s"
+                  }`,
+                  h(
+                    "ul",
+                    { className: "tag-values" },
+                    (tag.topValues || []).map((value) => {
+                      const share = tag.totalValues
+                        ? Math.round((value.count / tag.totalValues) * 100)
+                        : null;
+                      return h(
+                        "li",
+                        {},
+                        h("span", { className: "tag-value", text: value.value ?? value.name }),
+                        h("span", {
+                          className: "muted",
+                          text: share === null ? String(value.count) : `${share}% · ${value.count}`,
+                        })
+                      );
+                    })
+                  )
+                )
+              )
+            )
+          : emptyState("Nothing has been tagged on this issue.")
+      )
     )
   );
 }
@@ -573,7 +948,12 @@ function eventBody(event) {
   }
 
   if (event.tags?.length) {
-    parts.push(detailSection("Tags", keyValues(event.tags.map((tag) => [tag.key, tag.value]))));
+    // Named against the aggregate below it, which carries the same word and
+    // a different meaning: these are what *this* event was tagged with,
+    // those are how the whole issue is distributed across values.
+    parts.push(
+      detailSection("Tags on this event", keyValues(event.tags.map((tag) => [tag.key, tag.value])))
+    );
   }
 
   parts.push(
@@ -593,18 +973,33 @@ function eventBody(event) {
 }
 
 /** Same as the list above: the signal is the only teardown state it needs. */
-export async function issueDetailView({ outlet, params, query, signal }, { org } = {}) {
+export async function issueDetailView(
+  { outlet, params, query, signal },
+  { org, orgs = [], me = null } = {}
+) {
+  const linkOrg = orgs.length > 1 ? org : null;
+  /**
+   * Which event of this issue to show. An issue is a group of them, and the
+   * newest is only the default — walking back through them is how you find
+   * the first, or the one from the person who complained.
+   *
+   * In the query rather than the path, because it is a position within the
+   * issue rather than a different thing: /issues/4?event=<id> is still
+   * issue 4.
+   */
+  const eventId = query?.event || "latest";
   if (!org) {
     fill(outlet, emptyState("No organisation to browse errors under."));
     return;
   }
 
-  const id = params.id;
+  const issueId = params.id;
+  const id = issueId;
   // The filters came along in the query, so "all issues" goes back to the
   // list that was open rather than to an unfiltered one.
   const back = h("a", {
     className: "linky",
-    href: routeHref(`/issues${search(readFilters(query))}`),
+    href: routeHref(`/issues${search(readFilters(query), { org: linkOrg })}`),
     text: "← All issues",
   });
 
@@ -712,7 +1107,11 @@ export async function issueDetailView({ outlet, params, query, signal }, { org }
   // and everything above it is already known.
   let event;
   try {
-    event = await glitchtip.raw(`${base}/events/latest/`, { signal, raw: true, ...NO_REDIRECT });
+    event = await glitchtip.raw(`${base}/events/${encodeURIComponent(eventId)}/`, {
+      signal,
+      raw: true,
+      ...NO_REDIRECT,
+    });
   } catch {
     throwIfAborted(signal);
     fill(body, emptyState("Couldn't load the event body."));
@@ -726,5 +1125,126 @@ export async function issueDetailView({ outlet, params, query, signal }, { org }
   }
   const parsed = await event.json();
   throwIfAborted(signal);
-  fill(body, eventBody(parsed));
+
+  /**
+   * Everything else this issue knows, fetched together and after the body,
+   * because none of it is why somebody opened the screen. A failure in any
+   * one of them leaves that section out rather than taking the page with
+   * it — a missing note list is not a reason to hide a stack trace.
+   */
+  const filters = search(readFilters(query), { org: linkOrg });
+  const eventHref = (id) =>
+    routeHref(
+      `/issues/${encodeURIComponent(issueId)}${filters ? `${filters}&` : "?"}event=${encodeURIComponent(id)}`
+    );
+
+  /**
+   * Each of these is a separate call, and each is allowed to fail on its own
+   * — but not silently.
+   *
+   * The first version turned a failure into null and rendered nothing, so a
+   * notes list that would not load looked exactly like an issue nobody had
+   * commented on. That is the worst of both: no data and no reason, with the
+   * screen quietly asserting something false. Notes matter most, because
+   * somebody may be reading them to find out what has already been tried.
+   */
+  const settle = (promise) =>
+    promise.then((data) => ({ data }), (error) => ({ failed: error?.status ?? 0 }));
+
+  const [tags, reports, comments, hashes] = await Promise.all([
+    settle(glitchtip.get(`${base}/tags/`, { signal, ...NO_REDIRECT })),
+    settle(glitchtip.get(`${base}/user-reports/`, { signal, ...NO_REDIRECT })),
+    settle(glitchtip.get(`${base}/comments/`, { signal, ...NO_REDIRECT })),
+    settle(glitchtip.get(`${base}/hashes/`, { signal, ...NO_REDIRECT })),
+  ]);
+  throwIfAborted(signal);
+
+  /** A section that says what is missing, instead of not being there. */
+  const unavailable = (title, status) =>
+    detailSection(
+      title,
+      h("p", {
+        className: "muted",
+        text:
+          status === 403
+            ? "You don't have access to this part of the issue."
+            : `Couldn't load this (${status || "no answer"}). Refresh to try again.`,
+      })
+    );
+
+  fill(
+    body,
+    /**
+     * Which of this issue's events you are looking at, and how to move.
+     *
+     * GlitchTip puts previousEventID and nextEventID in the event itself, so
+     * this costs nothing extra — and without it the screen quietly implies
+     * an issue is one error rather than a group of them.
+     */
+    parsed.previousEventID || parsed.nextEventID
+      ? h(
+          "div",
+          { className: "event-nav" },
+          parsed.previousEventID
+            ? h("a", { className: "button-link", href: eventHref(parsed.previousEventID), text: "← Earlier" })
+            : h("span", { className: "button-link disabled", attrs: { "aria-disabled": "true" }, text: "← Earlier" }),
+          h("span", {
+            className: "muted",
+            text: parsed.dateCreated ? `This one: ${at(parsed.dateCreated)}` : "",
+          }),
+          parsed.nextEventID
+            ? h("a", { className: "button-link", href: eventHref(parsed.nextEventID), text: "Later →" })
+            : h("span", { className: "button-link disabled", attrs: { "aria-disabled": "true" }, text: "Later →" })
+        )
+      : null,
+
+    eventBody(parsed),
+
+    /**
+     * The one facet that was still allowed to disappear quietly, and the one
+     * where disappearing says something false.
+     *
+     * Its section is absent on purpose when an issue has a single
+     * fingerprint, because saying "1 fingerprint" every time is noise — so a
+     * failed request rendered as nothing looks exactly like the ordinary
+     * case. "This is one error" is precisely what the reader concludes, and
+     * precisely what a failure here cannot support: the whole reason to show
+     * this is that two fingerprints under one issue means two distinct
+     * failures being counted, resolved and ignored as one.
+     */
+    hashes.failed !== undefined
+      ? unavailable("Merged errors", hashes.failed)
+      : hashesSection(hashes.data),
+
+    tags.failed !== undefined
+      ? unavailable("Tags across all events", tags.failed)
+      : tagsSection(tags.data, {
+          // Every value of every tag is its own screen, because the summary
+          // shows the top few and the question "what are all of them" has
+          // nowhere else to go.
+          href: routeHref(`/issues/${encodeURIComponent(issueId)}/tags${filters}`),
+        }),
+
+    reports.failed !== undefined
+      ? unavailable("What people said", reports.failed)
+      : userReportsSection(reports.data),
+
+    comments.failed !== undefined
+      ? unavailable("Notes", comments.failed)
+      : commentsSection({
+          comments: comments.data,
+          me,
+          onAdd: async (text) => {
+            await glitchtip.post(`${base}/comments/`, { data: { text } }, { signal, ...NO_REDIRECT });
+            return glitchtip.get(`${base}/comments/`, { signal, ...NO_REDIRECT });
+          },
+          onDelete: async (commentId) => {
+            await glitchtip.del(`${base}/comments/${encodeURIComponent(commentId)}/`, {
+              signal,
+              ...NO_REDIRECT,
+            });
+            return glitchtip.get(`${base}/comments/`, { signal, ...NO_REDIRECT });
+          },
+        })
+  );
 }

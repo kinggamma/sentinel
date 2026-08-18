@@ -119,6 +119,8 @@ body.theme-dark {
   --text-base: 15px;
   --text-lg: 17px;
   --text-xl: 20px;
+
+  --sidebar-width: 210px;
 }
 
 * {
@@ -233,6 +235,218 @@ button.ghost {
 
 /* --- shell -------------------------------------------------------- */
 
+/* Sidebar beside content, the shape GlitchTip uses and the one that stops
+   mattering how many destinations there are. Only applied once somebody is
+   signed in: an auth screen is a card on an empty page. */
+#app.signed-in {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-4);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.sidebar-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-brand a {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+
+#org-name {
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.org-switch {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  max-width: 100%;
+}
+
+/* GlitchTip's own screens, set apart from Sentinel's so it is obvious which
+   ones leave. Each moves up into the list above as its phase lands. */
+.sidebar-heading {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.sidebar-external a {
+  font-size: var(--text-sm);
+}
+
+.sidebar-nav a {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.sidebar-nav a:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+/* Where you are. Paired with aria-current in the markup, so it is announced
+   as well as coloured. */
+.sidebar-nav a.current {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Pushed to the bottom, away from navigation: these act on you and your
+   browser rather than on where you are. */
+.sidebar-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: stretch;
+}
+
+.sidebar-foot .button-link,
+.sidebar-foot button {
+  text-align: center;
+}
+
+.content {
+  min-width: 0;
+}
+
+/* The page's own header: what this screen is, and the one control that acts
+   on it. Navigation left with the sidebar. */
+#app.signed-in .topbar {
+  justify-content: space-between;
+}
+
+/* Now a page title rather than a trailing breadcrumb, so it reads as the
+   heading it has become. */
+#app.signed-in .breadcrumb {
+  color: var(--text);
+  font-weight: 600;
+  font-size: var(--text-lg);
+}
+
+@media (max-width: 860px) {
+  /* A drawer needs opening, closing, focus trapping and an escape key, and
+     is a worse answer than a row that scrolls. */
+  #app.signed-in {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    /* A grid item will not go narrower than its own content unless it is
+       told it may, and this bar now contains a row that is deliberately
+       wider than the screen. Without this it ignored its 390px column,
+       stood 752px wide, and stretched the page — every screen scrolling
+       sideways because of the nav above it. The row inside does the
+       scrolling; the bar holding it does not. */
+    min-width: 0;
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .sidebar-foot {
+    margin-top: 0;
+    margin-left: auto;
+    flex-direction: row;
+  }
+
+  /* Small enough that the whole bar stays one or two lines. Stacked at full
+     size it took a quarter of a phone screen before any content began. */
+  .sidebar-foot .button-link,
+  .sidebar-foot button {
+    font-size: var(--text-xs);
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .sidebar-nav a {
+    font-size: var(--text-sm);
+    padding: var(--space-1) var(--space-2);
+  }
+
+  /* Seven links to GlitchTip's own screens, and wrapped into rows they took
+     more of a phone than the content underneath them — the bar reached far
+     enough down that an issue began below the fold. So this block takes the
+     trade the comment at the top of this one already describes, and becomes
+     the row that scrolls: every destination still reachable, in one line
+     instead of three. */
+  .sidebar-external {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    /* Without this the row cannot be narrower than the links inside it, so
+       it sets the width of the page instead of scrolling — the sidebar grew
+       to 752px in a 390px window and took every screen with it. A flex
+       item's floor is its content unless it is told otherwise, and
+       overflow-x only starts working once there is a width to overflow. */
+    min-width: 0;
+    /* A reserved gutter would cost most of the height this just saved. */
+    scrollbar-width: none;
+  }
+
+  .sidebar-external::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sidebar-external a,
+  .sidebar-heading {
+    white-space: nowrap;
+  }
+
+  .sidebar-brand a {
+    font-size: var(--text-base);
+  }
+
+  #app.signed-in .topbar {
+    padding: var(--space-2) var(--space-4);
+  }
+
+  #app.signed-in .breadcrumb {
+    font-size: var(--text-base);
+  }
+}
+
 .topbar {
   display: flex;
   flex-wrap: wrap;
@@ -336,6 +550,19 @@ a.linky:hover {
 
 .embedded .topbar h1 {
   display: none;
+}
+
+/* No navigation inside somebody else's admin page. The viewer is pinned to
+   the one app that page is about, so every destination in the sidebar is
+   either somewhere it may not go or somewhere it already is — and a second
+   product's nav bar appearing inside their screen is exactly the "two
+   applications" impression the whole project is trying to remove. */
+.embedded .sidebar {
+  display: none;
+}
+
+.embedded #app.signed-in {
+  display: block;
 }
 
 .embedded .layout {
@@ -1156,6 +1383,153 @@ button.danger:hover {
   .modal-card {
     padding: 18px;
   }
+}
+
+/* Which of an issue's events is showing, and how to reach its neighbours. */
+.event-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.event-nav .disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Tag values, with how much of the issue each accounts for. The share is
+   the point: "100% Chrome" and "3% Chrome" are different problems. */
+.tag-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+
+.tag-group h4 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.tag-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tag-group li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.tag-value {
+  overflow-wrap: anywhere;
+}
+
+.hash-list,
+.tag-values {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.hash-list li,
+.tag-values li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.user-reports article,
+.comment {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.report-comment,
+.comment p:first-child {
+  margin: 0 0 var(--space-1);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.comment p:last-child {
+  margin: 0;
+  font-size: var(--text-xs);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.comment .linky.danger {
+  color: var(--danger);
+  font-size: var(--text-xs);
+}
+
+.comment-form {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.comment-form textarea {
+  flex: 1;
+  font: inherit;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  resize: vertical;
+}
+
+/* Folded away until wanted: the terms matter to somebody typing a query and
+   are noise to everybody else. */
+.search-help {
+  font-size: var(--text-xs);
+}
+
+.search-help summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: var(--space-2);
+}
+
+.search-help dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  position: absolute;
+  z-index: 4;
+  max-width: min(420px, 90vw);
+  box-shadow: var(--shadow);
+}
+
+.search-help dt,
+.search-help dd {
+  margin: 0;
 }
 
 /* --- one issue ---------------------------------------------------- */

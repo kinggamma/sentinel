@@ -42,8 +42,48 @@ network access beyond its own origin.
 1. Branch off `main`.
 2. Make the change. Match the surrounding style; comments should explain
    *why*, not restate the code.
-3. Test it against a running stack — there is no automated suite yet, so say
-   in the PR what you actually exercised.
+3. Run the suites, and say in the PR what you exercised beyond them.
+
+   ```bash
+   cd receiver && npm test
+   ```
+
+   Pure logic, no stack needed: the router, the auth state machine, the idle
+   window, and active-organisation resolution.
+
+   The rest need the stack up (`docker compose up -d`) and a seeded
+   organisation, and they sign a dedicated test account in rather than
+   borrowing a real one:
+
+   ```bash
+   ./scripts/run-smoke.sh
+   ```
+
+   Every endpoint, over HTTP, including the shapes the screens read fields
+   out of. Then, from the repository root — `npm install` once, for the
+   browser driver:
+
+   ```bash
+   npm run test:browser && npm run test:issues && npm run test:webauthn
+   npm run test:orgs
+   ```
+
+   These are the regressions no HTTP call can see: the embedded viewer
+   booting in a real iframe, the issue screen writing and deleting notes with
+   a CSRF token and reporting a facet that will not load, passkey sign-in
+   against a virtual authenticator, and every screen at 390px.
+
+   `test:orgs` is the one that reconfigures things. Belonging to two
+   organisations is unreachable on a single-organisation install, so it
+   builds the situation: a second organisation, a real project moved into
+   it, and the receiver restarted with `GLITCHTIP_ORG` empty. It puts all
+   three back, and checks that it did. If it is killed part-way,
+   `docker compose up -d` restores the pin.
+
+   Browser-level tests live in the root package rather than `receiver/`, on
+   purpose: the image's assets stage installs that package's dev
+   dependencies, and a browser driver in there would make every image build
+   download one.
 4. If you touched `sdk/`, rebuild the bundle apps consume:
    ```bash
    ./sdk/build-moodle-bundle.sh <path-to-your-plugin>

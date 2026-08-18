@@ -253,6 +253,11 @@ reportRouter.get("/projects", async (req, res) => {
     projects.push({
       ...entry,
       glitchtipProject: projectSlug,
+      // Which organisation's project this app reports to, so a client
+      // showing one organisation at a time can tell. Null for an app that
+      // reports to no project yet, and those belong to nobody's
+      // organisation rather than to the one you happen to be looking at.
+      org,
       // Only when we know which project this app reports to, and which
       // organisation owns it. Without both, the link would either cover
       // every project's errors or point into somebody else's organisation.

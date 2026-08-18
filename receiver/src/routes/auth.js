@@ -6,9 +6,11 @@ import {
   GLITCHTIP_SESSION_COOKIE,
 } from "../glitchtip.js";
 import { currentUser, readCookie, presentsStaffToken } from "../middleware/auth.js";
+import { requireCsrf } from "../middleware/csrf.js";
 import { STATES } from "../auth/state.js";
 import { describe as describeState } from "../auth/state.js";
-import { present, forget } from "../auth/identity.js";
+import { present, forget, touch } from "../auth/identity.js";
+import { idleEnabled, idleWindowMs } from "../auth/idle.js";
 
 export const authRouter = Router();
 
@@ -96,11 +98,41 @@ authRouter.post("/auth/login", (_req, res) => {
 });
 
 /**
+ * "Still here."
+ *
+ * The receiver sees almost nothing of what somebody does — issues, projects
+ * and the rest are proxied straight to GlitchTip and never reach this
+ * process — so an idle timeout measured from requests arriving here would
+ * sign out anyone quietly reading. The browser is the only party that knows,
+ * and this is how it says so: no body, no answer, nothing to get wrong.
+ *
+ * Cheap on purpose. It touches a map and returns; it never asks GlitchTip
+ * anything, so a page can call it as often as somebody moves a mouse.
+ */
+/*
+ * Guarded, unlike the two tombstones elsewhere in this file. Keeping a
+ * session alive is a small thing to be able to do from another site, but it
+ * is still doing something to somebody's session from another site — and
+ * unlike an endpoint whose whole job is to say "this is gone", refusing a
+ * forged one costs nothing.
+ */
+authRouter.post("/auth/touch", requireCsrf, (req, res) => {
+  if (!idleEnabled) return res.status(204).end();
+  touch(readCookie(req, GLITCHTIP_SESSION_COOKIE));
+  res.status(204).end();
+});
+
+/** What the client needs to know about how long it may sit still. */
+authRouter.get("/auth/idle", (_req, res) => {
+  res.json({ enabled: idleEnabled, windowMs: idleWindowMs() });
+});
+
+/**
  * Signing out signs you out of both. They're meant to read as one system,
  * and leaving GlitchTip signed in after "Sign out" is the sort of thing
  * that reminds everyone they aren't.
  */
-authRouter.post("/auth/logout", async (req, res) => {
+authRouter.post("/auth/logout", requireCsrf, async (req, res) => {
   const sessionId = readCookie(req, GLITCHTIP_SESSION_COOKIE);
   const csrfToken = readCookie(req, "csrftoken");
 

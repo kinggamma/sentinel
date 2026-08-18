@@ -130,6 +130,9 @@ async function shellServed() {
     "/sentinel/issues",
     "/sentinel/issues?q=is%3Aresolved&sort=-count&cursor=abc",
     "/sentinel/issues/123456",
+    // One issue is a group of events, and which one you are looking at is a
+    // position within it rather than a different address.
+    "/sentinel/issues/123456?event=019ffabc82a7718cad4fe7a13a7efc37",
     "/sentinel/reports/e-library-admin",
     "/sentinel/reports/e-library-admin/2f8a1c",
   ]) {
@@ -154,6 +157,39 @@ async function shellServed() {
     });
   }
 
+  await check("the shell carries a sidebar with only real destinations", async () => {
+    /**
+     * Two kinds of destination, and the difference is the point.
+     *
+     * Sentinel's own screens are links in the served HTML, because they
+     * exist whatever the install looks like. The rest of the product is
+     * still GlitchTip's own screens, and where those live depends on which
+     * organisation you are in — so they ship with no href at all and get one
+     * from app.js once it knows. An href baked in here would be a guess
+     * about somebody else's URL, and wrong for every install but this one.
+     *
+     * What has to stay true is that nothing renders as a link to nowhere.
+     */
+    const body = await (await get("/sentinel/", { headers: { accept: "text/html" } })).text();
+    for (const id of ["nav-issues", "nav-reports", "nav-requests", "nav-settings"]) {
+      assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
+    }
+    for (const external of [
+      "nav-projects",
+      "nav-performance",
+      "nav-uptime",
+      "nav-logs",
+      "nav-releases",
+      "nav-org-settings",
+      "nav-profile",
+    ]) {
+      const anchor = body.match(new RegExp(`<a[^>]*id="${external}"[^>]*>`))?.[0];
+      assert(anchor, `the sidebar is missing ${external}`);
+      assert(!/\shref=/.test(anchor), `${external} ships with a guessed href: ${anchor}`);
+      assert(/\shidden/.test(anchor), `${external} is visible before it has anywhere to go`);
+    }
+  });
+
   await check("a missing asset 404s rather than returning the shell", async () => {
     const res = await get("/sentinel/definitely-not-here.js");
     assertStatus(res, 404);
@@ -175,6 +211,7 @@ async function shellServed() {
     "lib/session.js",
     "lib/next.js",
     "lib/webauthn.js",
+    "lib/presence.js",
   ]) {
     await check(`${asset} is served`, async () => {
       assertStatus(await get(`/sentinel/${asset}`), 200, asset);
@@ -212,6 +249,35 @@ async function embeddedBearerViewer() {
   await check("it reads projects with a header and no session", async () => {
     if (!TOKEN) return "skip";
     assertStatus(await get("/sentinel/api/projects", { headers: noCookies }), 200);
+  });
+
+  await check("every app says which organisation it reports into", async () => {
+    if (!TOKEN) return "skip";
+    /**
+     * The landing grid shows one organisation at a time once somebody
+     * belongs to two, and it can only do that if each card knows which one
+     * it belongs to. Without this field the filter silently keeps
+     * everything — a grid contradicting the organisation named beside it,
+     * failing in the direction that shows too much.
+     *
+     * Null is a legitimate answer: an app that reports to no project yet is
+     * in nobody's organisation, and those stay visible everywhere.
+     */
+    const res = await get("/sentinel/api/projects", { headers: noCookies });
+    assertStatus(res, 200);
+    const { projects } = await res.json();
+    assert(Array.isArray(projects), "projects were not a list");
+    for (const project of projects) {
+      assert("org" in project, `${project.appName} does not say which organisation it is in`);
+      assert(
+        project.org === null || typeof project.org === "string",
+        `${project.appName} has a strange org: ${JSON.stringify(project.org)}`
+      );
+      assert(
+        !project.glitchtipProject || project.org,
+        `${project.appName} reports to a project but names no organisation`
+      );
+    }
   });
 
   await check("a bearer write needs no CSRF token and no cookie", async () => {
@@ -445,6 +511,87 @@ async function authBoundaries() {
     assert(!res.headers.get("set-cookie"), "it set a cookie");
   });
 
+  await check("an issue's other facets are readable with a session", async () => {
+    if (!SESSION || !ORG) return "skip";
+    /**
+     * Comments, tags and user reports hang off the issue and each is a
+     * separate call the detail screen makes. They are fetched together and
+     * after the stack trace, so a failure in one leaves that section out
+     * rather than taking the page with it — this checks they answer at all,
+     * which is the part that would silently stop being true on an upgrade.
+     */
+    const issues = await get(`/api/0/organizations/${encodeURIComponent(ORG)}/issues/?limit=1`, {
+      headers: { cookie: `sessionid=${SESSION}` },
+    });
+    assertStatus(issues, 200);
+    const [issue] = await issues.json();
+    if (!issue) return "skip";
+
+    /**
+     * Answering is not enough. The screen reads particular fields out of
+     * these — a comment's `data.text`, a tag's `topValues`, a fingerprint's
+     * `id` — and GlitchTip renaming one of them is exactly the kind of
+     * upgrade that leaves every endpoint returning 200 and every section
+     * rendering blank. So each shape is checked where it is relied on.
+     */
+    const facets = {
+      "comments/": (body) => {
+        assert(Array.isArray(body), "comments should be a list");
+        for (const comment of body) {
+          assert(comment.id !== undefined, "a comment with no id cannot be deleted");
+          assert(typeof comment.data?.text === "string", "a comment's text lives at data.text");
+        }
+      },
+      "tags/": (body) => {
+        assert(Array.isArray(body), "tags should be a list");
+        for (const tag of body) {
+          assert(typeof tag.key === "string", "a tag needs a key");
+          assert(Array.isArray(tag.topValues), "the detail screen shows topValues");
+        }
+      },
+      "hashes/": (body) => {
+        assert(Array.isArray(body), "hashes should be a list");
+        for (const hash of body) assert(hash.id !== undefined, "a fingerprint needs an id");
+      },
+      "user-reports/": (body) => {
+        assert(Array.isArray(body), "user reports should be a list");
+      },
+      "events/latest/": (body) => {
+        assert(body && typeof body === "object", "an event should be an object");
+        assert(Array.isArray(body.entries), "the stack trace is read out of entries");
+      },
+    };
+
+    for (const [facet, shaped] of Object.entries(facets)) {
+      const res = await get(
+        `/api/0/organizations/${encodeURIComponent(ORG)}/issues/${issue.id}/${facet}`,
+        { headers: { cookie: `sessionid=${SESSION}` } }
+      );
+      assertStatus(res, 200, facet);
+      shaped(await res.json());
+    }
+  });
+
+  await check("an event says which ones sit either side of it", async () => {
+    if (!SESSION || !ORG) return "skip";
+    // previousEventID and nextEventID are what make walking through an
+    // issue's events possible without a second request per step.
+    const issues = await get(`/api/0/organizations/${encodeURIComponent(ORG)}/issues/?limit=1`, {
+      headers: { cookie: `sessionid=${SESSION}` },
+    });
+    const [issue] = await issues.json();
+    if (!issue) return "skip";
+
+    const res = await get(
+      `/api/0/organizations/${encodeURIComponent(ORG)}/issues/${issue.id}/events/latest/`,
+      { headers: { cookie: `sessionid=${SESSION}` } }
+    );
+    assertStatus(res, 200);
+    const event = await res.json();
+    assert("previousEventID" in event, "no previousEventID");
+    assert("nextEventID" in event, "no nextEventID");
+  });
+
   await check("allauth publishes what this installation offers", async () => {
     // The sign-in screen renders from this rather than from assumptions: no
     // providers configured means no buttons, closed signup means no link.
@@ -506,6 +653,33 @@ async function authBoundaries() {
     assert(res.status === 401 || res.status === 403 || res.status === 409, `answered ${res.status}`);
   });
 
+  await check("the client is told whether idle sessions are signed out", async () => {
+    // The viewer only reports activity when there is something to report it
+    // to; without this it would either never report, or report always.
+    const res = await get("/sentinel/api/auth/idle");
+    assertStatus(res, 200);
+    const body = await res.json();
+    assert(typeof body.enabled === "boolean", "no enabled flag");
+    assert(typeof body.windowMs === "number", "no window");
+  });
+
+  await check("saying 'still here' costs nothing and answers nothing", async () => {
+    // Called as often as somebody moves a mouse, so it must not become a
+    // question that reaches GlitchTip. It is still a write against a
+    // session, so it carries a token like every other one.
+    const token = await sentinelCsrf();
+    const res = await fetch(`${BASE}/sentinel/api/auth/touch`, {
+      method: "POST",
+      headers: { cookie: `sentinel-csrf=${token}`, "x-sentinel-csrf": token },
+    });
+    assertStatus(res, 204);
+  });
+
+  await check("keeping a session alive cannot be done from another site", async () => {
+    const res = await fetch(`${BASE}/sentinel/api/auth/touch`, { method: "POST" });
+    assertStatus(res, 403, "an untokened touch");
+  });
+
   await check("token sign-in is gone, and says so rather than 404ing", async () => {
     const res = await fetch(`${BASE}/sentinel/api/auth/login`, {
       method: "POST",
@@ -518,11 +692,16 @@ async function authBoundaries() {
   await check("silent sign-in is gone entirely", async () => {
     if (!SESSION) return "skip";
     // Asked with a session good enough that the old endpoint would have
-    // answered it. Anonymously this only ever proves the guard runs first,
-    // since the guard on /sentinel/api refuses before routing reaches a 404.
+    // answered it, and with a CSRF token — both guards on /sentinel/api run
+    // before routing reaches a 404, so without either this would only ever
+    // prove that a guard ran, not that the endpoint is gone.
+    const token = await sentinelCsrf();
     const res = await fetch(`${BASE}/sentinel/api/auth/sso`, {
       method: "POST",
-      headers: { cookie: `sessionid=${SESSION}` },
+      headers: {
+        cookie: `sessionid=${SESSION}; sentinel-csrf=${token}`,
+        "x-sentinel-csrf": token,
+      },
     });
     assertStatus(res, 404, "POST /auth/sso with a valid session");
   });
@@ -652,8 +831,101 @@ async function authBoundaries() {
 
 // ----------------------------------------------------------------- CSRF
 
+/** A token from the page, the way a browser gets one. */
+async function sentinelCsrf() {
+  const res = await get("/sentinel/");
+  const token = (res.headers.get("set-cookie") || "").match(/sentinel-csrf=([^;]+)/)?.[1];
+  assert(token, "the shell issued no CSRF token");
+  return token;
+}
+
+/**
+ * Read before writing, so a test that must write puts back what it found.
+ *
+ * It refuses rather than guesses. An earlier version returned [] when the
+ * read failed, which would have written an empty allow-list over a real one
+ * — a test quietly turning off every app's ability to report, on the way to
+ * checking something else entirely. It read the wrong path and did exactly
+ * that, harmlessly, only because this installation's list was empty.
+ */
+async function currentOrigins() {
+  const res = await get("/sentinel/api/settings/origins", {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  assert(res.status === 200, `couldn't read the origins to put back (${res.status})`);
+  const body = await res.json();
+  assert(Array.isArray(body?.origins), `origins came back as ${JSON.stringify(body)}`);
+  return body.origins;
+}
+
 async function csrfIsEnforced() {
   process.stdout.write("\nCSRF on session-authenticated writes\n");
+
+  /**
+   * The receiver's own writes, which Django knows nothing about.
+   *
+   * These were protected by the client choosing to send a header, which is
+   * no protection: the attacker writes the client. SameSite=Lax on the
+   * session cookie was the whole defence, and that is one browser-side
+   * control granted by the cookie's issuer — worth having, not worth being
+   * the only thing.
+   */
+  await check("the receiver hands every browser a CSRF token", async () => {
+    const res = await get("/sentinel/");
+    const cookie = res.headers.get("set-cookie") || "";
+    assert(/sentinel-csrf=/.test(cookie), `no token was issued: ${cookie || "(no Set-Cookie)"}`);
+    assert(!/sentinel-csrf=[^;]*;[^]*httponly/i.test(cookie), "the page cannot read it back");
+    assert(/samesite=lax/i.test(cookie), `it should be SameSite=Lax: ${cookie}`);
+  });
+
+  await check("a receiver write with no token is refused", async () => {
+    if (!SESSION) return "skip";
+    const res = await fetch(`${BASE}/sentinel/api/settings/origins`, {
+      method: "PUT",
+      headers: { cookie: `sessionid=${SESSION}`, "content-type": "application/json" },
+      body: JSON.stringify({ origins: [] }),
+    });
+    assertStatus(res, 403, "a receiver write with no CSRF header");
+  });
+
+  await check("a receiver write whose header disagrees with its cookie is refused", async () => {
+    if (!SESSION) return "skip";
+    // The shape of the attack this stops: a cross-site page can cause the
+    // cookie to be sent, and cannot read it to produce a matching header.
+    const issued = await get("/sentinel/");
+    const token = (issued.headers.get("set-cookie") || "").match(/sentinel-csrf=([^;]+)/)?.[1];
+    assert(token, "no token to test with");
+
+    const res = await fetch(`${BASE}/sentinel/api/settings/origins`, {
+      method: "PUT",
+      headers: {
+        cookie: `sessionid=${SESSION}; sentinel-csrf=${token}`,
+        "x-sentinel-csrf": "a-guess-of-the-right-length-but-wrong",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ origins: [] }),
+    });
+    assertStatus(res, 403, "a receiver write with a mismatched CSRF header");
+  });
+
+  await check("a receiver write that echoes its cookie is allowed", async () => {
+    if (!SESSION) return "skip";
+    const issued = await get("/sentinel/");
+    const token = (issued.headers.get("set-cookie") || "").match(/sentinel-csrf=([^;]+)/)?.[1];
+    assert(token, "no token to test with");
+
+    const res = await fetch(`${BASE}/sentinel/api/settings/origins`, {
+      method: "PUT",
+      headers: {
+        cookie: `sessionid=${SESSION}; sentinel-csrf=${token}`,
+        "x-sentinel-csrf": token,
+        "content-type": "application/json",
+      },
+      // What is already there, so a passing test changes nothing.
+      body: JSON.stringify({ origins: await currentOrigins() }),
+    });
+    assert(res.status !== 403, `refused a properly tokened write (${res.status})`);
+  });
 
   await check("a session write without a token is refused", async () => {
     if (!SESSION || !ORG) return "skip";
