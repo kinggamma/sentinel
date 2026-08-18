@@ -35,6 +35,7 @@ import { requestsView } from "./views/requests.js";
 import { settingsView } from "./views/settings.js";
 import { projectsView } from "./views/projects.js";
 import { reportsView } from "./views/reports.js";
+import { projectsListView, projectDetailView } from "./views/project.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import {
   signInView,
@@ -291,6 +292,19 @@ setNotFound(({ outlet, path }) => {
   );
 });
 
+/**
+ * Projects, which are GlitchTip's and Sentinel's at once: a project's keys
+ * and alert rules live there, its reports and allowed origins live here, and
+ * this is the screen that stops those being two places.
+ */
+const projectsRoute = (view) => (ctx, me) => {
+  paintChrome();
+  return view(ctx, { org: organisation, orgs: organisations, me });
+};
+
+route("/projects", guarded(projectsRoute(projectsListView)));
+route("/projects/:slug", guarded(projectsRoute(projectDetailView)));
+
 route("/issues", guarded(issuesRoute(issuesListView)));
 route("/issues/:id", guarded(issuesRoute(issueDetailView)));
 // Every value of every tag, which the detail screen only summarises.
@@ -531,6 +545,7 @@ function routedApp() {
  */
 function sectionFor(path) {
   if (path.startsWith("/issues")) return "issues";
+  if (path.startsWith("/projects")) return "projects";
   if (path.startsWith("/requests")) return "requests";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
@@ -580,8 +595,9 @@ function paintExternalLinks() {
   const root = (features.glitchtipUrl || glitchtipRoot || "").replace(/\/+$/, "");
   const enabled = features.enabledFeatures || [];
 
+  // Projects left this list in Phase 4 — it is a screen here now, and a
+  // link to somebody else's version of a screen we have is worse than none.
   const links = [
-    ["nav-projects", organisation && `${root}/${organisation}/projects`, true],
     ["nav-performance", organisation && `${root}/${organisation}/performance`, true],
     ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
     ["nav-logs", organisation && `${root}/${organisation}/logs`, enabled.includes("logs")],
@@ -612,6 +628,7 @@ function paintChrome() {
   // has to remember to set.
   for (const [id, name] of [
     ["nav-issues", "issues"],
+    ["nav-projects", "projects"],
     ["nav-reports", "reports"],
     ["nav-requests", "requests"],
     ["nav-settings", "settings"],
@@ -879,6 +896,7 @@ async function boot() {
   el("nav-requests").href = routeHref("/requests");
   el("nav-settings").href = routeHref("/settings");
   el("nav-issues").href = routeHref("/issues");
+  el("nav-projects").href = routeHref("/projects");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.
   const home = routeHref(scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/");

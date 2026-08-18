@@ -171,11 +171,13 @@ async function shellServed() {
      * What has to stay true is that nothing renders as a link to nowhere.
      */
     const body = await (await get("/sentinel/", { headers: { accept: "text/html" } })).text();
-    for (const id of ["nav-issues", "nav-reports", "nav-requests", "nav-settings"]) {
+    // nav-projects joined this list in Phase 4: a project's keys, alerts and
+    // environments are a screen here now, so linking across to GlitchTip's
+    // version of half of it would be a link to somewhere worse.
+    for (const id of ["nav-issues", "nav-projects", "nav-reports", "nav-requests", "nav-settings"]) {
       assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
     }
     for (const external of [
-      "nav-projects",
       "nav-performance",
       "nav-uptime",
       "nav-logs",
