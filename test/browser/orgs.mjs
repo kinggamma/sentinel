@@ -71,6 +71,18 @@ function compose(args, env = {}) {
   });
 }
 
+/**
+ * Every session this suite signs in, remembered so every one can be signed
+ * out again.
+ *
+ * It mints three — one before it changes anything, one after the receiver
+ * comes back unpinned, and one to check the restore — and left all three
+ * live. A session here is a real login on a real account, valid until it
+ * expires on its own, and a suite meant to be run often should not deposit
+ * one per run in somebody's session store.
+ */
+const minted = [];
+
 function session() {
   const [key, org] = execFileSync("bash", ["scripts/seed-smoke-session.sh"], {
     encoding: "utf8",
@@ -79,7 +91,24 @@ function session() {
     .trim()
     .split(/\s+/);
   assert(key, "seed-smoke-session.sh printed no session key");
+  minted.push(key);
   return { key, org };
+}
+
+function clearSessions() {
+  const left = [];
+  for (const key of minted) {
+    try {
+      execFileSync("bash", ["scripts/seed-smoke-session.sh", "--clear", key], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      left.push(key.slice(0, 8));
+    }
+  }
+  minted.length = 0;
+  return left;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -128,6 +157,8 @@ async function main() {
   const movable = before.find((p) => p.glitchtipProject && p.org);
   const staying = before.find((p) => p.glitchtipProject && p !== movable);
   if (!movable || !staying) {
+    // Nothing was changed, but a session was signed in to find that out.
+    clearSessions();
     process.stdout.write(
       "  (needs two apps mapped to GlitchTip projects — run scripts/seed-demo-errors.sh)\n"
     );
@@ -236,8 +267,22 @@ print("moved")`);
   } finally {
     if (browser) await browser.close();
 
-    if (moved) {
-      django(`
+    /**
+     * Two restores, two blocks, and the order matters more than it looks.
+     *
+     * They were one block, so a throw while moving the project back — a
+     * database that went away, a slug that changed underneath us — skipped
+     * the line that puts GLITCHTIP_ORG back, and left the stack running
+     * unpinned. That is the worst outcome available here: not a failed test,
+     * but a receiver quietly configured differently from the .env beside it,
+     * for every session after this one, until somebody noticed.
+     *
+     * The configuration is the one that must survive the other failing, so
+     * it gets its own finally and the data restore goes inside it.
+     */
+    try {
+      if (moved) {
+        django(`
 from django.apps import apps
 Org = apps.get_model('organizations_ext','Organization')
 Project = apps.get_model('projects','Project')
@@ -246,12 +291,13 @@ p.organization = Org.objects.get(slug=${JSON.stringify(homeOrg)})
 p.save()
 Org.objects.filter(slug=${JSON.stringify(SECOND)}).delete()
 print("restored")`);
-    }
-
-    // Puts GLITCHTIP_ORG back to whatever .env says, pin included.
-    if (unpinned) {
-      compose(["up", "-d", "feedback-receiver"]);
-      await sleep(4000);
+      }
+    } finally {
+      // Puts GLITCHTIP_ORG back to whatever .env says, pin included.
+      if (unpinned) {
+        compose(["up", "-d", "feedback-receiver"]);
+        await sleep(4000);
+      }
     }
   }
 
@@ -271,11 +317,19 @@ print("orgs", list(Org.objects.values_list('slug', flat=True)))`);
     assert(!orgs.includes(SECOND), `the second organisation was left behind: ${orgs.trim()}`);
   });
 
+  // Last, because the check above signs in one more time to do its checking.
+  await test("it signs out every session it signed in", () => {
+    const left = clearSessions();
+    assert(!left.length, `could not clear ${left.length} session(s): ${left.join(", ")}`);
+  });
+
   process.stdout.write(`\n${passed} passed, ${failures.length} failed\n`);
   if (failures.length) process.exit(1);
 }
 
 main().catch((error) => {
+  // The tests may never have run; the sessions were still created.
+  clearSessions();
   process.stdout.write(`\nsuite could not run: ${error.stack || error.message}\n`);
   process.exit(1);
 });

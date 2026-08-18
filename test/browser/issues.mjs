@@ -191,7 +191,22 @@ async function removeOurNotes(key, org, issueId) {
  * same way the passkey suite sets up what it needs. Written as its own key
  * per run so two runs cannot collide, and removed again whatever happens.
  */
-const TAG_VALUES = 8;
+/**
+ * Enough values to catch a cap, rather than enough to look like a spread.
+ *
+ * Eight proved nothing about the claim it was there to prove. GlitchTip
+ * returning "every value" and GlitchTip returning "up to ten, ordered by
+ * count" are indistinguishable at eight, and ten is precisely where Sentry —
+ * whose API this one mirrors — puts its own limit. A cap adopted from that
+ * lineage would have slipped straight through.
+ *
+ * Sixty is above every round number a limit is plausibly set at, and was
+ * checked against this GlitchTip: sixty seeded, sixty returned, uniqueValues
+ * agreeing. The only bound in its aggregation is a slice at a hundred
+ * thousand rows across all tags at once, which is not a number a test can
+ * usefully sit above.
+ */
+const TAG_VALUES = 60;
 
 function django(python) {
   return execFileSync(
@@ -212,23 +227,40 @@ Issue = apps.get_model('issue_events','Issue')
 issue = Issue.objects.get(id=${Number(issueId)})
 key, _ = TagKey.objects.get_or_create(key=${JSON.stringify(tagKey)})
 for i in range(${count}):
-    value, _ = TagValue.objects.get_or_create(value=f"spread-{i}")
+    # Named after this run's key, so cleanup can find exactly these and a
+    # second run cannot adopt the first one's rows.
+    value, _ = TagValue.objects.get_or_create(value=f"{${JSON.stringify(tagKey)}}-{i}")
     IssueTag.objects.get_or_create(
         issue=issue, organization_id=issue.project.organization_id,
-        tag_key=key, tag_value=value, date=datetime.date(2026, 8, 17),
+        tag_key=key, tag_value=value,
+        # Today, not a date that was today when this was written. Nothing
+        # aggregates on it now, and a literal here is a fact about the
+        # afternoon it was typed rather than about the test.
+        date=datetime.date.today(),
         defaults={"count": ${count} - i})
 print("seeded", IssueTag.objects.filter(issue=issue, tag_key=key).count())`);
   assert(out.includes(`seeded ${count}`), `could not seed a spread of tag values: ${out.trim()}`);
 }
 
 function removeTagValues(tagKey) {
-  django(`
+  /**
+   * Three tables, not one. Deleting the IssueTag rows and the key left the
+   * TagValue rows behind — orphans nothing references, sixty per run,
+   * accumulating in somebody's database for as long as this suite is run.
+   * They are safe to remove because they are named after this run's key and
+   * nothing else can be pointing at them; the count is checked rather than
+   * assumed.
+   */
+  const out = django(`
 from django.apps import apps
 IssueTag = apps.get_model('issue_events','IssueTag')
 TagKey = apps.get_model('issue_events','TagKey')
+TagValue = apps.get_model('issue_events','TagValue')
 IssueTag.objects.filter(tag_key__key=${JSON.stringify(tagKey)}).delete()
 TagKey.objects.filter(key=${JSON.stringify(tagKey)}).delete()
-print("cleaned")`);
+TagValue.objects.filter(value__startswith=${JSON.stringify(tagKey + "-")}).delete()
+print("left", TagValue.objects.filter(value__startswith=${JSON.stringify(tagKey + "-")}).count())`);
+  assert(/left 0\b/.test(out), `tag values were left behind: ${out.trim()}`);
 }
 
 /** The section headed `title`, or null. Sections are found by their heading. */
