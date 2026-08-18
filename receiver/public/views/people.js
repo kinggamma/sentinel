@@ -194,6 +194,19 @@ function requestList(requests, { org, repaint, signal, teams = [] }) {
           teams.map((slug) => h("option", { value: slug, text: slug })))
       : null;
 
+  /**
+   * The team this approval names, control or no control.
+   *
+   * With one team there is nothing to choose, and offering a select with a
+   * single option is noise — but sending nothing is not the same as sending
+   * the obvious answer. Nothing meant the server fell back to the team
+   * Sentinel provisions into, which is configured separately and may be a
+   * different team, or one that does not exist in this organisation at all.
+   * So the one team that is actually here is named explicitly, and only a
+   * genuine absence of teams leaves the fallback to decide.
+   */
+  const chosenTeam = (picker) => picker?.value || (teams.length === 1 ? teams[0] : null);
+
   const act = async (id, path, body) => {
     error.hidden = true;
     try {
@@ -224,7 +237,7 @@ function requestList(requests, { org, repaint, signal, teams = [] }) {
                 click: () =>
                   void act(request.id, "approve", {
                     organisation: org,
-                    ...(team ? { team: team.value } : {}),
+                    ...(chosenTeam(team) ? { team: chosenTeam(team) } : {}),
                   }),
               },
             }),
@@ -380,6 +393,9 @@ function memberList(rows, { org, can, me, repaint, say, signal }) {
 function inviteForm({ org, repaint, signal, teams = [] }) {
   const email = field({ label: "Email", id: "invite-email", type: "email", placeholder: "them@example.org" });
   const role = h("select", { id: "invite-role" }, ROLES.map((one) => h("option", { value: one, text: one })));
+  // Shown whenever there is a team at all, including when there is exactly
+  // one: it is the answer, and a form that hides it invites somebody into
+  // whatever a separate setting happens to name.
   const team = teams.length
     ? h("select", { id: "invite-team" }, teams.map((slug) => h("option", { value: slug, text: slug })))
     : null;

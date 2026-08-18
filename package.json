@@ -7,7 +7,8 @@
     "test:browser": "node test/browser/run.mjs",
     "test:webauthn": "node test/browser/webauthn.mjs",
     "test:issues": "node test/browser/issues.mjs",
-    "test:orgs": "node test/browser/orgs.mjs"
+    "test:orgs": "node test/browser/orgs.mjs",
+    "test:manage": "node test/browser/manage.mjs"
   },
   "devDependencies": {
     "playwright": "^1.47.0"

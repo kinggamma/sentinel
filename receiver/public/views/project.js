@@ -185,7 +185,15 @@ export async function projectDetailView({ outlet, params, signal }, { org, orgs 
   const [keys, alerts, environments, apps] = await Promise.all([
     settle(glitchtip.get(`${base}/keys/`, { signal })),
     settle(glitchtip.get(`${base}/alerts/`, { signal })),
-    settle(glitchtip.get(`${base}/environments/`, { signal })),
+    /**
+     * Every environment, including the hidden ones.
+     *
+     * The default is visible-only, which makes hiding a one-way door: the
+     * moment you hide one it leaves the list, and the screen that hid it can
+     * never show it again. Asking for all of them is what makes this a
+     * setting rather than a deletion.
+     */
+    settle(glitchtip.get(`${base}/environments/?visibility=all`, { signal })),
     settle(sentinel.get("/projects", { signal })),
   ]);
   throwIfAborted(signal);
@@ -225,11 +233,11 @@ export async function projectDetailView({ outlet, params, signal }, { org, orgs 
 
         environments.failed !== undefined
           ? unavailable("Environments", environments.failed, "its environments")
-          : environmentsSection(environments.data),
+          : environmentsSection(environments.data, { base, can, signal }),
 
         alerts.failed !== undefined
           ? unavailable("Alerts", alerts.failed, "its alert rules")
-          : alertsSection(alerts.data, { can })
+          : alertsSection(alerts.data, { base, can, signal })
       )
     )
   );
@@ -478,49 +486,288 @@ function sentinelSection(app, { linkOrg, orgs, can, signal }) {
   );
 }
 
-function environmentsSection(environments) {
+/**
+ * Which environments this project has seen, and which to stop showing.
+ *
+ * Hiding one is not deleting it: the events stay, and the name returns the
+ * moment something reports under it again. It exists because a project that
+ * has ever been run on somebody's laptop carries a "development" beside its
+ * real environments forever, and a filter list with a dead entry in it is a
+ * filter list people stop reading.
+ */
+function environmentsSection(environments, { base, can, signal }) {
   const list = Array.isArray(environments) ? environments : [];
+  const error = h("p", { className: "error" });
+  error.hidden = true;
+
+  const setHidden = async (environment, hidden) => {
+    error.hidden = true;
+    try {
+      await glitchtip.put(
+        `${base}/environments/${encodeURIComponent(environment.name)}/`,
+        { name: environment.name, isHidden: hidden },
+        { signal }
+      );
+      location.reload();
+    } catch (failure) {
+      error.hidden = false;
+      error.textContent = failure?.message || `Couldn't change that (${failure?.status ?? 0}).`;
+    }
+  };
+
   return section(
     "Environments",
     list.length
-      ? h("ul", { className: "tag-values" },
+      ? h(
+          "ul",
+          { className: "origin-list" },
           list.map((environment) =>
-            h("li", {},
+            h(
+              "li",
+              {},
               h("span", { className: "tag-value", text: environment.name }),
-              environment.isHidden ? h("span", { className: "muted", text: "hidden" }) : null
+              h(
+                "span",
+                { className: "row-actions" },
+                environment.isHidden ? h("span", { className: "muted", text: "hidden" }) : null,
+                can.canManageProjects
+                  ? h("button", {
+                      type: "button",
+                      className: "ghost",
+                      text: environment.isHidden ? "Show" : "Hide",
+                      on: { click: () => void setHidden(environment, !environment.isHidden) },
+                    })
+                  : null
+              )
             )
           )
         )
-      : h("p", { className: "muted", text: "Nothing has reported an environment yet." })
+      : h("p", { className: "muted", text: "Nothing has reported an environment yet." }),
+    error
   );
 }
 
 /**
- * Alert rules, read-only for now.
+ * Alert rules: what counts as too many errors, and who hears about it.
  *
- * Creating one needs recipients, which needs the members list — that is
- * Phase 5. Showing what exists is worth having before then: an issue nobody
- * is told about is the failure this whole pipeline exists to prevent, and
- * "no alerts configured" is the sentence that reveals it.
+ * The most consequential thing on this screen, and the easiest to get wrong
+ * silently. A project with no rule is a project nobody is told about, which
+ * is the failure this whole pipeline exists to prevent — so that case says
+ * so rather than rendering an empty list and looking finished.
+ *
+ * Recipients are the other half of the same problem. A rule with none fires
+ * and reaches nobody, and looks exactly like a rule that works right up
+ * until the day it matters, so the list says when a rule has none.
+ *
+ * And the test button exists because "did that actually reach anybody" is
+ * not answerable by reading configuration. GlitchTip replies per recipient —
+ * sent, skipped, or an error with its reason — and each line is shown as it
+ * came back rather than collapsed into a tick.
  */
-function alertsSection(alerts, { can }) {
+const RECIPIENTS = [
+  ["email", "Email everyone in the team"],
+  ["webhook", "Slack-compatible webhook"],
+  ["discord", "Discord"],
+  ["googlechat", "Google Chat"],
+  ["ntfy", "ntfy"],
+  ["teams", "Microsoft Teams"],
+  ["zulip", "Zulip"],
+  ["feishu", "Feishu"],
+];
+
+function alertsSection(alerts, { base, can, signal }) {
   const list = Array.isArray(alerts) ? alerts : [];
+  const error = h("p", { className: "error" });
+  error.hidden = true;
+  const results = h("div", { className: "alert-results" });
+
+  const say = (message) => {
+    error.hidden = !message;
+    error.textContent = message || "";
+  };
+
+  const remove = async (alert) => {
+    const sure = await confirmAction({
+      title: `Delete the ${alert.name || "unnamed"} alert?`,
+      detail:
+        "Nobody is told when this project passes that threshold again, unless another rule covers it.",
+      confirm: "Delete it",
+    });
+    if (!sure) return;
+    try {
+      await glitchtip.del(`${base}/alerts/${encodeURIComponent(alert.id)}/`, { signal });
+      location.reload();
+    } catch (failure) {
+      say(failure?.message || `Couldn't delete that (${failure?.status ?? 0}).`);
+    }
+  };
+
+  /** What happened, per recipient, in GlitchTip's own words. */
+  const test = async (alert) => {
+    say("");
+    fill(results, h("p", { className: "muted", text: "Sending…" }));
+    try {
+      const outcome = await glitchtip.post(
+        `${base}/alerts/${encodeURIComponent(alert.id)}/test/`,
+        {},
+        { signal }
+      );
+      const rows = Array.isArray(outcome) ? outcome : [];
+      fill(
+        results,
+        rows.length
+          ? h(
+              "ul",
+              { className: "origin-list" },
+              rows.map((row) =>
+                h(
+                  "li",
+                  {},
+                  h("span", { text: `${row.recipientType}: ${row.status}` }),
+                  row.message ? h("span", { className: "muted", text: row.message }) : null
+                )
+              )
+            )
+          : h("p", {
+              className: "muted",
+              text: "That rule has no recipients, so the test reached nobody.",
+            })
+      );
+    } catch (failure) {
+      fill(
+        results,
+        h("p", {
+          className: "error",
+          text: failure?.message || `The test could not be sent (${failure?.status ?? 0}).`,
+        })
+      );
+    }
+  };
+
+  const rows = list.map((alert) => {
+    const recipients = alert.alertRecipients || [];
+    return h(
+      "li",
+      {},
+      h(
+        "div",
+        {},
+        h("div", { text: alert.name || `alert ${alert.id}` }),
+        h("div", {
+          className: "muted",
+          text:
+            `${alert.quantity} in ${alert.timespanMinutes} min · ` +
+            (recipients.length
+              ? recipients.map((one) => one.recipientType).join(", ")
+              : "no recipients — this reaches nobody"),
+        })
+      ),
+      can.canManageProjects
+        ? h(
+            "span",
+            { className: "row-actions" },
+            h("button", {
+              type: "button",
+              className: "ghost",
+              text: "Test",
+              on: { click: () => void test(alert) },
+            }),
+            h("button", {
+              type: "button",
+              className: "ghost danger",
+              text: "Delete",
+              on: { click: () => void remove(alert) },
+            })
+          )
+        : null
+    );
+  });
+
+  const name = field({ label: "Name", id: "alert-name", placeholder: "Too many errors" });
+  const quantity = field({ label: "Errors", id: "alert-quantity", value: "10" });
+  const minutes = field({ label: "In how many minutes", id: "alert-minutes", value: "60" });
+  const to = h(
+    "select",
+    { id: "alert-recipient" },
+    RECIPIENTS.map(([value, label]) => h("option", { value, text: label }))
+  );
+  const url = field({
+    label: "Webhook address",
+    id: "alert-url",
+    placeholder: "https://hooks.example.org/…",
+  });
+  const submit = h("button", { type: "submit", text: "Add alert" });
+
+  /** Email reaches the team and needs no address; every other kind does. */
+  const syncUrl = () => {
+    url.node.hidden = to.value === "email";
+  };
+  to.addEventListener("change", syncUrl);
+  syncUrl();
+
+  const form = h(
+    "form",
+    {
+      on: {
+        submit: async (event) => {
+          event.preventDefault();
+          say("");
+          const count = Number(quantity.input.value);
+          const window = Number(minutes.input.value);
+          if (!Number.isFinite(count) || count < 1 || !Number.isFinite(window) || window < 1) {
+            say("How many errors, and over how many minutes — both need to be numbers above zero.");
+            return;
+          }
+          const address = url.input.value.trim();
+          if (to.value !== "email" && !address) {
+            say("That kind of recipient needs an address to send to.");
+            return;
+          }
+
+          submit.disabled = true;
+          try {
+            await glitchtip.post(
+              `${base}/alerts/`,
+              {
+                name: name.input.value.trim() || null,
+                timespanMinutes: window,
+                quantity: count,
+                uptime: false,
+                alertRecipients: [
+                  { recipientType: to.value, ...(to.value === "email" ? {} : { url: address }) },
+                ],
+              },
+              { signal }
+            );
+            location.reload();
+          } catch (failure) {
+            say(failure?.message || `Couldn't add that (${failure?.status ?? 0}).`);
+            submit.disabled = false;
+          }
+        },
+      },
+    },
+    name.node,
+    quantity.node,
+    minutes.node,
+    h("label", { className: "field" }, h("span", { className: "field-label", text: "Tell" }), to),
+    url.node,
+    h("div", { className: "form-actions" }, submit)
+  );
+
   return section(
     "Alerts",
     list.length
-      ? h("ul", { className: "tag-values" },
-          list.map((alert) =>
-            h("li", {},
-              h("span", { className: "tag-value", text: alert.name || `alert ${alert.id}` }),
-              h("span", { className: "muted",
-                text: `${alert.quantity} in ${alert.timespanMinutes} min` })
-            )
-          )
-        )
-      : h("p", { className: "muted",
+      ? h("ul", { className: "origin-list" }, rows)
+      : h("p", {
+          className: "muted",
           text: can.canManageProjects
             ? "No alert rules, so nobody is told when this project starts failing."
-            : "No alert rules on this project." })
+            : "No alert rules on this project.",
+        }),
+    results,
+    can.canManageProjects ? form : null,
+    error
   );
 }
 
