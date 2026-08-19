@@ -621,7 +621,14 @@ async function main() {
           const rows = new Set(links.map((a) => Math.round(a.getBoundingClientRect().top)));
           return { links: links.length, rows: rows.size, height: block.getBoundingClientRect().height };
         });
-        assert(nav.links >= 5, `the GlitchTip links went missing on a phone (${nav.links})`);
+        /**
+         * However many are left. The block shrinks with every phase that
+         * turns one of GlitchTip's screens into one of ours — it held seven
+         * when this was written and holds four now — so a floor tied to the
+         * old count fails on progress rather than on a bug. What must stay
+         * true is that whatever remains is reachable and on one row.
+         */
+        assert(nav.links >= 1, "the GlitchTip block is empty, so it should not be rendered at all");
         assert(nav.rows === 1, `the GlitchTip links wrapped onto ${nav.rows} rows`);
       } finally {
         await phone.close();

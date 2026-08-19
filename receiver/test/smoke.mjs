@@ -156,6 +156,7 @@ async function shellServed() {
     "/sentinel/projects/e-library",
     "/sentinel/people",
     "/sentinel/organisation",
+    "/sentinel/profile",
     "/sentinel/teams",
     "/sentinel/teams/new",
     "/sentinel/teams/just-me",
@@ -224,6 +225,8 @@ async function shellServed() {
       // Internal since Phase 6: the organisation's name, its error counts and
       // its sign-on settings are a screen here now.
       "nav-organisation",
+      // Internal since Phase 7.
+      "nav-profile",
       "nav-reports",
       "nav-settings",
     ]) {
@@ -234,7 +237,6 @@ async function shellServed() {
       "nav-uptime",
       "nav-logs",
       "nav-releases",
-      "nav-profile",
     ]) {
       const anchor = body.match(new RegExp(`<a[^>]*id="${external}"[^>]*>`))?.[0];
       assert(anchor, `the sidebar is missing ${external}`);

@@ -38,6 +38,7 @@ import { projectsListView, projectDetailView, projectNewView } from "./views/pro
 import { peopleView } from "./views/people.js";
 import { teamsListView, teamNewView, teamDetailView } from "./views/teams.js";
 import { organisationView } from "./views/organisation.js";
+import { profileView } from "./views/profile.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import {
   signInView,
@@ -339,6 +340,12 @@ route("/people", guarded(projectsRoute(peopleView)));
 
 route("/organisation", guarded(projectsRoute(organisationView)));
 
+// Yours rather than the organisation's, so it takes no org and no role.
+route("/profile", guarded((ctx, me) => {
+  paintChrome();
+  return profileView(ctx, me);
+}));
+
 route("/teams", guarded(projectsRoute(teamsListView)));
 // Before :slug, which would otherwise match "new" as a team.
 route("/teams/new", guarded(projectsRoute(teamNewView)));
@@ -593,6 +600,7 @@ function sectionFor(path) {
   if (path.startsWith("/people")) return "people";
   if (path.startsWith("/teams")) return "people";
   if (path.startsWith("/organisation")) return "organisation";
+  if (path.startsWith("/profile")) return "profile";
   if (path.startsWith("/requests")) return "people";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
@@ -649,7 +657,6 @@ function paintExternalLinks() {
     ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
     ["nav-logs", organisation && `${root}/${organisation}/logs`, enabled.includes("logs")],
     ["nav-releases", organisation && `${root}/${organisation}/releases`, true],
-    ["nav-profile", root && `${root}/profile`, true],
   ];
 
   let anyShown = false;
@@ -677,6 +684,7 @@ function paintChrome() {
     ["nav-projects", "projects"],
     ["nav-people", "people"],
     ["nav-organisation", "organisation"],
+    ["nav-profile", "profile"],
     ["nav-reports", "reports"],
     ["nav-settings", "settings"],
   ]) {
@@ -702,6 +710,7 @@ function paintChrome() {
     // is exactly what the comment above says this exists to prevent.
     projects: "Projects",
     organisation: "Organisation",
+    profile: "Your profile",
     people: currentPath().startsWith("/teams") ? "Teams" : "People",
     settings: "Settings",
     reports: appName || "Your apps",
@@ -952,6 +961,7 @@ async function boot() {
   el("nav-projects").href = routeHref("/projects");
   el("nav-people").href = routeHref("/people");
   el("nav-organisation").href = routeHref("/organisation");
+  el("nav-profile").href = routeHref("/profile");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.
   const home = routeHref(scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/");
