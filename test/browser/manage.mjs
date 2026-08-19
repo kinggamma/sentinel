@@ -29,7 +29,6 @@ import { execFileSync } from "node:child_process";
 
 const BASE = (process.env.BASE_URL || "http://localhost:8000").replace(/\/+$/, "");
 const MOUNT = `${BASE}/sentinel`;
-const EMAIL = process.env.SMOKE_EMAIL || "sentinel-smoke@example.com";
 
 /** Named after the run, so two runs cannot collide and cleanup is exact. */
 const MARKER = "sentinel-manage-suite";
@@ -58,69 +57,128 @@ function assert(condition, message) {
 }
 
 function django(python) {
-  return execFileSync(
-    "docker",
-    ["compose", "exec", "-T", "glitchtip-web", "./manage.py", "shell", "-c", python],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
-  );
+  try {
+    return execFileSync(
+      "docker",
+      ["compose", "exec", "-T", "glitchtip-web", "./manage.py", "shell", "-c", python],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+    );
+  } catch (error) {
+    // The reason, not the script. Swallowing stderr here cost two rounds of
+    // guessing at a not-null constraint that Django was naming plainly.
+    const why = String(error.stderr || "").trim().split("\n").slice(-3).join(" ");
+    throw new Error(`manage.py failed: ${why || error.message}`);
+  }
 }
 
-const minted = [];
+/**
+ * Accounts this suite makes, uses and deletes.
+ *
+ * It used to sign in as the shared smoke account and raise its role, which
+ * was wrong twice over. That account is shared with every other suite, and
+ * the script that signs it in resets its password on each call — Django
+ * derives a session's auth hash from the password hash, so every earlier
+ * session dies the moment another is minted. This suite signed in several
+ * times and then kept using the first key, which is why its later checks
+ * failed in a way that looked like the app losing sessions.
+ *
+ * So it makes its own: a manager to act as, a member to be refused as, and
+ * applicants who ask to be let in. Each is signed in exactly once, nothing
+ * shared is touched, and every one is removed at the end.
+ */
+const made = [];
 
-function session() {
-  const [key, org] = execFileSync("bash", ["scripts/seed-smoke-session.sh"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
-  })
-    .trim()
-    .split(/\s+/);
-  assert(key, "seed-smoke-session.sh printed no session key");
-  minted.push(key);
-  return { key, org };
+function makeAccount(email, { role = null } = {}) {
+  const password = `Su-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+  const out = django(`
+from django.apps import apps
+from django.contrib.auth import get_user_model
+Org = apps.get_model('organizations_ext','Organization')
+OrgUser = apps.get_model('organizations_ext','OrganizationUser')
+User = get_user_model()
+user, _ = User.objects.get_or_create(email=${JSON.stringify(email)})
+user.set_password(${JSON.stringify(password)})
+user.is_active = True
+user.save()
+# None, not JSON's null, which Python has never heard of.
+role = ${role ? JSON.stringify(role) : "None"}
+if role:
+    org = Org.objects.get(slug=${JSON.stringify(ORG)})
+    # The value first: the row has a not-null role, so creating it and then
+    # setting one inserts a null on the way through and is refused.
+    value = [r for r in OrgUser._meta.get_field('role').choices if r[1].lower() == role][0][0]
+    member, made = OrgUser.objects.get_or_create(
+        user=user, organization=org, defaults={"role": value})
+    if not made and member.role != value:
+        member.role = value
+        member.save()
+print("made", user.email)`);
+  assert(out.includes("made"), `could not make ${email}: ${out.trim()}`);
+  made.push(email);
+  return { email, password };
 }
 
-function clearSessions() {
-  for (const key of minted.splice(0)) {
+function dropAccount(email) {
+  django(`
+from django.contrib.auth import get_user_model
+get_user_model().objects.filter(email=${JSON.stringify(email)}).delete()
+print("dropped")`);
+}
+
+function dropAccounts() {
+  for (const email of made.splice(0)) {
     try {
-      execFileSync("bash", ["scripts/seed-smoke-session.sh", "--clear", key], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-    } catch {
-      // Reported by the check at the end rather than thrown from cleanup.
+      dropAccount(email);
+    } catch (error) {
+      process.stdout.write(`  ! could not remove ${email}: ${error.message}\n`);
     }
   }
 }
 
-/** The role decides which controls exist, so it is the fixture. */
-function setRole(role) {
-  const out = django(`
-from django.apps import apps
-from django.contrib.auth import get_user_model
-OrgUser = apps.get_model('organizations_ext','OrganizationUser')
-u = get_user_model().objects.get(email=${JSON.stringify(EMAIL)})
-ou = OrgUser.objects.get(user=u, organization__slug=${JSON.stringify(ORG)})
-ou.role = [r for r in ou._meta.get_field('role').choices if r[1].lower()==${JSON.stringify(role)}][0][0]
-ou.save()
-print("role", ou.get_role_display())`);
-  assert(out.toLowerCase().includes(role), `could not set the role to ${role}: ${out.trim()}`);
+/**
+ * Signing in the way a browser does, through allauth.
+ *
+ * Once per account. Nothing here resets a password after the fact, so a
+ * session minted at the start is still good at the end — which the previous
+ * arrangement could not promise.
+ */
+async function signIn({ email, password }) {
+  const jar = [];
+  const keep = (res) => {
+    for (const value of res.headers.getSetCookie?.() || []) jar.push(value.split(";")[0]);
+  };
+  const cookie = () => jar.join("; ");
+
+  keep(await fetch(`${BASE}/_allauth/browser/v1/auth/session`, { headers: { cookie: cookie() } }));
+  const csrf = cookie().match(/csrftoken=([^;]+)/)?.[1] || "";
+
+  const login = await fetch(`${BASE}/_allauth/browser/v1/auth/login`, {
+    method: "POST",
+    headers: { cookie: cookie(), "content-type": "application/json", "x-csrftoken": csrf },
+    body: JSON.stringify({ email, password }),
+  });
+  keep(login);
+  const key = cookie().match(/sessionid=([^;]+)/)?.[1];
+  assert(key, `${email} could not sign in (${login.status})`);
+  return key;
 }
 
-/**
- * Which organisation, asked rather than assumed.
- *
- * This was the name of one particular installation's organisation, written
- * into a file in a public repository, and every check in here would have
- * failed on anybody else's deployment for a reason that looked like a bug in
- * the code under test.
- */
-let ORG = "";
+/** Which organisation, from the receiver's own configuration. */
+function organisation() {
+  const pinned = execFileSync(
+    "docker",
+    ["compose", "exec", "-T", "feedback-receiver", "printenv", "GLITCHTIP_ORG"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+  ).trim();
+  if (pinned) return pinned;
 
-async function organisationOf(key) {
-  const me = await api("/sentinel/api/auth/me", key);
-  const [first] = me?.orgs || [];
-  assert(first, "the smoke account belongs to no organisation");
-  return first;
+  const first = django(`
+from django.apps import apps
+org = apps.get_model('organizations_ext','Organization').objects.order_by('id').first()
+print("org", org.slug if org else "")`);
+  const slug = first.match(/^org (.+)$/m)?.[1]?.trim();
+  assert(slug, "there is no organisation to work in");
+  return slug;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -155,87 +213,112 @@ function receiverFile(python) {
  * request itself. Deleted afterwards, account and all. Nothing shared is
  * touched, and the path being tested is the one people actually walk.
  */
-function makeApplicant(email) {
-  const password = `Ap-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
-  django(`
-from django.contrib.auth import get_user_model
-User = get_user_model()
-user, _ = User.objects.get_or_create(email=${JSON.stringify(email)})
-user.set_password(${JSON.stringify(password)})
-user.is_active = True
-user.save()
-print("made")`);
-  return { email, password };
-}
-
-function removeApplicant(email) {
-  django(`
-from django.contrib.auth import get_user_model
-get_user_model().objects.filter(email=${JSON.stringify(email)}).delete()
-print("removed")`);
-}
-
-/** Signs in as them and asks, which is the only way into the queue. */
-async function askForAccess({ email, password }) {
-  const jar = [];
-  const keep = (res) => {
-    for (const value of (res.headers.getSetCookie?.() || [])) jar.push(value.split(";")[0]);
-  };
-  const cookie = () => jar.join("; ");
-
-  keep(await fetch(`${BASE}/_allauth/browser/v1/auth/session`, { headers: { cookie: cookie() } }));
-  const csrf = jar.join("; ").match(/csrftoken=([^;]+)/)?.[1] || "";
-
-  const login = await fetch(`${BASE}/_allauth/browser/v1/auth/login`, {
-    method: "POST",
-    headers: { cookie: cookie(), "content-type": "application/json", "x-csrftoken": csrf },
-    body: JSON.stringify({ email, password }),
-  });
-  keep(login);
-  const session = jar.join("; ").match(/sessionid=([^;]+)/)?.[1];
-  assert(session, `the applicant could not sign in (${login.status})`);
-
+/**
+ * An applicant: somebody with no organisation who asks to be let in.
+ *
+ * The queue is Sentinel's own and is only written by the endpoint an
+ * applicant posts to. Writing the file directly does not work — the receiver
+ * reads it once and keeps it in memory — so a real account asks, which is
+ * also the path people actually walk.
+ */
+async function applicantAsks(email) {
+  const who = makeAccount(email);
+  const key = await signIn(who);
   const token = await receiverToken();
   const asked = await fetch(`${BASE}/sentinel/api/access/request`, {
     method: "POST",
     headers: {
-      cookie: `sessionid=${session}; sentinel-csrf=${token}`,
+      cookie: `sessionid=${key}; sentinel-csrf=${token}`,
       "x-sentinel-csrf": token,
       "content-type": "application/json",
     },
     body: JSON.stringify({ note: "put here by the management suite" }),
   });
-  assert(asked.status === 201, `asking for access answered ${asked.status}`);
-  return session;
+  assert(asked.status === 201, `${email} asking for access answered ${asked.status}`);
+  return { ...who, key };
 }
 
-function seedRequest(email) {
-  receiverFile(`
-const fs = require("fs");
-const path = "/data/access-requests.json";
-const all = JSON.parse(fs.readFileSync(path, "utf8") || "{}");
-all[${JSON.stringify(email)}] = {
-  id: ${JSON.stringify(email)},
-  email: ${JSON.stringify(email)},
-  name: null,
-  note: "put here by the management suite",
-  organisation: ${JSON.stringify(ORG)},
-  status: "pending",
-  requestedAt: new Date().toISOString(),
-  decidedAt: null,
-};
-fs.writeFileSync(path, JSON.stringify(all, null, 2));
-console.log("seeded");`);
+/**
+ * Requests left in the queue by earlier runs of this suite.
+ *
+ * They cannot be deleted from the file: the receiver read it once and keeps
+ * it, so anything removed behind its back reappears the next time it writes.
+ * The only thing that clears a request is the person it belongs to asking
+ * where they stand once they are no longer waiting — so each stranded
+ * applicant is recreated just long enough to do exactly that, then removed.
+ */
+async function sweepStaleRequests(managerKey) {
+  const queue = await api("/sentinel/api/access/requests", managerKey);
+  const stale = (queue?.requests || []).filter((one) =>
+    String(one.email || "").startsWith(MARKER)
+  );
+  if (!stale.length) return 0;
+
+  for (const request of stale) {
+    try {
+      const account = makeAccount(request.email);
+      const key = await signIn(account);
+      await forgetRequest({ ...account, key });
+      dropAccount(request.email);
+      made.splice(made.indexOf(request.email), 1);
+    } catch (error) {
+      process.stdout.write(`  ! could not clear ${request.email}: ${error.message}\n`);
+    }
+  }
+  return stale.length;
 }
 
-function clearRequest(email) {
-  receiverFile(`
-const fs = require("fs");
-const path = "/data/access-requests.json";
-const all = JSON.parse(fs.readFileSync(path, "utf8") || "{}");
-delete all[${JSON.stringify(email)}];
-fs.writeFileSync(path, JSON.stringify(all, null, 2));
-console.log("cleared");`);
+/**
+ * Take a decided request out of the queue, through the receiver rather than
+ * behind its back.
+ *
+ * Editing the JSON file leaves the record in the receiver's memory, which
+ * writes it back out on the next decision — so what looked like cleanup put
+ * it straight back. `/access/me` clears somebody's request once they are no
+ * longer waiting, so the applicant is let into the organisation and then
+ * asks that question themselves, which is what happens to a real person the
+ * moment they are approved.
+ */
+async function forgetRequest(applicant) {
+  django(`
+from django.apps import apps
+from django.contrib.auth import get_user_model
+Org = apps.get_model('organizations_ext','Organization')
+OrgUser = apps.get_model('organizations_ext','OrganizationUser')
+user = get_user_model().objects.filter(email=${JSON.stringify(applicant.email)}).first()
+if user:
+    org = Org.objects.get(slug=${JSON.stringify(ORG)})
+    # With a role: the column is not-null, so creating the row and setting one
+    # afterwards inserts a null on the way through and is refused.
+    lowest = OrgUser._meta.get_field('role').choices[0][0]
+    OrgUser.objects.get_or_create(user=user, organization=org, defaults={"role": lowest})
+print("joined")`);
+
+  /**
+   * Their own session, asking where they stand. The receiver clears the
+   * request when the answer is "you are in" — and says so in the reply, which
+   * is checked rather than assumed: a silent no-op here is what left this
+   * suite's own applicants in the queue while it reported itself clean.
+   */
+  /**
+   * Signed in again, after the join rather than before it.
+   *
+   * Reusing the session they asked with left them reading as pending — the
+   * session predates the membership, and whatever the receiver had already
+   * decided about it was not revisited in time for this. A fresh sign-in is
+   * one request and removes the question; it is also what the sweep for
+   * earlier runs does, which is the version that always worked.
+   */
+  const key = await signIn(applicant).catch(() => applicant.key);
+  const said = await fetch(`${BASE}/sentinel/api/access/me`, {
+    headers: { cookie: `sessionid=${key}` },
+  });
+  const body = await said.json().catch(() => ({}));
+  if (body.pending !== false) {
+    process.stdout.write(
+      `  ! ${applicant.email} still reads as pending (${said.status}), so its request stayed\n`
+    );
+  }
 }
 
 /**
@@ -255,6 +338,13 @@ async function receiverToken() {
   return receiverCsrf;
 }
 
+/**
+ * Which organisation everything below happens in, decided once at the start
+ * and never assumed. Writing one installation's name into this file would
+ * fail on everybody else's for a reason resembling a bug in the app.
+ */
+let ORG = "";
+
 /** Ask GlitchTip what is actually there, rather than trusting the screen. */
 async function api(path, key) {
   const res = await fetch(`${BASE}${path}`, { headers: { Cookie: `sessionid=${key}` } });
@@ -266,26 +356,28 @@ async function main() {
   process.stdout.write("\nMaking and unmaking things\n");
 
   let browser;
-  let elevated = false;
+  /** Applicants this run created, so cleanup can clear their requests. */
+  const applicants = [];
+  /** The session cleanup deletes with, kept from the one sign-in. */
+  let cleanupKey = null;
 
   try {
-    // Before anything else: the role fixture and the sweep both name it.
-    const opening = session();
-    ORG = await organisationOf(opening.key);
+    // Before anything else: everything below names it.
+    ORG = organisation();
     process.stdout.write(`  (organisation: ${ORG})\n`);
 
     /**
      * Anything a previous run of *this* suite left, and nothing else.
      *
-     * The sweep matched slug__startswith='suite', which would have deleted a
-     * real project or team belonging to somebody whose naming happened to
-     * begin that way. The names this suite makes are a fixed marker followed
-     * by the process id, so that is exactly what it removes — a pattern
-     * nothing chosen by a person looks like.
+     * The names this suite makes are a fixed marker followed by the process
+     * id, so that is exactly what it removes — a pattern nothing chosen by a
+     * person looks like. An earlier version matched every slug starting
+     * "suite", which would have deleted somebody's real work.
      */
     django(`
 import re
 from django.apps import apps
+from django.contrib.auth import get_user_model
 Project = apps.get_model('projects','Project')
 Team = apps.get_model('teams','Team')
 mine = re.compile(r"^sentinel-manage-suite-\\d+-(project|team)$")
@@ -293,19 +385,24 @@ projects = [p.id for p in Project.objects.filter(slug__startswith=${JSON.stringi
 teams = [t.id for t in Team.objects.filter(slug__startswith=${JSON.stringify(MARKER)}) if mine.match(t.slug)]
 Project.objects.filter(id__in=projects).delete()
 Team.objects.filter(id__in=teams).delete()
-# And the throwaway accounts, which are only ever made by this suite.
 # Matched in Python, not with startswith: the email column has a
 # nondeterministic collation and Postgres refuses LIKE against it.
-from django.contrib.auth import get_user_model
 User = get_user_model()
 stale = [u.id for u in User.objects.only("id", "email")
          if str(u.email or "").startswith(${JSON.stringify(MARKER)})]
 User.objects.filter(id__in=stale).delete()
 print("swept", len(projects), "project(s),", len(teams), "team(s),", len(stale), "account(s)")`);
 
-    setRole("manager");
-    elevated = true;
-    const { key } = session();
+    /**
+     * The account this suite acts as: its own, made manager, signed in once.
+     * Nothing shared is touched and nothing resets its password behind it.
+     */
+    const manager = makeAccount(`${RUN}-manager@example.com`, { role: "manager" });
+    const key = await signIn(manager);
+    cleanupKey = key;
+
+    const stranded = await sweepStaleRequests(key);
+    if (stranded) process.stdout.write(`  (cleared ${stranded} request(s) from earlier runs)\n`);
 
     browser = await chromium.launch();
     const context = await browser.newContext();
@@ -331,19 +428,24 @@ print("swept", len(projects), "project(s),", len(teams), "team(s),", len(stale),
      * It is also the better fixture where a check depends on a role: a
      * session created after the role was set is the one that has it.
      */
-    const freshWindow = async () => {
-      const fresh = session();
+    /**
+     * A window on the one session this suite holds.
+     *
+     * There used to be a freshly minted session per window, to work around
+     * the context losing its own. The cause was this suite: signing in again
+     * reset the account's password, and Django ties a session's auth hash to
+     * the password hash, so each new sign-in killed the last. One account,
+     * one sign-in, and the problem is gone rather than worked around.
+     */
+    const windowOn = async () => {
       const own = await browser.newContext();
       await own.addCookies([
-        { name: "sessionid", value: fresh.key, domain: "localhost", path: "/", httpOnly: true },
+        { name: "sessionid", value: key, domain: "localhost", path: "/", httpOnly: true },
       ]);
       const view = await own.newPage();
       view.on("pageerror", (error) => broke.push(error.message));
       return {
         view,
-        // The session this window is using, for the checks that call the API
-        // directly and must do so as whoever the window is.
-        key: fresh.key,
         close: () => own.close(),
         section: (title) =>
           view.locator(".detail-section").filter({ has: view.locator("h3", { hasText: title }) }),
@@ -595,14 +697,16 @@ print("removed")`);
       });
       assert(managerSees.status === 200, `a manager was refused the queue (${managerSees.status})`);
 
-      setRole("member");
-      const asMember = session();
+      /**
+       * A second account of this suite's own, rather than demoting the one
+       * it is acting as. Flipping a role mid-run changed a shared account and
+       * left every session minted before it unusable.
+       */
+      const ordinary = makeAccount(`${RUN}-member@example.com`, { role: "member" });
       const refused = await fetch(`${BASE}/sentinel/api/access/requests`, {
-        headers: { Cookie: `sessionid=${asMember.key}` },
+        headers: { Cookie: `sessionid=${await signIn(ordinary)}` },
       });
       assert(refused.status === 403, `an ordinary member could read the queue (${refused.status})`);
-
-      setRole("manager");
     });
 
     await test("somebody can be invited, promoted and removed", async () => {
@@ -617,7 +721,7 @@ print("removed")`);
        * membership either way and hands back a link, and it is the membership
        * these check.
        */
-      const { view, close, section: part } = await freshWindow();
+      const { view, close, section: part } = await windowOn();
       try {
       await view.goto(`${MOUNT}/people`, { waitUntil: "networkidle" });
       await view.waitForSelector("#invite-email", { timeout: 15_000 });
@@ -677,62 +781,66 @@ print("removed")`);
       }
     });
 
-    await test("a request can be declined, and approving says why it cannot", async () => {
+    await test("one request can be declined and another approved, from the screen", async () => {
       /**
-       * Declining is entirely Sentinel's own and always works. Approving
-       * needs the GlitchTip service token, which an installation may simply
-       * not have configured — so what is checked there is that it says so,
-       * rather than failing silently or pretending it worked.
+       * Two applicants, because one cannot be both.
+       *
+       * Using a single request for both buttons meant that wherever approval
+       * works — an installation with a service token — the decline that
+       * followed acted on an already-approved request, which is not a state
+       * anybody reaches by using the product.
+       *
+       * Approving needs the GlitchTip service token, which this installation
+       * does not have. Where it is absent the screen must say so rather than
+       * fail silently, and that is what is checked; where it is present the
+       * request must come back approved.
        */
-      const applicant = `${RUN}-applicant@example.com`;
-      const who = makeApplicant(applicant);
-      await askForAccess(who);
+      const declined = await applicantAsks(`${RUN}-declined@example.com`);
+      const approved = await applicantAsks(`${RUN}-approved@example.com`);
+      applicants.push(declined, approved);
 
-      const { view, close, key: mine, section: part } = await freshWindow();
+      const { view, close, section: part } = await windowOn();
       try {
-      await view.goto(`${MOUNT}/people`, { waitUntil: "networkidle" });
-      await view.waitForSelector(".detail-section", { timeout: 15_000 });
-      const waiting = part("Waiting to be let in").locator("li").filter({ hasText: applicant });
-      assert(await waiting.count(), "the seeded request is not on the screen");
+        await view.goto(`${MOUNT}/people`, { waitUntil: "networkidle" });
+        await view.waitForSelector(".detail-section", { timeout: 15_000 });
 
-      // The id is the record's own, not the address — they were the same
-      // only in a version of this test that wrote the file by hand.
-      const queued = await api("/sentinel/api/access/requests", mine);
-      const record = (queued?.requests || []).find((one) => one.email === applicant);
-      assert(record, "the request this suite made is not in the queue the API returns");
+        const waiting = (who) =>
+          part("Waiting to be let in").locator("li").filter({ hasText: who.email });
+        assert(await waiting(declined).count(), "the first applicant is not on the screen");
+        assert(await waiting(approved).count(), "the second applicant is not on the screen");
 
-      const approveToken = await receiverToken();
-      const approve = await fetch(
-        `${BASE}/sentinel/api/access/requests/${encodeURIComponent(record.id)}/approve`,
-        {
-          method: "POST",
-          headers: {
-            Cookie: `sessionid=${mine}; sentinel-csrf=${approveToken}`,
-            "x-sentinel-csrf": approveToken,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({ organisation: ORG }),
-        }
-      );
-      const said = await approve.json().catch(() => ({}));
-      assert(
-        approve.status === 200 || (approve.status === 501 && /service token/i.test(said.error || "")),
-        `approving answered ${approve.status}: ${JSON.stringify(said).slice(0, 120)}`
-      );
+        await waiting(declined).locator("button", { hasText: "Decline" }).click();
+        await view.waitForFunction(
+          (who) => !document.body.textContent.includes(who),
+          declined.email,
+          { timeout: 20_000 }
+        );
 
-      await waiting.locator("button", { hasText: "Decline" }).click();
-      await view.waitForFunction(
-        (who) => !document.body.textContent.includes(who),
-        applicant,
-        { timeout: 20_000 }
-      );
-      const queue = await api("/sentinel/api/access/requests", mine);
-      const still = (queue?.requests || []).find((one) => one.email === applicant);
-      assert(still?.status === "declined", `the request is ${still?.status ?? "gone"}, not declined`);
-      clearRequest(applicant);
+        await waiting(approved).locator("button", { hasText: "Approve" }).click();
+        await view.waitForTimeout(5000);
+
+        const queue = await api("/sentinel/api/access/requests", key);
+        const rows = queue?.requests || [];
+        const wasDeclined = rows.find((one) => one.email === declined.email);
+        const wasApproved = rows.find((one) => one.email === approved.email);
+
+        assert(
+          wasDeclined?.status === "declined",
+          `the first is ${wasDeclined?.status ?? "gone"}, not declined`
+        );
+
+        if (wasApproved?.status === "approved") return; // a service token is configured
+        assert(
+          wasApproved?.status === "pending",
+          `the second is ${wasApproved?.status ?? "gone"} — neither approved nor left alone`
+        );
+        const said = await part("Waiting to be let in").locator(".error").textContent();
+        assert(
+          /service token/i.test(said || ""),
+          `approval failed without saying why: ${JSON.stringify(said)}`
+        );
       } finally {
         await close();
-        removeApplicant(applicant);
       }
     });
 
@@ -751,25 +859,22 @@ print("removed")`);
        * the more honest fixture: the answer depends on a role, and a session
        * created after that role was set is the one that has it.
        */
-      const fresh = session();
-      const own = await browser.newContext();
-      await own.addCookies([
-        { name: "sessionid", value: fresh.key, domain: "localhost", path: "/", httpOnly: true },
-      ]);
-      const view = await own.newPage();
+      const { view, close: shut } = await windowOn();
       await view.goto(`${MOUNT}/people`, { waitUntil: "networkidle" });
       await view.waitForSelector("#view tbody tr", { timeout: 15_000 }).catch(async () => {
         const seen = (await view.textContent("#view")) || "";
         assert(false, `no member list at ${view.url()} — the screen said: ${seen.replace(/\s+/g, " ").trim().slice(0, 200)}`);
       });
-      const mine = view.locator("#view tbody tr").filter({ hasText: EMAIL });
+      // The account this suite is signed in as, not whichever one the
+      // constant at the top of the file happens to name.
+      const mine = view.locator("#view tbody tr").filter({ hasText: manager.email });
       assert(await mine.count(), "the signed-in account is not in the list");
       assert(
         (await mine.locator("select").count()) === 0 &&
           (await mine.locator("button", { hasText: "Remove" }).count()) === 0,
         "offered to change or remove your own membership"
       );
-      await own.close();
+      await shut();
     });
 
     await test("nothing on these screens threw", () => {
@@ -779,74 +884,79 @@ print("removed")`);
     if (browser) await browser.close();
 
     /**
-     * Each in its own block, so one failing does not strand the others —
-     * and the role last, because it is the one that changes what a real
-     * person can do.
-     */
-    /**
-     * A session minted now, not the one the tests ran on.
-     *
-     * Reusing the first one answered 401 here: several were signed in during
-     * the run, and the earliest is the likeliest to have been invalidated by
-     * the time cleanup needs it. Cleanup deletes real objects, so it gets a
-     * credential it knows is good rather than the oldest one lying around.
+     * Each in its own block, so one failing does not strand the others.
+     * The accounts go last: they are what everything else is deleted with.
      */
     try {
-      const { key } = session();
-      const csrf = await tokenFor(key);
+      const csrf = await tokenFor(cleanupKey);
       if (csrf) {
-        // The guest, whether or not the test that removes them got that far.
-        const members = (await api(`/api/0/organizations/${ORG}/members/`, key)) || [];
+        // The invited guest, whether or not the test that removes them ran.
+        const members = (await api(`/api/0/organizations/${ORG}/members/`, cleanupKey)) || [];
         for (const one of members.filter((m) => String(m.email || "").startsWith(MARKER))) {
-          await remove(`/api/0/organizations/${ORG}/members/${one.id}/`, key, csrf);
+          await remove(`/api/0/organizations/${ORG}/members/${one.id}/`, cleanupKey, csrf);
         }
-        await remove(`/api/0/teams/${ORG}/${TEAM}/`, key, csrf);
-        await remove(`/api/0/projects/${ORG}/${PROJECT}/`, key, csrf);
+        /**
+         * The project and team go through the ORM, not the API.
+         *
+         * GlitchTip will not let this account delete the project it made:
+         * the queryset behind that endpoint wants team membership, and this
+         * account is in no team — so the API answered 404 and the project
+         * stayed. Cleanup is not the place to prove an endpoint works; the
+         * tests above do that through the screen. Its job is that nothing
+         * survives, so it removes them directly.
+         */
+        django(`
+from django.apps import apps
+apps.get_model('projects','Project').objects.filter(slug=${JSON.stringify(PROJECT)}).delete()
+apps.get_model('teams','Team').objects.filter(slug=${JSON.stringify(TEAM)}).delete()
+print("removed")`);
       } else {
         process.stdout.write("  ! no CSRF token for cleanup\n");
       }
     } catch (error) {
-      process.stdout.write(`  ! cleanup could not sign in: ${error.message}\n`);
+      process.stdout.write(`  ! cleanup of projects and teams failed: ${error.message}\n`);
     }
 
     try {
-      // Any request this suite put in the queue, decided or not.
-      receiverFile(`
-const fs = require("fs");
-const path = "/data/access-requests.json";
-const all = JSON.parse(fs.readFileSync(path, "utf8") || "{}");
-for (const key of Object.keys(all)) {
-  if (key.startsWith(${JSON.stringify(MARKER)})) delete all[key];
-}
-fs.writeFileSync(path, JSON.stringify(all, null, 2));
-console.log("swept");`);
+      // Through the receiver, so its own copy forgets them too.
+      for (const applicant of applicants) await forgetRequest(applicant);
     } catch (error) {
-      process.stdout.write(`  ! could not clear seeded requests: ${error.message}\n`);
+      process.stdout.write(`  ! could not clear the requests: ${error.message}\n`);
     }
 
-    try {
-      if (elevated) setRole("member");
-    } catch (error) {
-      process.stdout.write(`  ! could not put the role back: ${error.message}\n`);
-    }
-
-    clearSessions();
+    dropAccounts();
   }
 
-  // Checked rather than hoped: this made real objects in a real GlitchTip.
+  // Checked rather than hoped: this made real things in a real GlitchTip.
   await test("it leaves nothing of its own behind", async () => {
-    const { key } = session();
+    /**
+     * A manager, because one of the things it audits is the request queue —
+     * and the receiver refuses that to anybody below manager. Auditing as a
+     * member got a 403, read it as an empty list, and reported that nothing
+     * was left while six of this suite's requests sat in the queue.
+     */
+    const checking = makeAccount(`${RUN}-audit@example.com`, { role: "manager" });
+    const key = await signIn(checking);
+
     const projects = (await api(`/api/0/organizations/${ORG}/projects/`, key)) || [];
     const teams = (await api(`/api/0/organizations/${ORG}/teams/`, key)) || [];
     assert(!projects.some((one) => one.slug === PROJECT), `${PROJECT} was left behind`);
     assert(!teams.some((one) => one.slug === TEAM), `${TEAM} was left behind`);
 
-    const me = await api("/sentinel/api/auth/me", key);
-    assert(
-      me?.orgRoles?.[ORG]?.role === "member",
-      `the role was left as ${me?.orgRoles?.[ORG]?.role}`
+    const members = (await api(`/api/0/organizations/${ORG}/members/`, key)) || [];
+    const mine = members.filter(
+      (one) => String(one.email || "").startsWith(MARKER) && one.email !== checking.email
     );
-    clearSessions();
+    assert(!mine.length, `left ${mine.length} of its own member(s) behind`);
+
+    const queue = await api("/sentinel/api/access/requests", key);
+    assert(queue, "the audit could not read the queue, so it cannot say whether it is clean");
+    const asked = (queue.requests || []).filter((one) =>
+      String(one.email || "").startsWith(MARKER)
+    );
+    assert(!asked.length, `left ${asked.length} request(s) in the queue`);
+
+    dropAccounts();
   });
 
   process.stdout.write(`\n${passed} passed, ${failures.length} failed\n`);
@@ -873,16 +983,21 @@ async function remove(path, key, csrf) {
     // ends up reporting a leak with no clue why it happened.
     // 404 is the outcome cleanup wanted: something already removed it, which
     // on a good run is the test that deletes it through the screen.
+    // 404 means something already removed it, which on a good run is the
+    // test that deletes it through the screen. Anything else is reported —
+    // including a 2xx that did not stick, which the audit then catches.
     if (res.status >= 400 && res.status !== 404) {
       process.stdout.write(`  ! cleanup of ${path} answered ${res.status}\n`);
     }
+    return res.status;
   } catch (error) {
     process.stdout.write(`  ! cleanup of ${path} threw: ${error.message}\n`);
   }
 }
 
 main().catch((error) => {
-  clearSessions();
+  // The accounts are this suite's, and nothing else will remove them.
+  dropAccounts();
   process.stdout.write(`\nsuite could not run: ${error.stack || error.message}\n`);
   process.exit(1);
 });

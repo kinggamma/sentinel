@@ -86,10 +86,11 @@ network access beyond its own origin.
    nothing was left, and it sweeps what an earlier run stranded. It asks the
    API which organisation it is in rather than assuming one.
 
-   The single exception is stated because it is shared: it raises the smoke
-   account's role, since that is the account it can sign in as and the whole
-   point is what a role permits. It puts it back in a `finally` and then
-   checks that it did.
+   It touches no shared account at all: it makes its own manager, member,
+   guest and applicants, signs each in once, and deletes them. Run the
+   suites one at a time — several of them sign the shared smoke account in,
+   and that resets its password, which invalidates any session another suite
+   is holding.
 
    `test:orgs` is the one that reconfigures things. Belonging to two
    organisations is unreachable on a single-organisation install, so it
