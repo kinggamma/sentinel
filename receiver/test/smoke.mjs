@@ -85,6 +85,36 @@ const bearer = { authorization: `Bearer ${TOKEN}` };
 // from, not just the proxied one BASE points at. Optional: a remote BASE
 // may have no way to reach this port at all, so unreachable skips rather
 // than fails.
+/**
+ * The app name this suite reports under.
+ *
+ * "smoke-test" was a name a real app could plausibly have, and the cleanup
+ * below deletes by app name — so a deployment with an app called smoke-test
+ * would have had its reports removed by running the tests. The marker makes
+ * that collision impossible, and the per-run suffix keeps two runs from
+ * deleting each other's while they overlap.
+ *
+ * Anything matching the marker is swept, not just this run's, so a run that
+ * was killed before its cleanup is repaired by the next.
+ */
+const REPORT_MARKER = "sentinel-smoke-suite";
+const SMOKE_APP = `${REPORT_MARKER}-${process.pid}`;
+
+/**
+ * Ours, decided by two things agreeing rather than by how a name begins.
+ *
+ * A prefix is a guess: an app called sentinel-smoke-suite-eu is somebody's
+ * real app and starts with the marker, and this deletes what it matches from
+ * a real installation. So the app name must be exactly one this suite uses —
+ * its own, or a previous run's, which is the marker followed by digits — and
+ * the note must be one this suite writes. A real app would have to match
+ * both to be touched.
+ */
+const OUR_APP = new RegExp(`^${REPORT_MARKER}-\\d+$`);
+const OUR_NOTES = new Set(["embedded bearer regression", "posted by the smoke tests"]);
+const isOurs = (report) =>
+  OUR_APP.test(String(report?.appName || "")) && OUR_NOTES.has(String(report?.note || ""));
+
 const STANDALONE = (process.env.STANDALONE_URL || "http://localhost:4000").replace(/\/+$/, "");
 const getStandalone = (path, init) => fetch(`${STANDALONE}${path}`, { redirect: "manual", ...init });
 
@@ -119,6 +149,18 @@ async function shellServed() {
     "/sentinel/accept/12/ddar27-abc123",
     "/sentinel/issues",
     "/sentinel/settings/teams",
+    // Phases 4 and 5. Every one of these is a real address now, and the
+    // shell has to be served for all of them or a reload lands on nothing.
+    "/sentinel/projects",
+    "/sentinel/projects/new",
+    "/sentinel/projects/e-library",
+    "/sentinel/people",
+    "/sentinel/teams",
+    "/sentinel/teams/new",
+    "/sentinel/teams/just-me",
+    // Addresses that used to be screens of their own and now redirect in the
+    // client. The server still has to answer them: a bookmark that 404s is
+    // the same to whoever saved it as a screen that was deleted.
     "/sentinel/requests",
     "/sentinel/settings",
     "/sentinel/settings/apps/e-library-admin",
@@ -171,11 +213,13 @@ async function shellServed() {
      * What has to stay true is that nothing renders as a link to nowhere.
      */
     const body = await (await get("/sentinel/", { headers: { accept: "text/html" } })).text();
-    for (const id of ["nav-issues", "nav-reports", "nav-requests", "nav-settings"]) {
+    // nav-projects joined this list in Phase 4: a project's keys, alerts and
+    // environments are a screen here now, so linking across to GlitchTip's
+    // version of half of it would be a link to somewhere worse.
+    for (const id of ["nav-issues", "nav-projects", "nav-people", "nav-reports", "nav-settings"]) {
       assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
     }
     for (const external of [
-      "nav-projects",
       "nav-performance",
       "nav-uptime",
       "nav-logs",
@@ -202,7 +246,8 @@ async function shellServed() {
     "lib/dom.js",
     "lib/router.js",
     "lib/abort.js",
-    "views/requests.js",
+    "views/people.js",
+    "views/project.js",
     "views/settings.js",
     "views/projects.js",
     "views/reports.js",
@@ -288,12 +333,45 @@ async function embeddedBearerViewer() {
       method: "POST",
       headers: { ...noCookies, "content-type": "application/json" },
       body: JSON.stringify({
-        appName: "smoke-test",
+        appName: SMOKE_APP,
         note: "embedded bearer regression",
         source: "staff-report",
       }),
     });
     assertStatus(res, 201);
+
+    /**
+     * And taken away again. This writes a real report into a real
+     * installation, and it wrote one on every run — thirty-eight of them had
+     * collected before anybody counted, sitting in the list beside the
+     * reports somebody actually needs to read. Deleting it also exercises
+     * the delete path, which nothing else here did.
+     */
+    const { id } = await res.json();
+    const gone = await fetch(`${BASE}/api/reports/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: noCookies,
+    });
+    assertStatus(gone, 204, "deleting the report this test just posted");
+  });
+
+  await check("it leaves no reports of its own behind", async () => {
+    if (!TOKEN) return "skip";
+    /**
+     * By marker, never by a name somebody's own app might have. This deletes
+     * from a real installation, so the question it asks has to be "did this
+     * suite write it" and not "does the name look like a test".
+     */
+    const res = await get("/api/reports", { headers: noCookies });
+    assertStatus(res, 200);
+    for (const report of (await res.json()).filter(isOurs)) {
+      await fetch(`${BASE}/api/reports/${encodeURIComponent(report.id)}`, {
+        method: "DELETE",
+        headers: noCookies,
+      });
+    }
+    const left = (await (await get("/api/reports", { headers: noCookies })).json()).filter(isOurs);
+    assert(!left.length, `${left.length} of this suite's reports survived cleanup`);
   });
 
   await check("nothing it does ever hands it a session", async () => {
@@ -341,13 +419,13 @@ async function embeddedBearerViewer() {
 
   await check("its own page loads with no session, at both roots", async () => {
     // The iframe asks for the shell itself before it asks for any data.
-    const proxied = await get("/sentinel/reports/smoke-test?app=smoke-test&embed=1", {
+    const proxied = await get(`/sentinel/reports/${SMOKE_APP}?app=${SMOKE_APP}&embed=1`, {
       headers: { accept: "text/html" },
     });
     assertStatus(proxied, 200);
     assert((await proxied.text()).includes("<title>Sentinel</title>"), "no shell at /sentinel");
 
-    const bare = await getStandalone("/reports/smoke-test?app=smoke-test&embed=1", {
+    const bare = await getStandalone(`/reports/${SMOKE_APP}?app=${SMOKE_APP}&embed=1`, {
       headers: { accept: "text/html" },
     });
     if (bare.status === 200) {
@@ -459,7 +537,8 @@ async function backendsOwnTheirPaths() {
   await check("report intake is the receiver's, and still accepts a report", async () => {
     if (!TOKEN) return "skip";
     const form = new FormData();
-    form.set("appName", "smoke-test-suite");
+    // Same marker, so if this delete ever fails the sweep above catches it.
+    form.set("appName", SMOKE_APP);
     form.set("note", "posted by the smoke tests");
     form.set("source", "staff-report");
     const res = await fetch(`${BASE}/api/reports`, { method: "POST", headers: bearer, body: form });

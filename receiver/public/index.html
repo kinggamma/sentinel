@@ -61,9 +61,14 @@
 
         <nav class="sidebar-nav" aria-label="Sections">
           <a id="nav-issues" href="/issues">Issues</a>
+          <!-- Internal since Phase 4: a project's keys, alerts and
+               environments alongside its reports and origins, rather than a
+               link across to half of that. -->
+          <a id="nav-projects" href="/projects">Projects</a>
+          <!-- Members and the queue of people asking to be one, which were
+               two screens answering the same question. -->
+          <a id="nav-people" href="/people">People</a>
           <a id="nav-reports" href="/">Reports</a>
-          <!-- Only worth offering when somebody is waiting on it. -->
-          <a id="nav-requests" href="/requests" hidden>Requests</a>
           <a id="nav-settings" href="/settings">Settings</a>
         </nav>
 
@@ -75,7 +80,6 @@
              on. -->
         <nav class="sidebar-nav sidebar-external" aria-label="In GlitchTip">
           <h2 id="nav-external-heading" class="sidebar-heading" hidden>In GlitchTip</h2>
-          <a id="nav-projects" target="_blank" rel="noreferrer noopener" hidden>Projects ↗</a>
           <a id="nav-performance" target="_blank" rel="noreferrer noopener" hidden>Performance ↗</a>
           <a id="nav-uptime" target="_blank" rel="noreferrer noopener" hidden>Uptime ↗</a>
           <a id="nav-logs" target="_blank" rel="noreferrer noopener" hidden>Logs ↗</a>

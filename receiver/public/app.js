@@ -31,10 +31,12 @@ import {
   currentPath,
   href as routeHref,
 } from "./lib/router.js";
-import { requestsView } from "./views/requests.js";
 import { settingsView } from "./views/settings.js";
 import { projectsView } from "./views/projects.js";
 import { reportsView } from "./views/reports.js";
+import { projectsListView, projectDetailView, projectNewView } from "./views/project.js";
+import { peopleView } from "./views/people.js";
+import { teamsListView, teamNewView, teamDetailView } from "./views/teams.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import {
   signInView,
@@ -231,12 +233,43 @@ route("/access", async (ctx) => {
   });
 });
 
-route("/requests", guarded(layer(landing, requestsView)));
+// The queue moved into People (Phase 5), where the people asking and the
+// people already in sit in one list. The address stays, because it was
+// linkable and because a badge in somebody's bookmark bar should not 404.
+route("/requests", guarded(() => goRoute("/people", { replace: true })));
 route("/settings", guarded(layer(landing, (ctx) => settingsView(ctx))));
 // A per-app save changes what a project card shows (its origin count, or —
 // for "add an app" — whether the card exists at all), so it's the one
 // caller that needs to know when settingsView has saved something.
-route("/settings/apps/:app", guarded(layer(landing, (ctx) => settingsView(ctx, { onSaved: refresh }))));
+// /settings/apps/:app was where one app's addresses were edited. That is
+// part of the project's own screen now (views/project.js), so the address
+// redirects rather than 404ing — it was linkable, and links outlive screens.
+route("/settings/apps/:app", guarded(async (ctx) => {
+  const app = ctx.params.app;
+  const forApp = (await sentinelApi.get("/projects", { signal: ctx.signal }).catch(() => null))
+    ?.projects?.find((one) => one.appName === app);
+
+  /**
+   * An app with a project goes to that project's screen, where its addresses
+   * now live beside the DSN they are addresses for.
+   *
+   * An app without one stays here. That is a real state and not a broken
+   * one: an app is registered before it has ever reported, and provisioning
+   * only creates its project on the first report — so between those two
+   * moments this is the only place its addresses can be set, and sending it
+   * to global Settings took that away at exactly the wrong moment. It is
+   * also where an app lands when GlitchTip is not configured at all.
+   */
+  if (forApp?.glitchtipProject) {
+    return goRoute(
+      withOrg(`/projects/${encodeURIComponent(forApp.glitchtipProject)}`, organisation, {
+        orgs: organisations,
+      }),
+      { replace: true }
+    );
+  }
+  return layer(landing, (inner) => settingsView(inner, { onSaved: refreshRoute }))(ctx);
+}));
 // Scoped and embedded sessions are locked to one app's reports and have no
 // "all projects" to come home to — showProjects() already refused to show
 // it for the same reason, this is that same refusal at the address level.
@@ -290,6 +323,28 @@ setNotFound(({ outlet, path }) => {
     )
   );
 });
+
+/**
+ * Projects, which are GlitchTip's and Sentinel's at once: a project's keys
+ * and alert rules live there, its reports and allowed origins live here, and
+ * this is the screen that stops those being two places.
+ */
+const projectsRoute = (view) => (ctx, me) => {
+  paintChrome();
+  return view(ctx, { org: organisation, orgs: organisations, me });
+};
+
+route("/people", guarded(projectsRoute(peopleView)));
+
+route("/teams", guarded(projectsRoute(teamsListView)));
+// Before :slug, which would otherwise match "new" as a team.
+route("/teams/new", guarded(projectsRoute(teamNewView)));
+route("/teams/:slug", guarded(projectsRoute(teamDetailView)));
+
+route("/projects", guarded(projectsRoute(projectsListView)));
+// Before the :slug route, which would otherwise match "new" as a project.
+route("/projects/new", guarded(projectsRoute(projectNewView)));
+route("/projects/:slug", guarded(projectsRoute(projectDetailView)));
 
 route("/issues", guarded(issuesRoute(issuesListView)));
 route("/issues/:id", guarded(issuesRoute(issueDetailView)));
@@ -531,7 +586,10 @@ function routedApp() {
  */
 function sectionFor(path) {
   if (path.startsWith("/issues")) return "issues";
-  if (path.startsWith("/requests")) return "requests";
+  if (path.startsWith("/projects")) return "projects";
+  if (path.startsWith("/people")) return "people";
+  if (path.startsWith("/teams")) return "people";
+  if (path.startsWith("/requests")) return "people";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
   // Somewhere that isn't a section. Falling through to "reports" would have
@@ -580,8 +638,9 @@ function paintExternalLinks() {
   const root = (features.glitchtipUrl || glitchtipRoot || "").replace(/\/+$/, "");
   const enabled = features.enabledFeatures || [];
 
+  // Projects left this list in Phase 4 — it is a screen here now, and a
+  // link to somebody else's version of a screen we have is worse than none.
   const links = [
-    ["nav-projects", organisation && `${root}/${organisation}/projects`, true],
     ["nav-performance", organisation && `${root}/${organisation}/performance`, true],
     ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
     ["nav-logs", organisation && `${root}/${organisation}/logs`, enabled.includes("logs")],
@@ -612,8 +671,9 @@ function paintChrome() {
   // has to remember to set.
   for (const [id, name] of [
     ["nav-issues", "issues"],
+    ["nav-projects", "projects"],
+    ["nav-people", "people"],
     ["nav-reports", "reports"],
-    ["nav-requests", "requests"],
     ["nav-settings", "settings"],
   ]) {
     el(id).classList.toggle("current", section === name);
@@ -633,7 +693,11 @@ function paintChrome() {
    */
   const titles = {
     issues: "Issues",
-    requests: "Access requests",
+    // Phase 4 and 5 screens. Without these the bar rendered empty on every
+    // one of them — a page that looks like its header failed to load, which
+    // is exactly what the comment above says this exists to prevent.
+    projects: "Projects",
+    people: currentPath().startsWith("/teams") ? "Teams" : "People",
     settings: "Settings",
     reports: appName || "Your apps",
   };
@@ -675,7 +739,7 @@ function showReports(appName) {
 
 // ------------------------------------------------------- access requests
 //
-// The screen itself is views/requests.js, mounted by the router. Registered
+// The queue is part of views/people.js now. Registered
 // down in boot(), where the router starts — this comment marks where it
 // used to live so the history of what moved is easy to find later.
 
@@ -686,9 +750,11 @@ async function refreshRequestCount() {
   if (!res.ok) return;
   const body = await res.json().catch(() => ({}));
   const pending = (body.requests || []).filter((r) => r.status === "pending").length;
-  const link = el("nav-requests");
-  link.hidden = pending === 0;
-  link.textContent = pending === 1 ? "Requests (1)" : `Requests (${pending})`;
+  // On People, because that is where deciding happens. Nothing is hidden
+  // when the queue is empty — People is a real destination either way, and a
+  // nav entry that comes and goes is harder to find than one that stays.
+  const link = el("nav-people");
+  link.textContent = pending ? `People (${pending})` : "People";
 }
 
 
@@ -876,9 +942,10 @@ async function boot() {
 
 
   // Static markup in index.html, so it can't read MOUNT itself.
-  el("nav-requests").href = routeHref("/requests");
   el("nav-settings").href = routeHref("/settings");
   el("nav-issues").href = routeHref("/issues");
+  el("nav-projects").href = routeHref("/projects");
+  el("nav-people").href = routeHref("/people");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.
   const home = routeHref(scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/");

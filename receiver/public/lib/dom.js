@@ -140,3 +140,64 @@ export function modal({ title, body, actions = [], onClose } = {}) {
   document.addEventListener("keydown", onKey);
   return { close, panel };
 }
+
+/**
+ * "Are you sure?", for the things that cannot be taken back.
+ *
+ * Removing somebody from an organisation, deleting a team, revoking a key:
+ * each was one click, next to ordinary buttons, with no step between
+ * deciding and having done it. None of them undo — a revoked key cannot be
+ * un-revoked, and a deleted team takes everyone's route to its projects with
+ * it — so each is worth one deliberate second.
+ *
+ * The message says what will happen rather than asking whether the person is
+ * sure, because "are you sure?" is answerable without reading and "this
+ * stops every app reporting" is not.
+ *
+ * @param {object} options
+ * @param {string} options.title - what is about to happen.
+ * @param {string} options.detail - what it means, in a sentence.
+ * @param {string} [options.confirm] - the label on the button that does it.
+ * @returns {Promise<boolean>} whether to go ahead.
+ */
+/**
+ * @param {object} options
+ * @param {string} options.title
+ * @param {string} [options.detail] - a sentence about the consequence.
+ * @param {Node} [options.body] - fields to fill in, for the times the
+ *   question is "with what?" rather than "are you sure?". Given instead of
+ *   `detail`; a dialog asking both at once is two dialogs wearing one hat.
+ * @param {string} [options.confirm]
+ */
+export function confirmAction({ title, detail, body = null, confirm = "Yes, do it" } = {}) {
+  return new Promise((resolve) => {
+    let answered = false;
+    const answer = (value) => {
+      if (answered) return;
+      answered = true;
+      resolve(value);
+      dialog.close();
+    };
+
+    const go = h("button", {
+      type: "button",
+      // A form to fill in is not a destructive act; only a warning is.
+      className: body ? "" : "danger",
+      text: confirm,
+      on: { click: () => answer(true) },
+    });
+
+    const dialog = modal({
+      title,
+      body: body || h("p", { className: "muted", text: detail }),
+      actions: [
+        h("button", { type: "button", className: "ghost", text: "Cancel", on: { click: () => answer(false) } }),
+        go,
+      ],
+      // Escape and clicking away are answers too, and the answer is no.
+      onClose: () => answer(false),
+    });
+
+    go.focus();
+  });
+}

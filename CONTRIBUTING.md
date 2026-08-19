@@ -65,13 +65,32 @@ network access beyond its own origin.
 
    ```bash
    npm run test:browser && npm run test:issues && npm run test:webauthn
-   npm run test:orgs
+   npm run test:orgs && npm run test:manage
    ```
 
    These are the regressions no HTTP call can see: the embedded viewer
    booting in a real iframe, the issue screen writing and deleting notes with
    a CSRF token and reporting a facet that will not load, passkey sign-in
    against a virtual authenticator, and every screen at 390px.
+
+   `test:manage` presses the buttons that write: making a project, renaming
+   it, adding and revoking keys, creating an alert and editing, testing and
+   deleting it, hiding and showing an environment, building a team, pointing
+   it at a project and deleting it from its own screen, and — on People —
+   inviting somebody, promoting them, removing them, and declining a request
+   somebody really made.
+
+   Everything it touches is its own. The project, team, alert, environment,
+   the invited member and the applicant who asks for access are all created
+   by the run, named after it, and removed again; its last check is that
+   nothing was left, and it sweeps what an earlier run stranded. It asks the
+   API which organisation it is in rather than assuming one.
+
+   It touches no shared account at all: it makes its own manager, member,
+   guest and applicants, signs each in once, and deletes them. Run the
+   suites one at a time — several of them sign the shared smoke account in,
+   and that resets its password, which invalidates any session another suite
+   is holding.
 
    `test:orgs` is the one that reconfigures things. Belonging to two
    organisations is unreachable on a single-organisation install, so it

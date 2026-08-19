@@ -16,6 +16,7 @@ import {
   remember,
   all as allMappings,
   orgForProject,
+  orgForApp,
 } from "../project-map.js";
 import { registeredApps, originsForApp } from "../settings.js";
 import path from "node:path";
@@ -54,15 +55,60 @@ export const reportRouter = Router();
  * is precisely what must not be handed out by default. It stays visible to
  * the staff token, which is how anyone notices it exists.
  */
+/**
+ * Which organisation an app's project is in, for this viewer.
+ *
+ * One answer, used both to decide whether somebody may read an app and to
+ * label it on screen — a card claiming an organisation the guard disagrees
+ * with is how the two drift apart.
+ *
+ * In order of how much the answer can be trusted: what provisioning recorded
+ * with the app, then the configured organisation (Sentinel provisions there,
+ * and it does not move because somebody elsewhere made a project with the
+ * same name), then — only for a multi-organisation deployment with an app
+ * mapped before organisations were recorded — the viewer's own project list,
+ * and only when exactly one project in it has this slug. Two means the slug
+ * identifies nothing, which is the case that leaked.
+ */
+async function orgOfApp(viewer, appName, projectSlug) {
+  const recorded = await orgForApp(appName);
+  if (recorded) return recorded;
+
+  const allowed = Array.isArray(viewer?.projects) ? viewer.projects : [];
+  const matches = allowed.filter((pair) => pair.slug === projectSlug);
+  return matches.length === 1 ? matches[0].org : null;
+}
+
 async function visibleTo(viewer, appName) {
   if (viewer?.source === "staff-token") return true;
 
   const allowed = viewer?.projects;
   if (!Array.isArray(allowed)) return false;
 
+  /**
+   * Both halves, because a slug only identifies a project inside its own
+   * organisation. Comparing slugs alone meant membership of one
+   * organisation unlocked an identically named project in another, and it
+   * meant GLITCHTIP_ORG — which narrows which organisations count — did not
+   * narrow what could be read.
+   */
   const projectSlug = await slugForApp(appName);
   if (!projectSlug) return false;
-  return allowed.includes(projectSlug);
+
+  /**
+   * Which organisation this app's project is in, in order of how much the
+   * answer can be trusted.
+   *
+   * The app's own record, written when Sentinel provisioned it, or the
+   * configured organisation, which is where it provisions. Either is a fact
+   * about this installation that does not change because somebody in another
+   * organisation created a project with the same name — which is exactly the
+   * leak that keying by slug produced.
+   */
+  const org = await orgOfApp(viewer, appName, projectSlug);
+  if (!org) return false;
+
+  return allowed.some((pair) => pair.slug === projectSlug && pair.org === org);
 }
 
 
@@ -249,7 +295,9 @@ reportRouter.get("/projects", async (req, res) => {
 
     const mapping = mappings[entry.appName] || {};
     const projectSlug = mapping.slug || null;
-    const org = projectSlug ? await orgForProject(projectSlug) : null;
+    // The same answer visibleTo() uses, so a card cannot claim an
+    // organisation the guard disagrees with.
+    const org = projectSlug ? await orgOfApp(req.viewer, entry.appName, projectSlug) : null;
     projects.push({
       ...entry,
       glitchtipProject: projectSlug,
@@ -315,7 +363,9 @@ reportRouter.get("/reports/:id", async (req, res) => {
     }
 
     const projectSlug = await slugForApp(report.appName);
-    const org = projectSlug ? await orgForProject(projectSlug) : null;
+    // The same answer visibleTo() uses, so a link cannot point into an
+    // organisation the guard disagrees with.
+    const org = projectSlug ? await orgOfApp(req.viewer, report.appName, projectSlug) : null;
     if (report.glitchtipEventId) {
       report.glitchtipUrl = glitchtipLink({ projectSlug, org, eventId: report.glitchtipEventId });
     } else {
@@ -324,7 +374,18 @@ reportRouter.get("/reports/:id", async (req, res) => {
       report.glitchtipUrl = projectSlug ? glitchtipLink({ projectSlug, org }) : null;
     }
     res.json(report);
-  } catch {
+  } catch (error) {
+    /**
+     * A report that is not there is a 404. A mistake in here is not, and
+     * conflating them is how `entry.appName` — a name that existed in
+     * another handler and never in this one — reported itself as "not
+     * found" on every detail request while the list beside it answered 200.
+     * A ReferenceError has nothing to do with whether an id exists.
+     */
+    if (error instanceof ReferenceError || error instanceof TypeError) {
+      console.error(`report detail failed for ${req.params.id}:`, error);
+      return res.status(500).json({ error: "couldn't read that report" });
+    }
     res.status(404).json({ error: "not found" });
   }
 });

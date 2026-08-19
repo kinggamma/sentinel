@@ -104,7 +104,21 @@ export async function callGlitchtip(path, { token, sessionId } = {}, { method, b
  * sounds: with email disabled — which is the default here — it is the only
  * way the invitation can reach the person it's for.
  */
-export async function inviteToOrg({ org, email, role = "member" }) {
+/**
+ * Inviting somebody, into a team rather than merely into the organisation.
+ *
+ * Membership on its own grants nothing to look at: GlitchTip decides which
+ * projects somebody sees by which teams they are in, so an invitation with
+ * no teams produces an account that signs in successfully and finds an empty
+ * app list. Every approval Sentinel has ever sent did exactly that.
+ *
+ * The default is the team Sentinel provisions its own projects into, which
+ * is the one that can actually see the apps it manages. A caller may name a
+ * different one; naming none, with none configured, is still allowed and
+ * still means "they get in and see nothing", so it is reported rather than
+ * assumed to be what somebody wanted.
+ */
+export async function inviteToOrg({ org, email, role = "member", teams = null }) {
   if (!glitchtipConfigured) throw new Error("GlitchTip isn't configured");
   if (!serviceToken()) {
     const err = new Error(
@@ -115,12 +129,21 @@ export async function inviteToOrg({ org, email, role = "member" }) {
     throw err;
   }
 
+  const intoTeams = (teams && teams.length ? teams : [serviceTeam()].filter(Boolean)).map(
+    (slug) => ({ teamSlug: slug, role: "contributor" })
+  );
+
   const created = await callGlitchtip(
     `/api/0/organizations/${org}/members/`,
     { token: serviceToken() },
-    { method: "POST", body: { email, orgRole: role, teamRoles: [] } }
+    { method: "POST", body: { email, orgRole: role, teamRoles: intoTeams } }
   );
-  return { inviteLink: created.inviteLink || created.invite_link || null };
+  return {
+    inviteLink: created.inviteLink || created.invite_link || null,
+    // So the caller can say "and they can see nothing yet" rather than
+    // implying the job is done.
+    teams: intoTeams.map((one) => one.teamSlug),
+  };
 }
 
 /**
@@ -173,12 +196,18 @@ export async function createProjectForApp(appName) {
       { token: serviceToken() },
       { method: "POST", body: { name: appName, slug, platform: null } }
     );
-    return { slug: project.slug || slug, dsn: await fetchProjectDsn(project.slug || slug) };
+    return {
+      slug: project.slug || slug,
+      // Which organisation it was made in, recorded with the app so nothing
+      // later has to work it out from a slug that two organisations may share.
+      org: orgSlug(),
+      dsn: await fetchProjectDsn(project.slug || slug),
+    };
   } catch (err) {
     if (err.status === 400 || err.status === 409) {
       // Already there. Adopt it rather than failing — the point is that the
       // app ends up with somewhere to report.
-      return { slug, dsn: await fetchProjectDsn(slug).catch(() => null) };
+      return { slug, org: orgSlug(), dsn: await fetchProjectDsn(slug).catch(() => null) };
     }
     throw err;
   }

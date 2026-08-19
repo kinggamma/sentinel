@@ -24,6 +24,7 @@ import {
 } from "../glitchtip.js";
 import { idleEnabled, isIdle, touch, begin, forgetIdle } from "./idle.js";
 import { rememberProjectOrgs } from "../project-map.js";
+import { abilities } from "./roles.js";
 import { readAllauth, derive, describe, STATES } from "./state.js";
 
 /**
@@ -225,6 +226,37 @@ export async function identify(req, { accessRequestFor = null } = {}) {
   const orgs = restrictTo ? memberOf.filter((slug) => slug === restrictTo) : memberOf;
 
   /**
+   * What this person may do in each organisation they belong to.
+   *
+   * GlitchTip decides it by role, and every write endpoint refuses a role
+   * without the scope by answering 404 — the same answer as a route that
+   * does not exist. There is no way to turn that into a sentence for
+   * somebody, so the role has to be known before a control is offered
+   * rather than discovered by pressing it.
+   *
+   * There is no endpoint for "my role": /organizations/ does not carry it
+   * and /members/me/ does not exist, so it comes from the organisation's
+   * member list, matched on the account this session already resolved to.
+   * One extra call per organisation, on the same ten-second cache as the
+   * rest of this, and usually one organisation.
+   *
+   * A list that will not load leaves the role null, which grants nothing.
+   * That is the safe direction: the screens hide controls they cannot prove
+   * are usable, rather than offering ones that answer 404.
+   */
+  const roleEntries = await Promise.all(
+    orgs.map(async (slug) => {
+      const members = await askGlitchtip(`/api/0/organizations/${encodeURIComponent(slug)}/members/`, sessionId);
+      const rows = Array.isArray(members.data) ? members.data : [];
+      const mine = rows.find(
+        (row) => row?.email && user?.email && row.email.toLowerCase() === user.email.toLowerCase()
+      );
+      return [slug, abilities(mine?.role ?? null)];
+    })
+  );
+  const orgRoles = Object.fromEntries(roleEntries);
+
+  /**
    * The list of projects this person may see, and for a person it is always
    * a list.
    *
@@ -235,8 +267,29 @@ export async function identify(req, { accessRequestFor = null } = {}) {
    * GlitchTip actually said, and a fault has already thrown above.
    */
   const visible = projectsRes.data;
+
+  /**
+   * Each project as the pair that identifies it, and narrowed to the
+   * organisations this person is allowed to see here.
+   *
+   * It was a flat list of slugs, collected from every organisation the
+   * account belongs to, and compared by slug alone. Two things went wrong
+   * with that, and both of them granted access rather than withholding it.
+   *
+   * GLITCHTIP_ORG narrows `orgs` and narrowed nothing else, so on a shared
+   * GlitchTip somebody restricted to one organisation still carried the
+   * project list of every other organisation they were in — and an app
+   * mapped to one of those projects was readable here. The restriction
+   * announced itself as a gate and was not one.
+   *
+   * And a slug is only unique within an organisation. Two organisations may
+   * each have a project called "admin", so slug-only matching let one
+   * organisation's membership unlock the other's reports.
+   */
   const projects = Array.isArray(visible)
-    ? visible.map((project) => project.slug).filter(Boolean)
+    ? visible
+        .map((project) => ({ slug: project.slug, org: project.organization?.slug || null }))
+        .filter((pair) => pair.slug && pair.org && orgs.includes(pair.org))
     : [];
 
   /**
@@ -287,6 +340,7 @@ export async function identify(req, { accessRequestFor = null } = {}) {
     sessionId,
     user,
     orgs,
+    orgRoles,
     projects,
     allauth,
     // Read straight off the identity by the access routes, which care about
