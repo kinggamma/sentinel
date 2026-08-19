@@ -1751,3 +1751,29 @@ button.danger:hover {
   text-decoration: none;
   color: var(--text);
 }
+
+/* Fourteen days of error counts, drawn as bars because fourteen numbers do
+   not justify a charting library — and this app ships no third-party
+   JavaScript at all. The tallest day sets the scale, so what it conveys is
+   shape rather than magnitude; the total is written out beside it. */
+.spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 48px;
+  margin-top: var(--space-2);
+}
+
+.spark-bar {
+  flex: 1;
+  min-width: 4px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+  opacity: 0.75;
+}
+
+.field-check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}

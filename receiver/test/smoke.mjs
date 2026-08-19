@@ -155,6 +155,7 @@ async function shellServed() {
     "/sentinel/projects/new",
     "/sentinel/projects/e-library",
     "/sentinel/people",
+    "/sentinel/organisation",
     "/sentinel/teams",
     "/sentinel/teams/new",
     "/sentinel/teams/just-me",
@@ -216,7 +217,16 @@ async function shellServed() {
     // nav-projects joined this list in Phase 4: a project's keys, alerts and
     // environments are a screen here now, so linking across to GlitchTip's
     // version of half of it would be a link to somewhere worse.
-    for (const id of ["nav-issues", "nav-projects", "nav-people", "nav-reports", "nav-settings"]) {
+    for (const id of [
+      "nav-issues",
+      "nav-projects",
+      "nav-people",
+      // Internal since Phase 6: the organisation's name, its error counts and
+      // its sign-on settings are a screen here now.
+      "nav-organisation",
+      "nav-reports",
+      "nav-settings",
+    ]) {
       assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
     }
     for (const external of [
@@ -224,7 +234,6 @@ async function shellServed() {
       "nav-uptime",
       "nav-logs",
       "nav-releases",
-      "nav-org-settings",
       "nav-profile",
     ]) {
       const anchor = body.match(new RegExp(`<a[^>]*id="${external}"[^>]*>`))?.[0];

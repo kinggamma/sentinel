@@ -37,6 +37,7 @@ import { reportsView } from "./views/reports.js";
 import { projectsListView, projectDetailView, projectNewView } from "./views/project.js";
 import { peopleView } from "./views/people.js";
 import { teamsListView, teamNewView, teamDetailView } from "./views/teams.js";
+import { organisationView } from "./views/organisation.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import {
   signInView,
@@ -336,6 +337,8 @@ const projectsRoute = (view) => (ctx, me) => {
 
 route("/people", guarded(projectsRoute(peopleView)));
 
+route("/organisation", guarded(projectsRoute(organisationView)));
+
 route("/teams", guarded(projectsRoute(teamsListView)));
 // Before :slug, which would otherwise match "new" as a team.
 route("/teams/new", guarded(projectsRoute(teamNewView)));
@@ -589,6 +592,7 @@ function sectionFor(path) {
   if (path.startsWith("/projects")) return "projects";
   if (path.startsWith("/people")) return "people";
   if (path.startsWith("/teams")) return "people";
+  if (path.startsWith("/organisation")) return "organisation";
   if (path.startsWith("/requests")) return "people";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
@@ -645,7 +649,6 @@ function paintExternalLinks() {
     ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
     ["nav-logs", organisation && `${root}/${organisation}/logs`, enabled.includes("logs")],
     ["nav-releases", organisation && `${root}/${organisation}/releases`, true],
-    ["nav-org-settings", organisation && `${root}/${organisation}/settings`, true],
     ["nav-profile", root && `${root}/profile`, true],
   ];
 
@@ -673,6 +676,7 @@ function paintChrome() {
     ["nav-issues", "issues"],
     ["nav-projects", "projects"],
     ["nav-people", "people"],
+    ["nav-organisation", "organisation"],
     ["nav-reports", "reports"],
     ["nav-settings", "settings"],
   ]) {
@@ -697,6 +701,7 @@ function paintChrome() {
     // one of them — a page that looks like its header failed to load, which
     // is exactly what the comment above says this exists to prevent.
     projects: "Projects",
+    organisation: "Organisation",
     people: currentPath().startsWith("/teams") ? "Teams" : "People",
     settings: "Settings",
     reports: appName || "Your apps",
@@ -946,6 +951,7 @@ async function boot() {
   el("nav-issues").href = routeHref("/issues");
   el("nav-projects").href = routeHref("/projects");
   el("nav-people").href = routeHref("/people");
+  el("nav-organisation").href = routeHref("/organisation");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.
   const home = routeHref(scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/");

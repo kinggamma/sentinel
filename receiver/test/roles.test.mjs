@@ -39,14 +39,14 @@ process.stdout.write("\nWhat a role may do\n");
 // ------------------------------------------------------- the table itself
 
 const TABLE = [
-  // role,     projects, teams, members, project<->team
-  ["member",   false,    false, false,   false],
-  ["admin",    true,     true,  false,   false],
-  ["manager",  true,     true,  true,    true],
-  ["owner",    true,     true,  true,    true],
+  // role,     projects, teams, members, project<->team, organisation
+  ["member",   false,    false, false,   false,          false],
+  ["admin",    true,     true,  false,   false,          false],
+  ["manager",  true,     true,  true,    true,           true],
+  ["owner",    true,     true,  true,    true,           true],
 ];
 
-for (const [role, projects, teams, members, linking] of TABLE) {
+for (const [role, projects, teams, members, linking, organisation] of TABLE) {
   test(`${role}`, () => {
     const can = abilities(role);
     same(can.role, role, `${role}: role`);
@@ -54,6 +54,7 @@ for (const [role, projects, teams, members, linking] of TABLE) {
     same(can.canManageTeams, teams, `${role}: teams`);
     same(can.canManageMembers, members, `${role}: members`);
     same(can.canLinkProjectsToTeams, linking, `${role}: linking projects to teams`);
+    same(can.canManageOrganisation, organisation, `${role}: organisation settings`);
   });
 }
 
@@ -90,7 +91,8 @@ test("no role is no permission, not some permission", () => {
       !can.canManageProjects &&
         !can.canManageTeams &&
         !can.canManageMembers &&
-        !can.canLinkProjectsToTeams,
+        !can.canLinkProjectsToTeams &&
+        !can.canManageOrganisation,
       `${JSON.stringify(nothing)} granted something`
     );
   }
@@ -109,7 +111,8 @@ test("a role nobody here knows grants nothing, rather than being ranked", () => 
       !can.canManageProjects &&
         !can.canManageTeams &&
         !can.canManageMembers &&
-        !can.canLinkProjectsToTeams,
+        !can.canLinkProjectsToTeams &&
+        !can.canManageOrganisation,
       `${JSON.stringify(unknown)} was granted something`
     );
   }

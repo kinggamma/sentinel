@@ -83,5 +83,16 @@ export function abilities(role) {
      * hardest kind of gap to notice.
      */
     canLinkProjectsToTeams: Boolean(known) && atLeast(known, "manager"),
+
+    /**
+     * The organisation's own settings, and how people sign into it.
+     *
+     * org:write, which is manager and above — the same scope covers renaming
+     * the organisation and configuring single sign-on, so they are one
+     * answer rather than two that would drift apart. A member cannot even
+     * read the social-app list, which is why the whole section is hidden
+     * rather than shown empty.
+     */
+    canManageOrganisation: Boolean(known) && atLeast(known, "manager"),
   });
 }
