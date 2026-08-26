@@ -118,12 +118,12 @@ const MOUNT = document.querySelector('meta[name="sentinel-mount"]')?.content ?? 
  * returns you to the report you followed a link to rather than to the
  * landing screen. auth.js refuses to honour a `next` that leaves this app.
  */
-function guarded(view, { needs = "canRead" } = {}) {
+function guarded(view, { needs = "canRead", loadData = true } = {}) {
   return async (ctx) => {
     const me = await session();
 
     if (me.can?.[needs]) {
-      paintShell({ signedIn: true });
+      paintShell({ signedIn: true, canRead: Boolean(me.can?.canRead) });
       // Which organisation this screen is about. Re-decided on every render
       // because the address can say, and a link to one organisation's issue
       // list must not open somebody else's just because that is the one this
@@ -132,8 +132,10 @@ function guarded(view, { needs = "canRead" } = {}) {
       organisation = activeOrg({ orgs: organisations, query: ctx.query });
       el("nav-issues").hidden = !organisation;
       paintOrg();
-      await ensureData();
-      void refreshRequestCount();
+      if (loadData) {
+        await ensureData();
+        void refreshRequestCount();
+      }
       return view(ctx, me);
     }
 
@@ -146,6 +148,22 @@ function guarded(view, { needs = "canRead" } = {}) {
         return goRoute("/access", { replace: true });
       case "mfa_required":
         return to("/mfa");
+      /**
+       * A live session being asked to prove itself again. The account screen
+       * is exactly what that guard stands in front of, so `can` withholds it
+       * — which leaves the question of where such a session goes instead.
+       *
+       * Sign-in, for now, and not happily: it is a heavier answer than the
+       * state deserves, since nothing is wrong with the session. It is
+       * nonetheless a real way out — signing in again satisfies the flow —
+       * and it cannot be reached in this deployment anyway, because allauth
+       * derives the reauthentication window from SESSION_COOKIE_AGE here, so
+       * the window is the whole session and the state never fires. Written
+       * out rather than left to `default` so that the day a reauthentication
+       * screen exists, this is the one line that has to change.
+       */
+      case "reauth_required":
+        return to("/signin");
       case "unreachable":
         // Not signed out — unknown. Sending someone to a sign-in form
         // because a request timed out is how a blip becomes a lost session.
@@ -168,13 +186,36 @@ function guarded(view, { needs = "canRead" } = {}) {
  * there is nothing yet to navigate, and no page header because the card says
  * what it is.
  */
-function paintShell({ signedIn }) {
+function paintShell({ signedIn, canRead = signedIn }) {
   app.hidden = false;
   viewOutlet.hidden = false;
   app.classList.toggle("signed-in", signedIn);
   el("sidebar").hidden = !signedIn;
   el("topbar").hidden = !signedIn;
+
+  /**
+   * Every screen behind these needs an organisation. A signed-in account
+   * without one can open exactly one thing — its own profile — so offering
+   * the other six to somebody the guard will bounce straight back to /access
+   * is a menu of six dead ends.
+   *
+   * Issues already hid itself for this reason, one link at a time, back when
+   * the profile was the only screen a pending account could reach and the
+   * sidebar was never painted for one. It is the same rule; it just needs to
+   * cover the whole nav now.
+   */
+  for (const id of ORG_SCOPED_NAV) el(id).hidden = !canRead;
 }
+
+/** The sidebar entries whose screens need an organisation. Profile does not. */
+const ORG_SCOPED_NAV = [
+  "nav-issues",
+  "nav-projects",
+  "nav-people",
+  "nav-organisation",
+  "nav-reports",
+  "nav-settings",
+];
 
 const landing = (ctx) => {
   // Every route repaints the chrome, because the chrome describes the route.
@@ -344,7 +385,11 @@ route("/organisation", guarded(projectsRoute(organisationView)));
 route("/profile", guarded((ctx, me) => {
   paintChrome();
   return profileView(ctx, me);
-}));
+}, { needs: "canManageProfile", loadData: false }));
+route("/profile/setup-wizard/:hash", guarded((ctx, me) => {
+  paintChrome();
+  return profileView(ctx, me, { wizardHash: ctx.params.hash });
+}, { needs: "canManageProfile", loadData: false }));
 
 route("/teams", guarded(projectsRoute(teamsListView)));
 // Before :slug, which would otherwise match "new" as a team.

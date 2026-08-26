@@ -18,6 +18,7 @@
 import { glitchtip } from "../lib/api.js";
 import { h, fill, emptyState, field, confirmAction } from "../lib/dom.js";
 import { throwIfAborted } from "../lib/abort.js";
+import { environmentRows, socialAppPayload } from "../lib/phase67.js";
 
 function readFailure(status, subject = "this") {
   if (status === 403) return `You don't have access to ${subject}.`;
@@ -50,7 +51,7 @@ export async function organisationView({ outlet, signal }, { org, me } = {}) {
   const can = me?.orgRoles?.[org] || {};
   const { start, end } = fortnight();
 
-  const [detail, stats, social] = await Promise.all([
+  const [detail, stats, social, environments] = await Promise.all([
     settle(glitchtip.get(`/organizations/${encodeURIComponent(org)}/`, { signal })),
     settle(
       glitchtip.get(
@@ -62,6 +63,7 @@ export async function organisationView({ outlet, signal }, { org, me } = {}) {
     can.canManageOrganisation
       ? settle(glitchtip.get(`/organizations/${encodeURIComponent(org)}/social-apps/`, { signal }))
       : Promise.resolve({ data: null }),
+    settle(glitchtip.get(`/organizations/${encodeURIComponent(org)}/environments/?visibility=all`, { signal })),
   ]);
   throwIfAborted(signal);
 
@@ -80,6 +82,10 @@ export async function organisationView({ outlet, signal }, { org, me } = {}) {
         stats.failed !== undefined
           ? section("Errors", h("p", { className: "muted", text: readFailure(stats.failed, "the numbers") }))
           : errorsSection(stats.data),
+
+        environments.failed !== undefined
+          ? section("Environments", h("p", { className: "muted", text: readFailure(environments.failed, "the environments") }))
+          : environmentsSection(environments.data),
 
         can.canManageOrganisation
           ? generalSection(detail.data, { org, signal })
@@ -228,10 +234,75 @@ function generalSection(organisation, { org, signal }) {
  * of two apps that look like one app is a bad way to find out they are two.
  * The link goes where the real form is.
  */
+function environmentsSection(environments) {
+  const rows = environmentRows(environments);
+  return section(
+    "Environments",
+    rows.length
+      ? h("ul", { className: "origin-list" }, rows.map((environment) =>
+          h("li", {}, h("span", { text: environment.name }))))
+      : h("p", { className: "muted", text: "No project has reported an environment yet." }),
+    h("p", { className: "muted", text: "Environments are created by incoming events. Show or hide one for a project from that project's screen." })
+  );
+}
+
 function socialSection(apps, { org, signal }) {
-  const list = Array.isArray(apps) ? apps : [];
+  let list = Array.isArray(apps) ? apps : [];
   const error = h("p", { className: "error" });
   error.hidden = true;
+  const body = h("div");
+
+  const explain = (failure, fallback) => {
+    error.hidden = false;
+    error.textContent = failure?.message || `${fallback} (${failure?.status ?? 0}).`;
+  };
+
+  const refresh = async () => {
+    list = await glitchtip.get(`/organizations/${encodeURIComponent(org)}/social-apps/`, { signal });
+    render();
+  };
+
+  const edit = async (app = null) => {
+    const editing = Boolean(app);
+    const name = field({ label: "Name", id: "sso-name", value: app?.name || "" });
+    const provider = h("select", { id: "sso-provider" },
+      h("option", { value: "openid_connect", text: "OpenID Connect" }),
+      h("option", { value: "google", text: "Google" }));
+    provider.value = app?.brand === "google" ? "google" : "openid_connect";
+    provider.disabled = editing;
+    const clientId = field({ label: "Client ID", id: "sso-client-id", value: app?.clientID || app?.clientId || "" });
+    const secret = field({ label: editing ? "New client secret (leave blank to keep it)" : "Client secret", id: "sso-client-secret", type: "password" });
+    const server = field({ label: "Issuer URL", id: "sso-server-url", value: app?.serverUrl || "", placeholder: "https://identity.example.com" });
+    const fields = h("div", {},
+      name.node,
+      h("label", { className: "field" }, h("span", { className: "field-label", text: "Provider" }), provider),
+      clientId.node, secret.node, server.node);
+    const sure = await confirmAction({
+      title: editing ? `Edit ${app.name}` : "Add sign-on provider",
+      body: fields,
+      confirm: editing ? "Save provider" : "Add provider",
+      signal,
+    });
+    if (!sure) return;
+    const payload = socialAppPayload({
+      name: name.input.value,
+      provider: provider.value,
+      clientId: clientId.input.value,
+      clientSecret: secret.input.value,
+      serverUrl: server.input.value,
+    }, { editing });
+    try {
+      if (editing) {
+        await glitchtip.put(`/organizations/${encodeURIComponent(org)}/social-apps/${encodeURIComponent(app.id)}/`, payload, { signal });
+      } else {
+        await glitchtip.post(`/organizations/${encodeURIComponent(org)}/social-apps/`, payload, { signal });
+      }
+      error.hidden = true;
+      await refresh();
+    } catch (failure) {
+      explain(failure, editing ? "Couldn't save that provider" : "Couldn't add that provider");
+    }
+  };
 
   const remove = async (app) => {
     const sure = await confirmAction({
@@ -240,6 +311,7 @@ function socialSection(apps, { org, signal }) {
         "Anybody who signs in that way loses the route in. Accounts and their access are untouched; " +
         "the way they authenticate is what goes.",
       confirm: "Remove it",
+      signal,
     });
     if (!sure) return;
     try {
@@ -247,34 +319,28 @@ function socialSection(apps, { org, signal }) {
         `/organizations/${encodeURIComponent(org)}/social-apps/${encodeURIComponent(app.id)}/`,
         { signal }
       );
-      location.reload();
+      await refresh();
     } catch (failure) {
-      error.hidden = false;
-      error.textContent = failure?.message || `Couldn't remove that (${failure?.status ?? 0}).`;
+      explain(failure, "Couldn't remove that");
     }
   };
 
-  return section(
-    "Signing in",
-    list.length
-      ? h("ul", { className: "origin-list" },
-          list.map((app) =>
+  function render() {
+    fill(body,
+      list.length
+        ? h("ul", { className: "origin-list" }, list.map((app) =>
             h("li", {},
               h("div", {},
                 h("div", { text: app.name || app.provider }),
-                h("div", { className: "muted", text: app.provider })
-              ),
-              h("button", {
-                type: "button",
-                className: "ghost danger",
-                text: "Remove",
-                on: { click: () => void remove(app) },
-              })
-            )
-          )
-        )
-      : h("p", { className: "muted",
-          text: "Everybody signs in with a password or a passkey. No other provider is configured." }),
-    error
-  );
+                h("div", { className: "muted", text: [app.brand || app.provider, app.serverUrl].filter(Boolean).join(" · ") })),
+              h("span", { className: "row-actions" },
+                h("button", { type: "button", className: "ghost", text: "Edit", on: { click: () => void edit(app) } }),
+                h("button", { type: "button", className: "ghost danger", text: "Remove", on: { click: () => void remove(app) } })))) )
+        : h("p", { className: "muted", text: "Everybody signs in with a password or a passkey. No other provider is configured." }),
+      h("div", { className: "form-actions" }, h("button", { type: "button", text: "Add sign-on provider", on: { click: () => void edit() } })),
+      error);
+  }
+
+  render();
+  return section("Signing in", body);
 }

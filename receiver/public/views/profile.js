@@ -7,22 +7,26 @@
  * ever seen Sentinel had no way to add a second email, see what a token could
  * do, or find out whether their account had a second factor at all.
  *
- * Two things here are handled differently from every other screen in this
- * app, and both for the same reason: a credential is only shown once.
+ * One thing here is handled differently from every other screen, and the
+ * reason is not the one it looks like.
  *
- * A new token is displayed the moment it is made and never again, because
- * GlitchTip stores it hashed and cannot show it later. So it is presented as
- * something to copy now rather than a row in a list, and says so.
- *
- * And adding a second factor is not done here. Setting up an authenticator
- * means a QR code, a shared secret and recovery codes, and doing that badly
- * locks somebody out of their own account. Reading what exists is useful and
- * safe; creating it belongs where the flow is already written and tested.
+ * A new token is shown the moment it is made and never again — but that is
+ * this screen's choice, not a limit GlitchTip imposes. GlitchTip keeps the
+ * token in the clear and its list endpoint returns the value on every row,
+ * so this screen could redisplay any token at any time. It doesn't. A list
+ * that paints live credentials into the page turns a passing glance, a
+ * screenshot or a shared screen into a leak, and the value is the one field
+ * nobody needs in order to answer "what is this for, and should it still
+ * exist". So the list carries the label, the scopes and the date, and the
+ * value appears once, at the moment it was asked for.
  */
 
 import { glitchtip, allauth } from "../lib/api.js";
-import { h, fill, emptyState, field, confirmAction } from "../lib/dom.js";
+import { h, fill, emptyState, field, confirmAction, modal } from "../lib/dom.js";
 import { throwIfAborted } from "../lib/abort.js";
+import { create as createCredential, supported as webauthnSupported } from "../lib/webauthn.js";
+import { tokenCreatedAt, validWizardHash } from "../lib/phase67.js";
+import QRCode from "qrcode";
 
 /** Every scope a token can hold, as GlitchTip's own bitfield names them. */
 const SCOPES = [
@@ -63,11 +67,15 @@ function when(value) {
   return Number.isNaN(at.getTime()) ? "" : at.toLocaleDateString();
 }
 
-export async function profileView({ outlet, signal }, me = {}) {
+export async function profileView({ outlet, signal }, me = {}, { wizardHash = "" } = {}) {
   const view = h("div", { className: "issues-view" });
+  const banner = h("p", { className: "error profile-notice" });
+  banner.hidden = true;
   let notice = "";
   const say = (message) => {
     notice = message || "";
+    banner.textContent = notice;
+    banner.hidden = !notice;
   };
 
   async function load() {
@@ -92,9 +100,6 @@ export async function profileView({ outlet, signal }, me = {}) {
       return;
     }
 
-    const banner = h("p", { className: "error", text: notice });
-    banner.hidden = !notice;
-
     fill(
       view,
       h("section", { className: "issue-detail" },
@@ -116,7 +121,9 @@ export async function profileView({ outlet, signal }, me = {}) {
 
         factors.failed !== undefined
           ? section("Signing in", h("p", { className: "muted", text: readFailure(factors.failed, "your sign-in methods") }))
-          : factorsSection(factors.data, account.data),
+          : factorsSection(factors.data, account.data, { repaint, say, signal }),
+
+        setupWizardSection({ hash: wizardHash, say, signal }),
 
         tokens.failed !== undefined
           ? section("Tokens", h("p", { className: "muted", text: readFailure(tokens.failed, "your tokens") }))
@@ -302,15 +309,21 @@ function notificationsSection(notifications, { repaint, say, signal }) {
 }
 
 /**
- * What stands between somebody else and this account.
+ * What stands between somebody else and this account, and — since Phase 7 —
+ * where it is changed.
  *
- * Read-only on purpose. Adding an authenticator is a QR code, a shared
- * secret and a set of recovery codes, and getting that wrong locks a person
- * out of their own account — so it stays where the flow already exists and
- * has been tested. Saying whether anything is configured is the useful half,
- * and it is the half nobody could see from here at all.
+ * This was read-only at first, on the grounds that a botched enrolment locks
+ * a person out of their own account, so setting one up belonged where the
+ * flow was already written. That was the wrong trade. The flow it deferred
+ * to is GlitchTip's own screen, which is the seam this app exists to remove,
+ * and "nothing is guarding this account" is a useless thing to say to
+ * somebody with no way to act on it. So enrolment happens here, and the two
+ * edges that made it dangerous are handled rather than avoided: the QR is
+ * drawn by a library bundled into this app, never fetched from an image
+ * service that would then have the shared secret, and the recovery codes are
+ * put on screen as part of enrolling rather than left to be found later.
  */
-function factorsSection(factors, account) {
+function factorsSection(factors, account, { repaint, say, signal }) {
   const list = factors?.data || factors || [];
   const rows = Array.isArray(list) ? list : [];
 
@@ -319,6 +332,137 @@ function factorsSection(factors, account) {
     webauthn: "A passkey or security key",
     recovery_codes: "Recovery codes",
   };
+
+  const act = async (run) => {
+    try {
+      await run();
+      say("");
+      await repaint();
+    } catch (failure) {
+      say(failure?.message || `Couldn't change that (${failure?.status ?? 0}).`);
+    }
+  };
+
+  const showCodes = (body) => {
+    const codes = body?.data?.unused_codes || body?.unused_codes || [];
+    const done = h("button", { type: "button", text: "Done" });
+    const dialog = modal({
+      title: "Save these recovery codes",
+      body: h("div", {},
+        h("p", { className: "muted", text: "Each code works once. Keep them somewhere separate from this account." }),
+        h("pre", { className: "mono recovery-codes", text: codes.join("\n") })),
+      actions: [done], signal,
+    });
+    done.addEventListener("click", dialog.close);
+  };
+
+  const setUpTotp = async () => {
+    let setup;
+    try {
+      await allauth.get("/account/authenticators/totp", { signal });
+      say("An authenticator app is already configured.");
+      return;
+    } catch (failure) {
+      if (failure?.status !== 404 || !failure?.body?.meta?.secret) {
+        say(failure?.message || "Couldn't start authenticator setup.");
+        return;
+      }
+      setup = failure.body.meta;
+    }
+    const qr = await QRCode.toDataURL(setup.totp_url, { width: 200, margin: 1 });
+    const code = field({ label: "Six-digit code", id: "totp-code", inputMode: "numeric" });
+    const verify = h("button", { type: "button", text: "Verify and turn on" });
+    const cancel = h("button", { type: "button", className: "ghost", text: "Cancel" });
+    const dialog = modal({
+      title: "Set up an authenticator",
+      body: h("div", {},
+        h("p", { className: "muted", text: "Scan this code with your authenticator app, then enter its current code." }),
+        h("img", { className: "totp-qr", src: qr, alt: "Authenticator setup QR code", width: 200, height: 200 }),
+        h("p", { className: "muted", text: "If you cannot scan it, enter this secret manually:" }),
+        h("code", { id: "totp-secret", className: "mono dsn", text: setup.secret }),
+        code.node),
+      actions: [cancel, verify], signal,
+    });
+    cancel.addEventListener("click", dialog.close);
+    verify.addEventListener("click", async () => {
+      verify.disabled = true;
+      try {
+        await allauth.post("/account/authenticators/totp", { code: code.input.value.trim() }, { signal });
+        const recovery = await allauth.get("/account/authenticators/recovery-codes", { signal });
+        dialog.close();
+        showCodes(recovery);
+        await repaint();
+      } catch (failure) {
+        say(failure?.message || "That code was not accepted.");
+      } finally {
+        verify.disabled = false;
+      }
+    });
+  };
+
+  const regenerate = async () => {
+    const sure = await confirmAction({
+      title: "Replace every recovery code?",
+      detail: "The old codes stop working immediately.",
+      confirm: "Regenerate",
+      signal,
+    });
+    if (!sure) return;
+    try { showCodes(await allauth.post("/account/authenticators/recovery-codes", {}, { signal })); }
+    catch (failure) { say(failure?.message || "Couldn't regenerate recovery codes."); }
+  };
+
+  const removeTotp = async () => {
+    const sure = await confirmAction({
+      title: "Remove the authenticator app?",
+      detail: "It and its recovery codes stop protecting this account.",
+      confirm: "Remove it",
+      signal,
+    });
+    if (sure) await act(() => allauth.del("/account/authenticators/totp", { signal }));
+  };
+
+  const addPasskey = async () => {
+    const name = field({ label: "Name", id: "passkey-name", placeholder: "Laptop or security key" });
+    const create = h("button", { type: "button", text: "Create passkey" });
+    const cancel = h("button", { type: "button", className: "ghost", text: "Cancel" });
+    const dialog = modal({ title: "Add a passkey", body: name.node, actions: [cancel, create], signal });
+    cancel.addEventListener("click", dialog.close);
+    create.addEventListener("click", async () => {
+      create.disabled = true;
+      try {
+        const options = await allauth.get("/account/authenticators/webauthn", { signal });
+        const credential = await createCredential(options?.data?.creation_options, signal);
+        await allauth.post("/account/authenticators/webauthn", {
+          name: name.input.value.trim() || "Passkey",
+          credential,
+        }, { signal });
+        dialog.close();
+        await repaint();
+      } catch (failure) {
+        say(failure?.message || "Couldn't add that passkey.");
+      } finally { create.disabled = false; }
+    });
+  };
+
+  const renamePasskey = async (one) => {
+    const name = field({ label: "Name", id: "passkey-name", value: one.name || "" });
+    const save = h("button", { type: "button", text: "Save name" });
+    const dialog = modal({ title: "Rename passkey", body: name.node, actions: [save], signal });
+    save.addEventListener("click", async () => {
+      await act(() => allauth.put("/account/authenticators/webauthn", { id: one.id, name: name.input.value.trim() }, { signal }));
+      dialog.close();
+    });
+  };
+
+  const removePasskey = async (one) => {
+    const sure = await confirmAction({ title: `Remove ${one.name || "this passkey"}?`, detail: "It can no longer sign in to this account.", confirm: "Remove it", signal });
+    if (sure) await act(() => allauth.del("/account/authenticators/webauthn", { body: { authenticators: [one.id] }, signal }));
+  };
+
+  const hasTotp = rows.some((one) => one.type === "totp");
+  const passkeys = rows.filter((one) => one.type === "webauthn");
+  const hasRecovery = rows.some((one) => one.type === "recovery_codes");
 
   return section(
     "Signing in",
@@ -330,13 +474,52 @@ function factorsSection(factors, account) {
       ? h("ul", { className: "origin-list" },
           rows.map((one) =>
             h("li", {},
-              h("span", { text: named[one.type] || one.type }),
-              h("span", { className: "muted", text: when(one.created_at * 1000) })
+              h("div", {},
+                h("span", { text: one.name || named[one.type] || one.type }),
+                h("span", { className: "muted", text: when(one.created_at * 1000) })),
+              one.type === "webauthn"
+                ? h("span", { className: "row-actions" },
+                    h("button", { type: "button", className: "ghost", text: "Rename", on: { click: () => void renamePasskey(one) } }),
+                    h("button", { type: "button", className: "ghost danger", text: "Remove", on: { click: () => void removePasskey(one) } }))
+                : null
             )
           )
         )
       : h("p", { className: "muted",
-          text: "No second factor. A password alone is all that protects this account." })
+          text: "No second factor. A password alone is all that protects this account." }),
+    h("div", { className: "form-actions" },
+      hasTotp
+        ? h("button", { type: "button", className: "ghost danger", text: "Remove authenticator", on: { click: () => void removeTotp() } })
+        : h("button", { type: "button", text: "Set up authenticator", on: { click: () => void setUpTotp() } }),
+      webauthnSupported()
+        ? h("button", { type: "button", text: "Add passkey", on: { click: () => void addPasskey() } })
+        : null,
+      hasRecovery
+        ? h("button", { type: "button", className: "ghost", text: "Regenerate recovery codes", on: { click: () => void regenerate() } })
+        : null)
+  );
+}
+
+function setupWizardSection({ hash = "", say, signal }) {
+  const input = field({ label: "Setup code", id: "wizard-hash", value: hash });
+  const status = h("p", { className: "muted" });
+  const connect = h("button", { type: "submit", text: "Connect setup wizard" });
+  return section(
+    "Setup wizard",
+    h("p", { className: "muted", text: "Connect the short-lived code opened by GlitchTip's setup tool. It expires after ten minutes." }),
+    h("form", { on: { submit: async (event) => {
+      event.preventDefault();
+      const value = input.input.value.trim();
+      if (!validWizardHash(value)) { say("That setup code is not valid."); return; }
+      connect.disabled = true;
+      try {
+        await glitchtip.post("/wizard-set-token/", { hash: value }, { signal });
+        status.textContent = "Setup wizard connected. You may return to the terminal.";
+        say("");
+      } catch (failure) {
+        say(failure?.message || `Couldn't connect that setup wizard (${failure?.status ?? 0}).`);
+      } finally { connect.disabled = false; }
+    } } }, input.node, h("div", { className: "form-actions" }, connect, status))
   );
 }
 
@@ -386,7 +569,7 @@ function tokensSection(tokens, { repaint, say, signal }) {
               h("div", {},
                 h("div", { text: token.label || "unnamed token" }),
                 h("div", { className: "muted",
-                  text: [(token.scopes || []).join(", ") || "no scopes", when(token.dateCreated)]
+                  text: [(token.scopes || []).join(", ") || "no scopes", when(tokenCreatedAt(token))]
                     .filter(Boolean).join(" · ") })
               ),
               h("button", {
@@ -419,14 +602,15 @@ function tokensSection(tokens, { repaint, say, signal }) {
               { signal }
             );
             /**
-             * Shown once, because that is all GlitchTip will ever show. It
-             * is stored hashed, so a row in the list below can say what a
+             * Shown once because this screen shows it once — the note at the
+             * top of the file says why, since the reason is not the obvious
+             * one. The row that joins the list below will say what this
              * token is for and never what it is.
              */
             made.hidden = false;
             fill(
               made,
-              h("p", { text: "Copy this now — it is not shown again." }),
+              h("p", { text: "Copy this now — Sentinel won't show it again." }),
               h("code", { className: "mono dsn", text: token.token || "" })
             );
             for (const one of boxes) one.box.checked = false;

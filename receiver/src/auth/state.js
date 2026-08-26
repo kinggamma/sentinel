@@ -225,29 +225,38 @@ export function capabilities({ state, user = null, orgs = [], orgRoles = {} } = 
    * Two different questions, and conflating them produced a contradiction.
    *
    * `authorised` is "may this person see Sentinel's data", which needs an
-   * organisation. `signedIn` is "is there a real account behind this
+   * organisation. `signedIn` is "is there a settled account behind this
    * session", which does not — pending and denied are fully authenticated
-   * identities that simply have nowhere to go yet, and reauthentication is a
-   * live session being asked to prove itself again.
+   * identities that simply have nowhere to go yet.
    *
    * Account-level abilities belong to the second. Gating them on the first
    * told a pending user with a password that they could not change it while
    * simultaneously telling them that changing it would sign their other
    * sessions out.
+   *
+   * REAUTH_REQUIRED is deliberately not one of them, and it is the only
+   * state here where the answer is arguable. It is a real identity, so
+   * "signed in" is fair — but the abilities gated on this predicate are the
+   * account screen, and the account screen is the exact surface
+   * reauthentication exists to protect: minting a token that acts as you,
+   * removing the second factor, changing the address a password reset goes
+   * to. Nothing downstream would catch it either, because those are
+   * GlitchTip's endpoints rather than allauth's, so allauth's own guard
+   * never sees the request. A live session that has been asked to prove
+   * itself again should prove itself first; signing in again does that, and
+   * the router sends it there.
    */
   const authorised = state === STATES.AUTHENTICATED;
-  const signedIn = [
-    STATES.AUTHENTICATED,
-    STATES.PENDING,
-    STATES.DENIED,
-    STATES.REAUTH_REQUIRED,
-  ].includes(state);
+  const signedIn = [STATES.AUTHENTICATED, STATES.PENDING, STATES.DENIED].includes(state);
 
   // Explicitly true, not merely truthy: null means "we could not tell".
   const hasPassword = user?.hasPasswordAuth === true;
 
   return Object.freeze({
     canRead: authorised,
+
+    // Account settings belong to the identity, even before it joins an org.
+    canManageProfile: signedIn,
 
     canRequestAccess: state === STATES.PENDING || state === STATES.DENIED,
 
