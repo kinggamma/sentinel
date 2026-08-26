@@ -197,6 +197,9 @@ try {
       await ssoPage.goto(`${BASE}/sentinel/organisation?org=${encodeURIComponent(ORG)}`);
       ssoPage.on("response", capture);
       await ssoPage.click("button:has-text('Add sign-on provider')");
+      // GlitchTip's own cap, which this suite learned the hard way: a longer
+      // name is a 422 the screen can only report after the fact.
+      assert(await ssoPage.locator("#sso-name").getAttribute("maxlength") === "40", "name field is not capped at GlitchTip's limit");
       await ssoPage.fill("#sso-name", SSO);
       await ssoPage.fill("#sso-client-id", `${RUN}-client`);
       await ssoPage.fill("#sso-client-secret", `${RUN}-secret`);

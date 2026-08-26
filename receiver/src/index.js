@@ -154,6 +154,31 @@ function sendShell(mount) {
   };
 }
 
+/**
+ * Whether a path is asking for a file rather than for a screen.
+ *
+ * This used to be `path.extname(req.path)`, on the reasoning that a missing
+ * asset should 404 rather than quietly return HTML — which is right, and
+ * which "has a dot in it" is not the same question as. A release is
+ * addressed by the version somebody put in their build, and almost every
+ * version has dots in it: /sentinel/releases/1.0.0 has an "extension" of
+ * ".0", so opening a release from a bookmark, a shared link, or a reload
+ * 404'd while clicking through to it from the list worked. Any screen whose
+ * address carries a version, a hostname or a filename has the same problem.
+ *
+ * So the question is asked the other way round: is this one of the
+ * extensions this app actually serves. Anything else is a screen.
+ */
+const ASSET_EXTENSIONS = new Set([
+  ".js", ".mjs", ".css", ".map", ".json", ".webmanifest",
+  ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif", ".ico",
+  ".woff", ".woff2", ".ttf", ".otf", ".eot",
+  ".mp4", ".webm", ".txt", ".xml", ".pdf", ".wasm", ".html",
+]);
+
+const looksLikeAsset = (pathname) =>
+  ASSET_EXTENSIONS.has(path.extname(pathname).toLowerCase());
+
 // The trailing slash isn't cosmetic: asset paths are relative, so at
 // /sentinel they'd resolve against the root and land on GlitchTip. Express
 // treats /sentinel and /sentinel/ as one route, so the check is on the URL
@@ -181,7 +206,7 @@ app.use("/sentinel", express.static(PUBLIC_DIR, staticOptions));
 app.get("/sentinel/*", (req, res, next) => {
   if (req.method !== "GET") return next();
   if (!String(req.headers.accept || "").includes("text/html")) return next();
-  if (path.extname(req.path)) return next();
+  if (looksLikeAsset(req.path)) return next();
   return sendShell("/sentinel")(req, res);
 });
 // Standalone: the same shell, at the root this port serves it from.
@@ -198,7 +223,7 @@ app.use(express.static(PUBLIC_DIR, staticOptions));
 app.get("/*", (req, res, next) => {
   if (req.method !== "GET") return next();
   if (!String(req.headers.accept || "").includes("text/html")) return next();
-  if (path.extname(req.path)) return next();
+  if (looksLikeAsset(req.path)) return next();
   return sendShell("")(req, res);
 });
 

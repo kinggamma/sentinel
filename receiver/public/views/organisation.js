@@ -264,15 +264,21 @@ function socialSection(apps, { org, signal }) {
 
   const edit = async (app = null) => {
     const editing = Boolean(app);
-    const name = field({ label: "Name", id: "sso-name", value: app?.name || "" });
+    /**
+     * The caps are GlitchTip's own, from the schema behind these endpoints:
+     * a name over forty characters comes back 422, and the screen's only
+     * honest report of that is "couldn't save that provider". Stopping the
+     * field at the limit says the same thing while it can still be acted on.
+     */
+    const name = field({ label: "Name", id: "sso-name", value: app?.name || "", maxLength: 40 });
     const provider = h("select", { id: "sso-provider" },
       h("option", { value: "openid_connect", text: "OpenID Connect" }),
       h("option", { value: "google", text: "Google" }));
     provider.value = app?.brand === "google" ? "google" : "openid_connect";
     provider.disabled = editing;
-    const clientId = field({ label: "Client ID", id: "sso-client-id", value: app?.clientID || app?.clientId || "" });
-    const secret = field({ label: editing ? "New client secret (leave blank to keep it)" : "Client secret", id: "sso-client-secret", type: "password" });
-    const server = field({ label: "Issuer URL", id: "sso-server-url", value: app?.serverUrl || "", placeholder: "https://identity.example.com" });
+    const clientId = field({ label: "Client ID", id: "sso-client-id", value: app?.clientID || app?.clientId || "", maxLength: 191 });
+    const secret = field({ label: editing ? "New client secret (leave blank to keep it)" : "Client secret", id: "sso-client-secret", type: "password", maxLength: 191 });
+    const server = field({ label: "Issuer URL", id: "sso-server-url", value: app?.serverUrl || "", placeholder: "https://identity.example.com", maxLength: 500 });
     const fields = h("div", {},
       name.node,
       h("label", { className: "field" }, h("span", { className: "field-label", text: "Provider" }), provider),

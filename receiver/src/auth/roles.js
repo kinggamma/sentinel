@@ -7,6 +7,8 @@
  * checked against the running instance rather than assumed:
  *
  *   member   project:read, event:*, member:read        — reads, nothing else
+ *            ...and project:releases, which is not a read: it is the whole
+ *            of what the release endpoints ask for, delete included
  *   admin    + project:write, project:admin, team:write
  *   manager  + member:write, org:write
  *   owner    everything
@@ -94,5 +96,21 @@ export function abilities(role) {
      * rather than shown empty.
      */
     canManageOrganisation: Boolean(known) && atLeast(known, "manager"),
+
+    /**
+     * Releases, including deleting one.
+     *
+     * Every role, member included. That is not an oversight here: GlitchTip
+     * puts project:releases in the member scope set alongside project:read,
+     * and the release endpoints ask for nothing else — so an ordinary member
+     * may edit and delete any release in the organisation, which is more than
+     * they may do to a single project setting.
+     *
+     * Written out as its own answer rather than folded into canRead, because
+     * it is the one place where "can see it" and "can destroy it" are the
+     * same scope, and a screen reading canRead for a delete button would be
+     * right today by accident.
+     */
+    canManageReleases: Boolean(known),
   });
 }

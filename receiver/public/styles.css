@@ -1223,8 +1223,8 @@ button.danger:hover {
   border-bottom: none;
 }
 
-.issues-table .pick,
-.issues-table td:first-child {
+.issues-table th.pick,
+.issues-table td.pick {
   width: 36px;
 }
 
@@ -1788,8 +1788,10 @@ button.danger:hover {
   margin: var(--space-3) 0;
 }
 
-/* Shown once, because GlitchTip stores the token hashed and will never show
-   it again. Loud enough that it is not scrolled past. */
+/* Shown once, because this is the only place the value is put on screen —
+   GlitchTip would return it on every row of the list, and a list of live
+   credentials is a screenshot away from being a leak. Loud enough that it is
+   not scrolled past. */
 .token-made {
   margin: var(--space-3) 0;
   padding: var(--space-3);
@@ -1801,4 +1803,52 @@ button.danger:hover {
 .token-made p {
   margin: 0 0 var(--space-2);
   font-weight: 600;
+}
+
+/* ------------------------------------------------------------- releases */
+
+/* What is known about a release, as label-and-value pairs rather than a
+   two-column table: there are four of them, they never wrap to a second
+   row of data, and a table would draw a grid around a fact list. */
+.release-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+
+.release-facts dt {
+  color: var(--muted);
+}
+
+.release-facts dd {
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  /* A version string or a full timestamp has nowhere to wrap against a
+     max-content label on a phone, so the pairs stack instead. */
+  .release-facts {
+    grid-template-columns: 1fr;
+    gap: 0 0;
+  }
+
+  .release-facts dd {
+    margin: 0 0 var(--space-2);
+  }
+}
+
+/* A version is one token, and breaking it up to fit a column makes it
+   unreadable — "2026.08.26-nightly.4471" became four stacked fragments. It
+   sets the column's width instead. */
+.release-version {
+  white-space: nowrap;
+}
+
+/* Counts and sizes, which are read by comparing them down the column. */
+.issues-table th.num,
+.issues-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }

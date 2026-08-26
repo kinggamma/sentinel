@@ -16,3 +16,17 @@ export function parseLinks(header) {
   }
   return links;
 }
+
+/**
+ * The Link header hands back whole URLs. Only the cursor inside one is ours
+ * to keep — the rest of that URL is the filters we already have, and storing
+ * it whole would let a stale page's filters override the current ones.
+ */
+export function cursorOf(link) {
+  if (!link) return null;
+  try {
+    return new URL(link, location.origin).searchParams.get("cursor");
+  } catch {
+    return null;
+  }
+}

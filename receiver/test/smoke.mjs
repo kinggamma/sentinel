@@ -179,6 +179,20 @@ async function shellServed() {
     "/sentinel/issues/123456?event=019ffabc82a7718cad4fe7a13a7efc37",
     "/sentinel/reports/e-library-admin",
     "/sentinel/reports/e-library-admin/2f8a1c",
+    /**
+     * Phase 8a, and the case that broke the rule the fallback was using. A
+     * release is addressed by whatever version somebody put in their build,
+     * and almost every version has dots in it — so "the path has an
+     * extension, therefore it is a file" 404'd every release opened from a
+     * bookmark, a shared link or a reload, while clicking through from the
+     * list worked. Any address carrying a version, a hostname or a filename
+     * would have gone the same way.
+     */
+    "/sentinel/releases",
+    "/sentinel/releases/1.0.0",
+    "/sentinel/releases/v2.3.1-rc.1",
+    "/sentinel/releases/2026.08.26-nightly.4471",
+    "/sentinel/releases/" + encodeURIComponent("app@1.0.0+build.7"),
   ]) {
     await check(`${route} serves the shell`, async () => {
       const res = await get(route, { headers: { accept: "text/html" } });
@@ -227,6 +241,8 @@ async function shellServed() {
       "nav-organisation",
       // Internal since Phase 7.
       "nav-profile",
+      // Internal since Phase 8a: what shipped, when, and what went into it.
+      "nav-releases",
       "nav-reports",
       "nav-settings",
     ]) {
@@ -236,7 +252,6 @@ async function shellServed() {
       "nav-performance",
       "nav-uptime",
       "nav-logs",
-      "nav-releases",
     ]) {
       const anchor = body.match(new RegExp(`<a[^>]*id="${external}"[^>]*>`))?.[0];
       assert(anchor, `the sidebar is missing ${external}`);
@@ -246,8 +261,21 @@ async function shellServed() {
   });
 
   await check("a missing asset 404s rather than returning the shell", async () => {
-    const res = await get("/sentinel/definitely-not-here.js");
-    assertStatus(res, 404);
+    /**
+     * The half of the rule that survived Phase 8a. Widening the fallback to
+     * cover dotted routes must not widen it to cover assets: an HTML answer
+     * to a missing script is a confusing failure to debug, because the
+     * browser reports a syntax error in a file that was never there.
+     */
+    for (const missing of [
+      "/sentinel/definitely-not-here.js",
+      "/sentinel/nope.css",
+      "/sentinel/lib/gone.js",
+      "/sentinel/vendor/missing.woff2",
+      "/sentinel/missing.map",
+    ]) {
+      assertStatus(await get(missing, { headers: { accept: "text/html" } }), 404, missing);
+    }
   });
 
   for (const asset of [

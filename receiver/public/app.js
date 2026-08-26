@@ -40,6 +40,7 @@ import { teamsListView, teamNewView, teamDetailView } from "./views/teams.js";
 import { organisationView } from "./views/organisation.js";
 import { profileView } from "./views/profile.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
+import { releasesListView, releaseDetailView } from "./views/releases.js";
 import {
   signInView,
   signUpView,
@@ -213,6 +214,7 @@ const ORG_SCOPED_NAV = [
   "nav-projects",
   "nav-people",
   "nav-organisation",
+  "nav-releases",
   "nav-reports",
   "nav-settings",
 ];
@@ -400,6 +402,13 @@ route("/projects", guarded(projectsRoute(projectsListView)));
 // Before the :slug route, which would otherwise match "new" as a project.
 route("/projects/new", guarded(projectsRoute(projectNewView)));
 route("/projects/:slug", guarded(projectsRoute(projectDetailView)));
+
+/**
+ * Phase 8a. A release belongs to the organisation rather than to one
+ * project, so it takes the same context every org-scoped screen does.
+ */
+route("/releases", guarded(projectsRoute(releasesListView)));
+route("/releases/:version", guarded(projectsRoute(releaseDetailView)));
 
 route("/issues", guarded(issuesRoute(issuesListView)));
 route("/issues/:id", guarded(issuesRoute(issueDetailView)));
@@ -647,6 +656,7 @@ function sectionFor(path) {
   if (path.startsWith("/organisation")) return "organisation";
   if (path.startsWith("/profile")) return "profile";
   if (path.startsWith("/requests")) return "people";
+  if (path.startsWith("/releases")) return "releases";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
   // Somewhere that isn't a section. Falling through to "reports" would have
@@ -695,13 +705,13 @@ function paintExternalLinks() {
   const root = (features.glitchtipUrl || glitchtipRoot || "").replace(/\/+$/, "");
   const enabled = features.enabledFeatures || [];
 
-  // Projects left this list in Phase 4 — it is a screen here now, and a
-  // link to somebody else's version of a screen we have is worse than none.
+  // Projects left this list in Phase 4 and Releases in Phase 8a — they are
+  // screens here now, and a link to somebody else's version of a screen we
+  // have is worse than none.
   const links = [
     ["nav-performance", organisation && `${root}/${organisation}/performance`, true],
     ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
     ["nav-logs", organisation && `${root}/${organisation}/logs`, enabled.includes("logs")],
-    ["nav-releases", organisation && `${root}/${organisation}/releases`, true],
   ];
 
   let anyShown = false;
@@ -729,6 +739,7 @@ function paintChrome() {
     ["nav-projects", "projects"],
     ["nav-people", "people"],
     ["nav-organisation", "organisation"],
+    ["nav-releases", "releases"],
     ["nav-profile", "profile"],
     ["nav-reports", "reports"],
     ["nav-settings", "settings"],
@@ -1006,6 +1017,7 @@ async function boot() {
   el("nav-projects").href = routeHref("/projects");
   el("nav-people").href = routeHref("/people");
   el("nav-organisation").href = routeHref("/organisation");
+  el("nav-releases").href = routeHref("/releases");
   el("nav-profile").href = routeHref("/profile");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.
