@@ -28,14 +28,22 @@ local app to it. `docs/INTEGRATING.md` is the guide for adding an app.
 |---|---|
 | `docker-compose.yml` | GlitchTip, Postgres, Redis, receiver, Caddy |
 | `receiver/src/` | The Sentinel receiver API (Node/Express) |
-| `receiver/public/` | The report viewer UI — plain HTML/CSS/JS, no framework |
+| `receiver/public/` | Sentinel's UI — plain HTML/CSS/JS, no framework |
 | `sdk/` | The shared browser SDK apps embed |
 | `moodle/` | Moodle-specific integration assets |
 | `docs/` | Integration guide, local testing, privacy checklist |
 
-The viewer is deliberately dependency-free apart from the bundled replay
-player. Please keep it that way — it has to work behind a strict CSP with no
-network access beyond its own origin.
+The UI takes dependencies only where the alternative is worse than the
+dependency, and there are two: the replay player, and a QR generator for
+authenticator enrolment — hand-rolling that one badly locks somebody out of
+their own account. Both are bundled at image build with esbuild, never
+fetched at runtime.
+
+That last part is the rule to actually keep. Everything the browser loads
+comes from this origin, because the CSP is `script-src 'self'` and there is
+no CDN. A dependency that has to be fetched to work cannot be used here
+whatever its merits; one that can be bundled is a judgement call, and the
+default answer is still no.
 
 ## Making a change
 
@@ -65,13 +73,23 @@ network access beyond its own origin.
 
    ```bash
    npm run test:browser && npm run test:issues && npm run test:webauthn
-   npm run test:orgs && npm run test:manage
+   npm run test:orgs && npm run test:manage && npm run test:phase67
+   npm run test:releases && npm run test:performance
+   npm run test:logs && npm run test:uptime && npm run test:flip
    ```
 
    These are the regressions no HTTP call can see: the embedded viewer
    booting in a real iframe, the issue screen writing and deleting notes with
    a CSRF token and reporting a facet that will not load, passkey sign-in
    against a virtual authenticator, and every screen at 390px.
+
+   The later ones cover a screen each. `test:phase67` is single sign-on,
+   authenticator enrolment and API tokens; `test:releases`, `test:logs` and
+   `test:uptime` each drive their screen and then ask GlitchTip whether the
+   write actually landed, which is the only way to catch the endpoints whose
+   update replaces every field it was not sent. `test:flip` walks the
+   addresses GlitchTip's own interface used to answer and checks each lands
+   on the screen that replaced it, with its organisation intact.
 
    `test:manage` presses the buttons that write: making a project, renaming
    it, adding and revoking keys, creating an alert and editing, testing and

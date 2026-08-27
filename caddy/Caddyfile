@@ -25,13 +25,13 @@
 	# directly, with the session it already has, and Sentinel is a path rather
 	# than a separate address.
 	#
-	# Order matters. Sentinel's API and GlitchTip's both start /api, and
-	# GlitchTip's event ingest is /api/<project-id>/…, so the receiver's own
-	# routes are matched by name first and everything else under /api goes to
-	# GlitchTip.
+	# Order matters, and after Phase 9 it decides the whole shape of the
+	# origin: GlitchTip keeps the paths that are backend, and Sentinel gets
+	# everything a person can type or follow from an email.
+	#
 	# Only the path apps' SDKs post to. Everything else under /api is
-	# GlitchTip's — including /api/settings/, which its own frontend calls
-	# before anything else, and /api/<project-id>/ where events arrive.
+	# GlitchTip's — including /api/settings/, which the shell reads before
+	# anything else, and /api/<project-id>/ where events arrive.
 	# Exact, not a prefix wildcard: /api/reports* would also capture anything
 	# GlitchTip might serve beginning with those letters.
 	@report_intake path /api/reports /api/reports/*
@@ -39,28 +39,57 @@
 		reverse_proxy feedback-receiver:4000
 	}
 
-	# The address people type lands in Sentinel, not GlitchTip. GlitchTip's
-	# own screens stay reachable at their own routes — /<org>/issues,
-	# /profile, /login — because Sentinel doesn't replace all of them yet,
-	# and a UI you can't reach is worse than one you rarely open.
-	redir / /sentinel/ 302
-
-	handle /sentinel* {
-		reverse_proxy feedback-receiver:4000
+	# What GlitchTip still answers for.
+	#
+	# Written out one prefix at a time rather than as "everything except the
+	# UI", because the two backends have to agree about this list and a
+	# wildcard with holes in it is a rule nobody can check. Each line is a
+	# real Django route (glitchtip/urls.py), and each is here for a reason
+	# that outlives the Angular app:
+	#
+	#   /api/          its whole API, plus event ingest at /api/<id>/
+	#   /_allauth/     the headless auth endpoints Sentinel signs in through
+	#   /accounts/     allauth's own views — the social callback URLs are
+	#                  registered at the identity provider and cannot move
+	#   /admin/        Django admin, which is the only way to reach a few
+	#                  fields no API exposes (a status page's monitors)
+	#   /oauth/        the authorisation endpoint for API clients
+	#   /status-pages/ server-rendered, and staying that way while the API
+	#                  has no per-page read to build our own from
+	#   /static/ /media/  what those pages and admin are made of
+	#   /stripe/       its billing webhook
+	#   /v1/logs       OTLP ingest, which SDKs post to directly
+	#   the three odds and ends its urls.py puts at the root
+	@glitchtip path /api/* /_allauth/* /accounts/* /oauth/* /status-pages/* /static/* /media/* /stripe/* /admin /admin/* /v1/logs /v1/logs/ /_health /_health/ /robots.txt /favicon.ico
+	handle @glitchtip {
+		reverse_proxy glitchtip-web:8000
 	}
 
+	# Everything else is Sentinel, at the root.
+	#
+	# This is the flip. The address people type is the app now rather than a
+	# redirect to it, and GlitchTip's own UI routes — /<org>/issues,
+	# /profile, /login, /accept/<id>/<token> — land here too, where the
+	# client router recognises the old shapes and sends them to the screens
+	# that replaced them. That is deliberately not done with rewrite rules up
+	# here: the addresses are the client's, they need to move as the client
+	# moves, and one router that knows all of them is easier to keep honest
+	# than a second copy in a proxy config.
+	#
+	# /sentinel/ still works and is still tested. It was the address for
+	# nine phases, people have it bookmarked, and the receiver serves both
+	# mounts from the same shell.
 	handle {
-		reverse_proxy glitchtip-web:8000
+		reverse_proxy feedback-receiver:4000
 	}
 
 	encode gzip
 
-	# GlitchTip's SPA shell carries no caching headers at all, so browsers
-	# apply their own heuristics and can serve a stale copy for hours. That
-	# matters here because we patch that shell to add the Sentinel nav link:
-	# without this, re-patching appears to do nothing in a browser that has
-	# already seen the old one. Only the HTML is affected — the hash-named
-	# JS and CSS keep whatever caching they came with.
+	# A shell with no caching headers gets whatever heuristic the browser
+	# feels like, which can be hours. Sentinel's shell is generated per
+	# request and carries the mount and the CSRF cookie, so a stale one is
+	# a signed-in person looking at a page that cannot write. Only HTML is
+	# affected — hash-named JS and CSS keep whatever caching they came with.
 	header {
 		match {
 			header Content-Type text/html*

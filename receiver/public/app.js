@@ -486,6 +486,62 @@ route("/issues/:id/tags", guarded(issuesRoute(issueTagsView)));
 route("/reports/:app", guarded(reportsRoute));
 route("/reports/:app/:id", guarded(reportsRoute));
 
+// ------------------------------------------------- the addresses we replaced
+//
+// Phase 9. Caddy stopped serving GlitchTip's own interface, which means every
+// address that used to open one of its screens now arrives here — typed,
+// bookmarked, or followed out of an email GlitchTip sent months ago.
+//
+// They are answered rather than 404'd, and answered here rather than with
+// rewrite rules in the proxy. These are the client's addresses: they have to
+// move when the client moves, and one router that knows both the old shapes
+// and the new ones is easier to keep honest than a second copy of the mapping
+// in a proxy config that nothing tests.
+//
+// Registered last on purpose. The router returns the first route that
+// matches, and "/:org/projects" would otherwise sit in front of
+// "/projects/:slug" and turn a project's own screen into a redirect.
+//
+// GlitchTip carries the organisation in the path and Sentinel carries it in
+// the query, so that is the shape of the translation; the rest is a rename.
+
+/** Where GlitchTip's own UI put the organisation, and where this one does. */
+const legacy = (to) => (ctx) => {
+  const org = ctx.params.org;
+  const query = new URLSearchParams(location.search);
+  if (org) query.set("org", org);
+  const search = query.toString();
+  return goRoute(`${to(ctx)}${search ? `?${search}` : ""}`, { replace: true });
+};
+
+// Signing in and signing up. GlitchTip had three addresses for two screens.
+route("/login", legacy(() => "/signin"));
+route("/login/:org", legacy(() => "/signin"));
+route("/auth", legacy(() => "/signin"));
+route("/register", legacy(() => "/signup"));
+// Its password reset link is the one an email is most likely to still hold.
+route("/reset-password", legacy(() => "/password/request"));
+route("/reset-password/:key", legacy((ctx) => `/password/reset/${encodeURIComponent(ctx.params.key)}`));
+// It listed every organisation on its own screen; here the switcher does
+// that, so the list is the landing screen.
+route("/organizations", legacy(() => "/"));
+// Everything under its profile — /profile/auth-tokens, /profile/settings —
+// is one screen here.
+route("/profile/:section", legacy(() => "/profile"));
+// And the per-organisation screens, which is most of them.
+route("/:org/issues", legacy(() => "/issues"));
+route("/:org/issues/:id", legacy((ctx) => `/issues/${encodeURIComponent(ctx.params.id)}`));
+route("/:org/projects", legacy(() => "/projects"));
+route("/:org/projects/:slug", legacy((ctx) => `/projects/${encodeURIComponent(ctx.params.slug)}`));
+route("/:org/releases", legacy(() => "/releases"));
+route("/:org/performance", legacy(() => "/performance"));
+route("/:org/logs", legacy(() => "/logs"));
+route("/:org/uptime-monitors", legacy(() => "/uptime"));
+// Its "settings" for an organisation is this app's Organisation screen; the
+// project-level one is the project's own.
+route("/:org/settings", legacy(() => "/organisation"));
+route("/:org/settings/:section", legacy(() => "/organisation"));
+
 if (!scopedApp) {
   // hueFor is app.js's own appHue(), not a copy: it's keyed off appNames,
   // which spans both projects and reports, so an app with reports but no
@@ -580,7 +636,7 @@ let organisation = null;
 let organisations = [];
 
 /** What this installation has switched on, for gating the links below. */
-let features = { enabledFeatures: [], glitchtipUrl: null };
+let features = { enabledFeatures: [], glitchtipUrl: null, glitchtipUiUrl: null };
 
 let projects = [];
 let reports = [];
@@ -832,10 +888,18 @@ function paintChrome() {
   crumb.textContent = heading || "";
   document.title = appName ? `${appName} — Sentinel` : "Sentinel";
 
-  const url = appName ? projectFor(appName)?.glitchtipUrl || glitchtipRoot : glitchtipRoot;
+  /**
+   * The way out to GlitchTip's own screens, while there still is one.
+   *
+   * It used to point at whatever GLITCHTIP_URL was, per app. Since the flip
+   * that address is this app, so the link led back to the page it was on —
+   * and the per-app version led to a screen that exists here now anyway.
+   * What is left is one link to the escape hatch, offered only where the
+   * server says GlitchTip's interface is still reachable.
+   */
   const link = el("glitchtip-link");
-  link.hidden = !url;
-  if (url) link.href = url;
+  link.hidden = !features.glitchtipUiUrl;
+  if (features.glitchtipUiUrl) link.href = features.glitchtipUiUrl;
 }
 
 /**
@@ -1058,7 +1122,11 @@ async function boot() {
     features = {
       enabledFeatures: settings?.enabledFeatures || [],
       glitchtipUrl: config?.glitchtipUrl || null,
+      glitchtipUiUrl: config?.glitchtipUiUrl || null,
     };
+    // The sidebar's way out depends on this answer, and it arrives after
+    // the first paint like the feature list does.
+    paintChrome();
     paintExternalLinks();
   });
 

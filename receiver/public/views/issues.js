@@ -1081,15 +1081,14 @@ export async function issueDetailView(
           { className: "detail-actions" },
           resolve,
           ignore,
-          issue.permalink
-            ? h("a", {
-                className: "button-link",
-                href: issue.permalink,
-                target: "_blank",
-                attrs: { rel: "noreferrer noopener" },
-                text: "Open in GlitchTip ↗",
-              })
-            : null
+          /**
+           * "Open in GlitchTip ↗" used to be here, built from the
+           * permalink GlitchTip returns. Since the flip that address is
+           * this app, and the route it names is the screen it was on — a
+           * link back to the page you are reading. Removed rather than
+           * repointed: there is nowhere else to go.
+           */
+          null
         )
       ),
       body

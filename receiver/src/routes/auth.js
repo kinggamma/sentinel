@@ -16,10 +16,13 @@ export const authRouter = Router();
 
 /** What the sign-in screen needs to know before anyone types anything. */
 authRouter.get("/auth/config", (_req, res) => {
-  const { url, org } = glitchtipInfo();
+  const { url, uiUrl, org } = glitchtipInfo();
   res.json({
     glitchtipEnabled: glitchtipConfigured,
     glitchtipUrl: url || null,
+    // Where GlitchTip's own screens still are, if anywhere. Null once the
+    // escape hatch is closed, which is what stops the UI offering it.
+    glitchtipUiUrl: uiUrl || null,
     glitchtipOrg: org || null,
   });
 });

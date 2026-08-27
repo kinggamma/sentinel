@@ -123,12 +123,21 @@ const getStandalone = (path, init) => fetch(`${STANDALONE}${path}`, { redirect: 
 async function shellServed() {
   process.stdout.write("\nThe viewer is served\n");
 
-  await check("the bare address lands in Sentinel", async () => {
-    const res = await get("/");
-    assertStatus(res, [301, 302]);
+  await check("the bare address is Sentinel, rather than a redirect to it", async () => {
+    /**
+     * Phase 9. It used to answer 302 to /sentinel/, because GlitchTip's own
+     * interface was still behind everything else on this origin and the
+     * redirect was how you got past it. There is nothing to get past now:
+     * the address people type is the app.
+     */
+    const res = await get("/", { headers: { accept: "text/html" } });
+    assertStatus(res, 200);
+    const body = await res.text();
+    assert(body.includes("<title>Sentinel</title>"), "the bare address is not Sentinel");
+    assert(body.includes('<base href="/" />'), "<base> is missing or wrong at the bare address");
     assert(
-      (res.headers.get("location") || "").includes("/sentinel"),
-      `redirects to ${res.headers.get("location")}, wanted /sentinel/`
+      body.includes('<meta name="sentinel-mount" content="" />'),
+      "the mount should be empty at the bare address"
     );
   });
 
@@ -670,6 +679,97 @@ async function backendsOwnTheirPaths() {
     // matcher is a wildcard and could swallow GlitchTip paths.
     const res = await get("/api/reportsomething");
     assert(res.status !== 201, "a made-up /api/reports* path reached the receiver");
+  });
+
+  /**
+   * Phase 9 inverted this origin. Sentinel had one prefix and GlitchTip had
+   * everything else; now GlitchTip has a named list and Sentinel has
+   * everything else. Both halves of that are worth pinning, because a
+   * mistake in either direction is silent: a backend path routed to the
+   * receiver 404s something an SDK depends on, and a UI path left with
+   * GlitchTip serves an interface that is supposed to be gone.
+   */
+  await check("what GlitchTip still owns still reaches GlitchTip", async () => {
+    for (const [path, wanted] of [
+      ["/api/settings/", [200]],
+      ["/api/0/organizations/", [200, 401, 403]],
+      ["/_allauth/browser/v1/config", [200]],
+      // A redirect to its login page is Django answering, which is the point.
+      ["/admin/", [200, 302]],
+      ["/static/favicon.ico", [200]],
+      ["/_health/", [200]],
+      // Django's own 404, not a shell: the page does not exist, the route does.
+      ["/status-pages/nobody/nothing/", [404]],
+      ["/accounts/definitely-not-a-view/", [404]],
+    ]) {
+      const res = await get(path, { headers: { accept: "text/html" } });
+      assertStatus(res, wanted, path);
+      const body = await res.text();
+      assert(
+        !body.includes("<title>Sentinel</title>"),
+        `${path} was answered by Sentinel — the receiver has taken a backend path`
+      );
+    }
+  });
+
+  await check("every address GlitchTip's own interface used is Sentinel now", async () => {
+    /**
+     * These are the routes its Angular app claimed, and they arrive here
+     * from bookmarks and from emails it sent months ago. The shell has to be
+     * served for all of them; which screen the client then shows is the
+     * router's business and is checked in the browser suite.
+     */
+    for (const path of [
+      "/",
+      "/login",
+      "/auth",
+      "/register",
+      "/organizations",
+      "/profile",
+      "/profile/auth-tokens",
+      "/reset-password/abc-123",
+      "/accept/12/ddar27-abc123",
+      "/system-info",
+      "/some-org/issues",
+      "/some-org/issues/4321",
+      "/some-org/projects",
+      "/some-org/releases",
+      "/some-org/performance",
+      "/some-org/logs",
+      "/some-org/uptime-monitors",
+      "/some-org/settings",
+    ]) {
+      const res = await get(path, { headers: { accept: "text/html" } });
+      assertStatus(res, 200, path);
+      const body = await res.text();
+      assert(body.includes("<title>Sentinel</title>"), `${path} is not Sentinel`);
+      assert(
+        !body.includes("<title>GlitchTip</title>"),
+        `${path} still serves GlitchTip's own interface`
+      );
+    }
+  });
+
+  await check("GlitchTip's interface is on its own port, and nowhere on this one", async () => {
+    /**
+     * The escape hatch: one release of "the screen Sentinel got wrong is a
+     * port away rather than a release away". Published unproxied because its
+     * shell declares <base href="/"> and its bundles are hash-named under
+     * /static/ — from a sub-path both would need rewriting and its router
+     * would then disagree with the URL.
+     *
+     * Skipped rather than failed where the port is closed: closing it is the
+     * intended end of this arrangement, not a broken deployment.
+     */
+    const fallback = (process.env.GLITCHTIP_FALLBACK_URL || "http://localhost:8080").replace(/\/+$/, "");
+    const res = await fetch(`${fallback}/`, { headers: { accept: "text/html" } }).catch(() => null);
+    if (!res) return "skip";
+    assertStatus(res, 200, fallback);
+    const body = await res.text();
+    assert(
+      body.includes("<title>GlitchTip</title>"),
+      "the fallback port is not serving GlitchTip's interface"
+    );
   });
 }
 

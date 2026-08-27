@@ -38,9 +38,9 @@ server.
 
 ```
 docker-compose.yml       GlitchTip + Postgres + Redis + Sentinel receiver + Caddy
-caddy/Caddyfile          Reverse proxy — IP/port based (localhost:8000 / :4000), no DNS needed
+caddy/Caddyfile          Reverse proxy — Sentinel at :8000, GlitchTip's API behind it, no DNS needed
 receiver/                Sentinel receiver service (Node/Express)
-receiver/public/          Sentinel viewer UI served at http://localhost:4000
+receiver/public/          Sentinel's UI — the whole interface, served at :8000 and :4000
 sdk/                     Shared browser SDK (incident-capture.js, report-widget.js)
 moodle/                  Moodle integration assets (PHP snippet + JS injection)
 docs/INTEGRATING.md      How to add an app — by language and framework
@@ -80,16 +80,6 @@ what lets someone read reports:
 
 ```bash
 sed -i '' 's|^GLITCHTIP_ORG=.*|GLITCHTIP_ORG=<org-slug>|' .env && docker compose up -d feedback-receiver
-```
-
-Point GlitchTip's sidebar back at Sentinel. A patched copy is committed so
-that a fresh clone starts at all — Docker would otherwise create a
-*directory* at that mount path and break GlitchTip — but it was generated
-against whichever GlitchTip build was current then, so regenerate it
-against yours:
-
-```bash
-./scripts/patch-glitchtip-index.sh
 ```
 
 Then hand `STAFF_API_TOKEN` to each app's **server-side** config. It is
@@ -132,9 +122,9 @@ GLITCHTIP_SECRET_KEY=$(openssl rand -hex 32)
 STAFF_API_TOKEN=$(openssl rand -hex 32)
 SESSION_SECRET=$(openssl rand -hex 32)
 GLITCHTIP_DOMAIN=http://<server-ip>:8000
-SENTINEL_URL=http://<server-ip>:4000
 GLITCHTIP_PORT=8000
 SENTINEL_PORT=4000
+GLITCHTIP_FALLBACK_PORT=8080
 ALLOWED_ORIGINS=http://<an-app-host>:<port>
 EMAIL_URL=consolemail://
 DEFAULT_FROM_EMAIL=errors@example.org
@@ -175,7 +165,7 @@ docker compose up -d && docker compose logs -f glitchtip-web
 ```
 
 ```bash
-curl -s localhost:4000/health && curl -s -o /dev/null -w ' glitchtip %{http_code}\n' localhost:8000/
+curl -s localhost:4000/health && curl -s -o /dev/null -w ' glitchtip api %{http_code}\n' localhost:8000/api/settings/
 ```
 
 Open `http://<server-ip>:8000`, create the first account and the
@@ -184,14 +174,6 @@ reports:
 
 ```bash
 sed -i 's|^GLITCHTIP_ORG=.*|GLITCHTIP_ORG=<org-slug>|' .env && docker compose up -d feedback-receiver
-```
-
-Add the Sentinel link to GlitchTip's sidebar. This bakes `SENTINEL_URL`
-into GlitchTip's shell, so it runs *after* that value is right — and again
-whenever it changes, or after a GlitchTip upgrade:
-
-```bash
-./scripts/patch-glitchtip-index.sh
 ```
 
 Finally, hand each app the token it will send with reports:
@@ -211,9 +193,8 @@ If either is taken, don't move the other service — publish this one
 elsewhere. `GLITCHTIP_PORT` and `SENTINEL_PORT` change only what is
 published on the host; inside the network everything still talks on 8000
 and 4000, so the Caddyfile is untouched. Change the matching
-`GLITCHTIP_DOMAIN` / `SENTINEL_URL` at the same time: GlitchTip builds
-DSNs from the domain, so a mismatch hands apps a DSN that resolves to
-nothing.
+`GLITCHTIP_DOMAIN` at the same time: GlitchTip builds DSNs from the
+domain, so a mismatch hands apps a DSN that resolves to nothing.
 
 `EMAIL_URL=consolemail://` prints invitation emails to the container log
 instead of sending them, which is enough to get started — but inviting
@@ -285,39 +266,48 @@ redesign a screen people know; it's to stop it being a second application.
 
 ## Where things end up
 
-Two stores, two UIs — worth knowing which one to open:
+One interface, two stores behind it.
 
-| What | Lands in | Look at it |
+| What | Stored by | Look at it |
 |---|---|---|
 | Uncaught JS/PHP errors, stack traces | GlitchTip | http://localhost:8000 → Issues |
-| "Report Issue" clicks + session replays + breadcrumbs | Sentinel | http://localhost:4000 |
+| "Report Issue" clicks + session replays + breadcrumbs | Sentinel's receiver | http://localhost:8000 → Reports |
 
-Sentinel opens on one card per app that has reported — how many reports,
-how many were staff-filed against auto-captured, how many carry a replay,
-and when the last one arrived — and clicking a card drills into that app's
-reports. Where an app's errors also live in GlitchTip, each card and each
-report links straight across.
+Sentinel is the whole interface now: issues, projects, teams, people,
+releases, performance, logs, uptime, status pages, the organisation and your
+own account, alongside the reports and replays it stores itself. Which of
+the two backends answers a given screen is not something anybody has to
+know — several screens read from both.
 
-Going the other way, GlitchTip's sidebar carries a **Sentinel** item, below
-its own nav. GlitchTip ships as a prebuilt image with nowhere to configure
-one, so it's added by mounting a patched copy of its own SPA shell. The
-sidebar is built by Angular at runtime, so the injected script clones a nav
-item that's already there and retargets the copy — which means it picks up
-whatever styling that build uses instead of guessing at class names, and it
-is restored if Angular re-renders. Where no sidebar exists (the login page,
-or a build that restructured it) a small corner link is shown instead, so
-the link is never simply missing.
+The address you type is the app. `http://localhost:8000/` is Sentinel;
+`/sentinel/` still works, because it was the address for nine releases and
+people have it bookmarked. Every address GlitchTip's own interface used —
+`/<org>/issues`, `/profile`, `/login`, an invitation or password-reset link
+out of an old email — lands on the screen that replaced it.
 
-```bash
-./scripts/patch-glitchtip-index.sh
+`http://localhost:4000` is the same app on its own port, for the embedded
+viewer and for setups with no GlitchTip at all.
+
+### GlitchTip's own interface, for one more release
+
+It is still in the image and still runs; it simply has no address on port
+8000 any more. `GLITCHTIP_FALLBACK_PORT` (8080 by default) publishes it
+unproxied:
+
+```
+http://localhost:8080
 ```
 
-> **After every GlitchTip upgrade, re-run that script.** The patched shell
-> names GlitchTip's hash-named JS bundles, so once the image moves on, the
-> mount serves a shell pointing at bundles that no longer exist and
-> GlitchTip won't load at all. `./scripts/patch-glitchtip-index.sh --check`
-> compares the copy against the current image and exits non-zero when it has
-> gone stale — worth running straight after `docker compose pull`.
+That exists so a screen Sentinel gets wrong is one port away rather than one
+release away. It is deliberately a separate port rather than a sub-path:
+GlitchTip's shell declares `<base href="/">` and its bundles are hash-named
+under `/static/`, so serving it from `/glitchtip/` would mean rewriting the
+base and every asset reference, and its own router would then disagree with
+the URL.
+
+Close it when nobody has needed it — delete the `ports:` entry under
+`glitchtip-web` in `docker-compose.yml`. Nothing an app or an SDK talks to
+goes through it.
 
 ## New apps create their own GlitchTip project
 
@@ -622,7 +612,7 @@ docker compose ps
 ```
 
 ```bash
-curl -s localhost:4000/health && curl -s -o /dev/null -w ' glitchtip %{http_code}\n' localhost:8000/
+curl -s localhost:4000/health && curl -s -o /dev/null -w ' glitchtip api %{http_code}\n' localhost:8000/api/settings/
 ```
 
 ```bash
