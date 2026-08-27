@@ -42,6 +42,12 @@ import { profileView } from "./views/profile.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import { releasesListView, releaseDetailView } from "./views/releases.js";
 import {
+  performanceListView,
+  performanceDetailView,
+  spanGroupsView,
+  nPlusOneView,
+} from "./views/performance.js";
+import {
   signInView,
   signUpView,
   passwordRequestView,
@@ -215,6 +221,7 @@ const ORG_SCOPED_NAV = [
   "nav-people",
   "nav-organisation",
   "nav-releases",
+  "nav-performance",
   "nav-reports",
   "nav-settings",
 ];
@@ -409,6 +416,15 @@ route("/projects/:slug", guarded(projectsRoute(projectDetailView)));
  */
 route("/releases", guarded(projectsRoute(releasesListView)));
 route("/releases/:version", guarded(projectsRoute(releaseDetailView)));
+
+/**
+ * Phase 8b. The two literal paths are registered before "/:id", which would
+ * otherwise match "spans" and fail on an id GlitchTip declares as an int.
+ */
+route("/performance", guarded(projectsRoute(performanceListView)));
+route("/performance/spans", guarded(projectsRoute(spanGroupsView)));
+route("/performance/n-plus-one", guarded(projectsRoute(nPlusOneView)));
+route("/performance/:id", guarded(projectsRoute(performanceDetailView)));
 
 route("/issues", guarded(issuesRoute(issuesListView)));
 route("/issues/:id", guarded(issuesRoute(issueDetailView)));
@@ -657,6 +673,7 @@ function sectionFor(path) {
   if (path.startsWith("/profile")) return "profile";
   if (path.startsWith("/requests")) return "people";
   if (path.startsWith("/releases")) return "releases";
+  if (path.startsWith("/performance")) return "performance";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
   // Somewhere that isn't a section. Falling through to "reports" would have
@@ -705,11 +722,10 @@ function paintExternalLinks() {
   const root = (features.glitchtipUrl || glitchtipRoot || "").replace(/\/+$/, "");
   const enabled = features.enabledFeatures || [];
 
-  // Projects left this list in Phase 4 and Releases in Phase 8a — they are
-  // screens here now, and a link to somebody else's version of a screen we
-  // have is worse than none.
+  // Projects left this list in Phase 4, Releases in 8a and Performance in
+  // 8b — they are screens here now, and a link to somebody else's version of
+  // a screen we have is worse than none.
   const links = [
-    ["nav-performance", organisation && `${root}/${organisation}/performance`, true],
     ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
     ["nav-logs", organisation && `${root}/${organisation}/logs`, enabled.includes("logs")],
   ];
@@ -740,6 +756,7 @@ function paintChrome() {
     ["nav-people", "people"],
     ["nav-organisation", "organisation"],
     ["nav-releases", "releases"],
+    ["nav-performance", "performance"],
     ["nav-profile", "profile"],
     ["nav-reports", "reports"],
     ["nav-settings", "settings"],
@@ -1018,6 +1035,7 @@ async function boot() {
   el("nav-people").href = routeHref("/people");
   el("nav-organisation").href = routeHref("/organisation");
   el("nav-releases").href = routeHref("/releases");
+  el("nav-performance").href = routeHref("/performance");
   el("nav-profile").href = routeHref("/profile");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.

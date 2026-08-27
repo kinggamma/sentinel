@@ -1852,3 +1852,75 @@ button.danger:hover {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------- performance */
+
+/* Three views of the same subject, so tabs rather than three sidebar
+   entries: they answer one question from three angles, and a nav that grows
+   an entry per angle stops being a nav. */
+.sub-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.sub-tab {
+  padding: 8px 12px;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.sub-tab:hover {
+  color: var(--text);
+}
+
+.sub-tab.current {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+.perf-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.perf-find {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.perf-find input {
+  width: 100%;
+}
+
+.perf-ranges {
+  display: flex;
+  gap: 4px;
+}
+
+.perf-ranges .current {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* A span description is a SQL statement or a URL — long, and with nowhere
+   natural to break. It gets the room the other columns do not need, and
+   wraps inside it rather than widening the table past the screen. */
+.span-description {
+  max-width: 32ch;
+  overflow-wrap: anywhere;
+}
+
+.perf-trend {
+  height: 64px;
+  align-items: flex-end;
+}

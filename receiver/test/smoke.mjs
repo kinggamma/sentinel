@@ -193,6 +193,13 @@ async function shellServed() {
     "/sentinel/releases/v2.3.1-rc.1",
     "/sentinel/releases/2026.08.26-nightly.4471",
     "/sentinel/releases/" + encodeURIComponent("app@1.0.0+build.7"),
+    // Phase 8b. The two literal paths come before "/:id" in the router, and
+    // a reload of any of the four has to find the shell.
+    "/sentinel/performance",
+    "/sentinel/performance?sort=-count&range=7d&q=checkout",
+    "/sentinel/performance/spans",
+    "/sentinel/performance/n-plus-one",
+    "/sentinel/performance/42",
   ]) {
     await check(`${route} serves the shell`, async () => {
       const res = await get(route, { headers: { accept: "text/html" } });
@@ -243,13 +250,14 @@ async function shellServed() {
       "nav-profile",
       // Internal since Phase 8a: what shipped, when, and what went into it.
       "nav-releases",
+      // Internal since Phase 8b.
+      "nav-performance",
       "nav-reports",
       "nav-settings",
     ]) {
       assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
     }
     for (const external of [
-      "nav-performance",
       "nav-uptime",
       "nav-logs",
     ]) {
