@@ -59,9 +59,37 @@
 	#   /static/ /media/  what those pages and admin are made of
 	#   /stripe/       its billing webhook
 	#   /v1/logs       OTLP ingest, which SDKs post to directly
-	#   the three odds and ends its urls.py puts at the root
-	@glitchtip path /api/* /_allauth/* /accounts/* /oauth/* /status-pages/* /static/* /media/* /stripe/* /admin /admin/* /v1/logs /v1/logs/ /_health /_health/ /robots.txt /favicon.ico
+	#   /metrics       Prometheus, when ENABLE_OBSERVABILITY_API is on. A
+	#                  scraper handed an HTML shell fails quietly, which is
+	#                  the worst way for monitoring to break.
+	#   the odds and ends its urls.py puts at the root
+	#
+	# Each namespace is listed twice, with and without the trailing slash.
+	# "/api/*" does not match "/api", and Django answers that one with a
+	# redirect to "/api/" — a redirect that never happens if the request
+	# stops here instead.
+	@glitchtip path /api /api/* /_allauth /_allauth/* /accounts /accounts/* /oauth /oauth/* /status-pages /status-pages/* /static /static/* /media /media/* /stripe /stripe/* /admin /admin/* /v1/logs /v1/logs/ /metrics /_health /_health/ /robots.txt /favicon.ico
 	handle @glitchtip {
+		reverse_proxy glitchtip-web:8000
+	}
+
+	# One deep path that belongs to GlitchTip inside a namespace that does
+	# not.
+	#
+	# "/organizations" is Sentinel's — it was the address of GlitchTip's
+	# list-of-organisations screen and is this app's landing screen now — so
+	# the namespace cannot be handed over wholesale. But one route under it
+	# is a backend route: Sentinel-compatible clients ask for an event as
+	# JSON at the Sentry-shaped address, and GlitchTip answers with a
+	# redirect to the same thing under /api/0/. Routed to Sentinel it came
+	# back as the app's own HTML, which a client parsing JSON reports as a
+	# corrupt event rather than as a misrouted request.
+	#
+	# A regular expression rather than a path wildcard, because this needs
+	# to match a shape rather than a prefix, and the shape is what keeps it
+	# from swallowing the screens either side of it.
+	@glitchtip_event_json path_regexp ^/organizations/[^/]+/issues/[^/]+/events/[^/]+/json/?$
+	handle @glitchtip_event_json {
 		reverse_proxy glitchtip-web:8000
 	}
 
@@ -115,18 +143,70 @@
 }
 
 # --- Once you have a real domain pointed at this server (optional) -------
-# Delete the :8000 / :4000 blocks above and use this instead — Caddy will
-# provision and renew TLS certs automatically:
 #
-# errors.<domain> {
+# Replace the :8000 block above with this and Caddy will provision and renew
+# TLS certificates automatically.
+#
+# This is the same routing, not a simpler one. It used to be two domains —
+# one for GlitchTip's interface and one for Sentinel's — and that is what the
+# flip removed: there is one interface now, and GlitchTip is a backend behind
+# it. A domain that proxies everything to glitchtip-web serves an interface
+# nothing links to any more, on an origin where Sentinel's own API is
+# missing.
+#
+# Keep the two lists identical to the ones above. They are the whole
+# contract between the backends, and a domain deployment that quietly drifts
+# from the localhost one is the kind of difference that only shows up in
+# production.
+#
+# sentinel.<domain> {
+# 	@report_intake path /api/reports /api/reports/*
+# 	handle @report_intake {
+# 		reverse_proxy feedback-receiver:4000
+# 	}
+#
+# 	@glitchtip path /api /api/* /_allauth /_allauth/* /accounts /accounts/* /oauth /oauth/* /status-pages /status-pages/* /static /static/* /media /media/* /stripe /stripe/* /admin /admin/* /v1/logs /v1/logs/ /metrics /_health /_health/ /robots.txt /favicon.ico
+# 	handle @glitchtip {
+# 		reverse_proxy glitchtip-web:8000
+# 	}
+#
+# 	@glitchtip_event_json path_regexp ^/organizations/[^/]+/issues/[^/]+/events/[^/]+/json/?$
+# 	handle @glitchtip_event_json {
+# 		reverse_proxy glitchtip-web:8000
+# 	}
+#
+# 	handle {
+# 		reverse_proxy feedback-receiver:4000
+# 	}
+#
+# 	encode gzip
+# 	header {
+# 		match {
+# 			header Content-Type text/html*
+# 		}
+# 		Cache-Control "no-cache"
+# 	}
+# 	request_body {
+# 		max_size 10MB
+# 	}
+# 	log
+# }
+#
+# GLITCHTIP_DOMAIN must be https://sentinel.<domain> — GlitchTip builds DSNs
+# from it, and an SDK given an http:// DSN for an https:// origin is blocked
+# by the browser before it sends anything.
+#
+# The escape hatch is a second name rather than a path, for the reason
+# docker-compose.yml gives: GlitchTip's shell declares <base href="/"> and
+# its bundles are hash-named under /static/, so a sub-path would need every
+# asset reference rewriting and its router would then disagree with the URL.
+# Add it only while the hatch is open, and set GLITCHTIP_UI_URL to match.
+#
+# glitchtip.<domain> {
 # 	reverse_proxy glitchtip-web:8000
 # 	encode gzip
 # }
 #
-# feedback.<domain> {
-# 	reverse_proxy feedback-receiver:4000
-# 	encode gzip
-# 	request_body {
-# 		max_size 10MB
-# 	}
-# }
+# The :4000 block stays as it is. It is the same app on its own port, for
+# the embedded viewer and for setups with no GlitchTip at all, and it is
+# reached by apps rather than typed by people — so it needs no name.

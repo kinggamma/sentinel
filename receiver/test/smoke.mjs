@@ -690,6 +690,18 @@ async function backendsOwnTheirPaths() {
    * GlitchTip serves an interface that is supposed to be gone.
    */
   await check("what GlitchTip still owns still reaches GlitchTip", async () => {
+    /**
+     * This list comes from GlitchTip's own urls.py, not from the Caddyfile,
+     * and the difference is the entire point of the check.
+     *
+     * Written from the proxy config it can only ever confirm that the config
+     * matches itself: a backend route nobody remembered to add is missing
+     * from both lists at once, so the test passes while the route is broken.
+     * Three were, and this is how they were found — an event's JSON, the
+     * metrics endpoint, and every namespace root without its trailing slash.
+     *
+     * Add a route here when GlitchTip gains one, not when Caddy does.
+     */
     for (const [path, wanted] of [
       ["/api/settings/", [200]],
       ["/api/0/organizations/", [200, 401, 403]],
@@ -701,6 +713,29 @@ async function backendsOwnTheirPaths() {
       // Django's own 404, not a shell: the page does not exist, the route does.
       ["/status-pages/nobody/nothing/", [404]],
       ["/accounts/definitely-not-a-view/", [404]],
+      /**
+       * Prometheus. Only routed when ENABLE_OBSERVABILITY_API is on, so a
+       * 404 is a normal answer — what must never happen is a scraper being
+       * handed an HTML page, which it reports as a parse error rather than
+       * as a misconfigured target.
+       */
+      ["/metrics", [200, 404]],
+      /**
+       * Every namespace, without its trailing slash.
+       *
+       * "/api/*" does not match "/api". Django answers that one with a
+       * redirect to "/api/" — which never happens if the request stops at
+       * the proxy instead, and the client sees an HTML page where it asked
+       * for an API.
+       */
+      ["/api", [301, 302]],
+      ["/_allauth", [200, 301, 302, 404]],
+      ["/accounts", [200, 301, 302, 404]],
+      ["/static", [200, 301, 302, 404]],
+      ["/media", [200, 301, 302, 404]],
+      ["/oauth", [200, 301, 302, 404]],
+      ["/status-pages", [200, 301, 302, 404]],
+      ["/stripe", [200, 301, 302, 404]],
     ]) {
       const res = await get(path, { headers: { accept: "text/html" } });
       assertStatus(res, wanted, path);
@@ -708,6 +743,42 @@ async function backendsOwnTheirPaths() {
       assert(
         !body.includes("<title>Sentinel</title>"),
         `${path} was answered by Sentinel — the receiver has taken a backend path`
+      );
+    }
+  });
+
+  await check("an event's JSON is GlitchTip's, inside a namespace that is ours", async () => {
+    /**
+     * The one backend route that lives under a path Sentinel owns.
+     * "/organizations" is this app's landing screen — it was the address of
+     * GlitchTip's list-of-organisations screen — so the namespace cannot be
+     * handed over wholesale, and one route beneath it still belongs to
+     * GlitchTip: Sentry-compatible clients fetch an event as JSON at this
+     * shape, and GlitchTip answers with a redirect to the same thing under
+     * /api/0/.
+     *
+     * Routed to Sentinel it came back 200 with the app's own HTML, which a
+     * client parsing JSON reports as a corrupt event rather than as a
+     * misrouted request. Checked by following the redirect rather than by
+     * reading the status, because "not Sentinel" was true of the broken
+     * version too — it was Sentinel, answering perfectly.
+     */
+    const path = "/organizations/nobody/issues/1/events/abc123/json/";
+    const res = await get(path, { headers: { accept: "application/json" } });
+    assertStatus(res, [301, 302], path);
+    const to = res.headers.get("location") || "";
+    assert(
+      to.includes("/api/0/organizations/nobody/issues/1/events/abc123/json/"),
+      `redirected to ${to}, wanted the same event under /api/0/`
+    );
+
+    // And the screens either side of it are still Sentinel's.
+    for (const ours of ["/organizations", "/nobody/issues", "/nobody/issues/1"]) {
+      const mine = await get(ours, { headers: { accept: "text/html" } });
+      assertStatus(mine, 200, ours);
+      assert(
+        (await mine.text()).includes("<title>Sentinel</title>"),
+        `${ours} stopped being Sentinel's — the JSON matcher is too greedy`
       );
     }
   });
