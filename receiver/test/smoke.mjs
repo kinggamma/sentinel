@@ -180,19 +180,30 @@ async function shellServed() {
     "/sentinel/reports/e-library-admin",
     "/sentinel/reports/e-library-admin/2f8a1c",
     /**
-     * Phase 8a, and the case that broke the rule the fallback was using. A
-     * release is addressed by whatever version somebody put in their build,
-     * and almost every version has dots in it — so "the path has an
+     * Phase 8a, and the case that broke the rule the fallback was using —
+     * twice, in the same way.
+     *
+     * A release is addressed by whatever version somebody put in their
+     * build, and almost every version has dots in it, so "the path has an
      * extension, therefore it is a file" 404'd every release opened from a
-     * bookmark, a shared link or a reload, while clicking through from the
-     * list worked. Any address carrying a version, a hostname or a filename
-     * would have gone the same way.
+     * bookmark, a shared link or a reload. Narrowing that to a list of
+     * extensions the app actually serves fixed the versions that looked like
+     * numbers and left the ones that look like filenames: "app.js" and
+     * "manual.pdf" are both legal versions, and both went on 404ing.
+     *
+     * The last four exist to keep any suffix-based rule from coming back.
+     * The classification is by the shape of the path now, so what a client
+     * route happens to end in stops being the server's business.
      */
     "/sentinel/releases",
     "/sentinel/releases/1.0.0",
     "/sentinel/releases/v2.3.1-rc.1",
     "/sentinel/releases/2026.08.26-nightly.4471",
     "/sentinel/releases/" + encodeURIComponent("app@1.0.0+build.7"),
+    "/sentinel/releases/app.js",
+    "/sentinel/releases/manual.pdf",
+    "/sentinel/releases/styles.css",
+    "/sentinel/releases/index.html",
     // Phase 8b. The two literal paths come before "/:id" in the router, and
     // a reload of any of the four has to find the shell.
     "/sentinel/performance",
@@ -569,9 +580,43 @@ async function standaloneMode() {
     );
   });
 
+  await check("a client route that looks like a file serves the shell standalone", async () => {
+    /**
+     * The same rule at the other root, where it has to hold without a mount
+     * to strip — and where a release could legitimately be called
+     * "sentinel", which is why the mount is passed to the classifier rather
+     * than recognised inside it.
+     */
+    if (!reachable) return "skip";
+    for (const route of [
+      "/releases/app.js",
+      "/releases/manual.pdf",
+      "/releases/1.0.0",
+      "/releases/styles.css",
+    ]) {
+      const res = await getStandalone(route, { headers: { accept: "text/html" } });
+      assertStatus(res, 200, route);
+      const body = await res.text();
+      assert(body.includes("<title>Sentinel</title>"), `${route} did not return the shell`);
+      assert(body.includes('<base href="/" />'), `${route}: <base> is missing or wrong`);
+    }
+  });
+
   await check("a missing asset 404s at the bare root too", async () => {
     if (!reachable) return "skip";
-    assertStatus(await getStandalone("/definitely-not-here.js"), 404);
+    /**
+     * The other half, kept: asset space is the root of the served directory
+     * and the directories under it, so a missing file in either still 404s
+     * rather than being handed HTML to parse.
+     */
+    for (const missing of [
+      "/definitely-not-here.js",
+      "/nope.css",
+      "/lib/gone.js",
+      "/vendor/missing.woff2",
+    ]) {
+      assertStatus(await getStandalone(missing, { headers: { accept: "text/html" } }), 404, missing);
+    }
   });
 }
 
