@@ -20,6 +20,7 @@ const MEMBER = `${RUN}-member@example.com`;
 const WATCHED = `${RUN}-checkout`;
 const MADE = `${RUN}-nightly`;
 const RENAMED = `${RUN}-nightly-renamed`;
+const PAGE = `${RUN}-status`;
 const PASSWORD = `Pw-${Math.random().toString(36).slice(2)}-${Date.now()}`;
 let passed = 0;
 const failures = [];
@@ -67,11 +68,12 @@ print('monitor ' + str(m.id))`);
 function cleanup() {
   django(`
 from django.contrib.auth import get_user_model
-from apps.uptime.models import Monitor
+from apps.uptime.models import Monitor, StatusPage
 from apps.organizations_ext.models import Organization
 org=Organization.objects.get(slug=${JSON.stringify(ORG)})
 get_user_model().objects.filter(email__in=${JSON.stringify([MEMBER])}).delete()
 Monitor.objects.filter(organization=org, name__in=${JSON.stringify([WATCHED, MADE, RENAMED])}).delete()
+StatusPage.objects.filter(organization=org, name__in=${JSON.stringify([PAGE])}).delete()
 print('clean')`);
 }
 
@@ -211,6 +213,40 @@ try {
     await page.waitForFunction((name) => !document.body.innerText.includes(name), RENAMED);
     const left = await monitors(page);
     assert(!left.some((one) => one.name === RENAMED), "GlitchTip still has the monitor");
+  });
+
+  await test("status pages are a tab beside the monitors, not a section of their own", async () => {
+    await page.goto(`${BASE}/sentinel/uptime/status-pages?org=${encodeURIComponent(ORG)}`);
+    await page.waitForSelector(".sub-tab.current");
+    assert(await page.locator(".sub-tab.current").innerText() === "Status pages", "the tab is not marked");
+    // The limitation, said on the screen rather than discovered afterwards.
+    const body = await view(page);
+    assert(body.includes("cannot be set from here"), `the API's limit is not explained: ${body}`);
+  });
+
+  await test("a status page can be made, and says who can see it", async () => {
+    /**
+     * List and create is the whole API: no read, no update, no delete, and
+     * `StatusPageIn` takes only a name and whether it is public — so a page
+     * is necessarily created empty and this is all there is to test.
+     */
+    await page.fill("#page-name", PAGE);
+    await page.check("#page-public");
+    await page.getByRole("button", { name: "Create status page" }).click();
+    await page.waitForSelector(`text=${PAGE}`);
+    // Lower-cased: the chip is uppercased by CSS and innerText reads what is
+    // rendered, not what the element was given.
+    const row = (await page.locator("tr", { hasText: PAGE }).innerText()).toLowerCase();
+    assert(row.includes("public"), `it did not come back public: ${row}`);
+    assert(row.includes("0"), `a new page should hold no monitors: ${row}`);
+
+    const made = await page.evaluate(async ([org, wanted]) => {
+      const res = await fetch(`/api/0/organizations/${encodeURIComponent(org)}/status-pages/`,
+        { credentials: "same-origin", cache: "no-store" });
+      return res.ok ? (await res.json()).find((one) => one.name === wanted) || null : { failed: res.status };
+    }, [ORG, PAGE]);
+    assert(made && made.isPublic === true, `GlitchTip did not keep it: ${JSON.stringify(made)}`);
+    assert(made.slug, "no slug, so the public page has no address");
   });
 
   await test("a monitor id that is not there says so", async () => {

@@ -42,7 +42,12 @@ import { profileView } from "./views/profile.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import { releasesListView, releaseDetailView } from "./views/releases.js";
 import { logsListView, logDetailView } from "./views/logs.js";
-import { monitorsListView, monitorNewView, monitorDetailView } from "./views/uptime.js";
+import {
+  monitorsListView,
+  monitorNewView,
+  monitorDetailView,
+  statusPagesView,
+} from "./views/uptime.js";
 import {
   performanceListView,
   performanceDetailView,
@@ -465,6 +470,8 @@ route("/performance/:id", guarded(projectsRoute(performanceDetailView)));
 // Phase 8d. "new" before ":id", which GlitchTip declares as an int.
 route("/uptime", guarded(projectsRoute(monitorsListView)));
 route("/uptime/new", guarded(projectsRoute(monitorNewView)));
+// Phase 8e, and also before ":id" for the same reason.
+route("/uptime/status-pages", guarded(projectsRoute(statusPagesView)));
 route("/uptime/:id", guarded(projectsRoute(monitorDetailView)));
 
 // Phase 8c.

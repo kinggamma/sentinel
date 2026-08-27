@@ -57,6 +57,27 @@ function section(title, ...children) {
 }
 
 const base = (org) => `/organizations/${encodeURIComponent(org)}/monitors`;
+const statusPages = (org) => `/organizations/${encodeURIComponent(org)}/status-pages/`;
+
+/**
+ * Monitors and the pages that publish them, as one subject with two views.
+ *
+ * A status page is a set of monitors, so it belongs beside them rather than
+ * in the sidebar as a section of its own — there is not enough behind it to
+ * be a destination people navigate to.
+ */
+function tabs(current, { linkOrg, orgs }) {
+  const entries = [["", "Monitors"], ["/status-pages", "Status pages"]];
+  return h("nav", { className: "sub-tabs", attrs: { "aria-label": "Uptime" } },
+    entries.map(([suffix, label]) =>
+      h("a", {
+        className: `sub-tab${suffix === current ? " current" : ""}`,
+        href: routeHref(withOrg(`/uptime${suffix}`, linkOrg, { orgs })),
+        text: label,
+        attrs: { "aria-current": suffix === current ? "page" : null },
+      }))
+  );
+}
 
 /**
  * Up, down, or not yet asked.
@@ -107,6 +128,7 @@ export async function monitorsListView({ outlet, signal }, { org, orgs = [] } = 
   fill(
     outlet,
     h("div", { className: "issues-view" },
+      tabs("", { linkOrg, orgs }),
       h("header", { className: "detail-head row" },
         h("h2", { text: "Uptime" }),
         h("button", {
@@ -401,4 +423,123 @@ function monitorForm({ org, orgs, linkOrg, signal, projects, monitor, onSaved })
   );
 
   return form;
+}
+
+
+/**
+ * Status pages: the public face of a set of monitors.
+ *
+ * Deliberately the thinnest screen in this phase, because the API behind it
+ * is the thinnest thing here. GlitchTip offers exactly two operations on a
+ * status page — list them, and make one. There is no read, no update and no
+ * delete, and `StatusPageIn` accepts only a name and whether it is public, so
+ * **which monitors appear on a page cannot be set through the API at all**.
+ * GlitchTip's own screens cannot do it either; the field is reachable from
+ * Django admin and nowhere else.
+ *
+ * That is said on the screen rather than worked around. A form that offered
+ * to pick monitors and then silently dropped them would be worse than no form
+ * at all, and a person who has just made an empty status page deserves to
+ * know why it is empty before they go looking for the bug.
+ *
+ * The page itself stays Django-rendered at /status-pages/<org>/<slug>/ —
+ * replacing it is out of scope while the API has no per-page read, so the
+ * link goes there.
+ */
+export async function statusPagesView({ outlet, signal }, { org, orgs = [] } = {}) {
+  if (!org) {
+    fill(outlet, emptyState("No organisation to show status pages for."));
+    return;
+  }
+
+  const linkOrg = orgs.length > 1 ? org : null;
+  const pages = await settle(glitchtip.get(statusPages(org), { signal }));
+  throwIfAborted(signal);
+
+  const problems = h("ul", { className: "form-problems", hidden: true });
+  const name = field({ label: "Name", id: "page-name", placeholder: "Status" });
+  const isPublic = h("input", { id: "page-public", type: "checkbox" });
+  const submit = h("button", { type: "submit", text: "Create status page" });
+
+  const rows = (Array.isArray(pages.data) ? pages.data : []).map((page) =>
+    h("tr", {},
+      h("td", {},
+        h("div", { text: page.name || page.slug }),
+        h("div", { className: "issue-sub muted mono", text: page.slug || "" })),
+      h("td", {},
+        page.isPublic
+          ? h("span", { className: "log-level up-yes", text: "Public" })
+          : h("span", { className: "log-level", text: "Members only" })),
+      h("td", { className: "num", text: String((page.monitors || []).length) }),
+      h("td", {},
+        // GlitchTip renders this page itself, and will go on doing so: there
+        // is no per-page read to build our own from.
+        h("a", {
+          className: "linky",
+          href: `/status-pages/${encodeURIComponent(org)}/${encodeURIComponent(page.slug || "")}/`,
+          text: "Open ↗",
+          attrs: { target: "_blank", rel: "noreferrer noopener" },
+        }))
+    )
+  );
+
+  fill(
+    outlet,
+    h("div", { className: "issues-view" },
+      tabs("/status-pages", { linkOrg, orgs }),
+      h("header", { className: "detail-head" }, h("h2", { text: "Status pages" })),
+      pages.failed !== undefined
+        ? h("p", { className: "error", text: readFailure(pages.failed, "status pages") })
+        : rows.length
+          ? h("table", { className: "issues-table" },
+              h("thead", {}, h("tr", {},
+                h("th", { text: "Page" }),
+                h("th", { text: "Who can see it" }),
+                h("th", { className: "num", text: "Monitors" }),
+                h("th", { text: "" })
+              )),
+              h("tbody", {}, rows)
+            )
+          : emptyState("No status pages yet."),
+      section("New status page",
+        h("p", { className: "muted",
+          text: "Which monitors appear on a page cannot be set from here, and not " +
+            "from GlitchTip's own screens either — its API takes only a name and " +
+            "whether the page is public. A new page starts empty, and the monitors " +
+            "on it are attached from Django admin." }),
+        h("form", {
+          on: {
+            submit: async (event) => {
+              event.preventDefault();
+              const value = name.input.value.trim();
+              if (!value) {
+                problems.hidden = false;
+                fill(problems, h("li", { text: "Give it a name." }));
+                return;
+              }
+              submit.disabled = true;
+              try {
+                await glitchtip.post(statusPages(org),
+                  { name: value, isPublic: isPublic.checked }, { signal });
+                problems.hidden = true;
+                refreshRoute();
+              } catch (failure) {
+                problems.hidden = false;
+                fill(problems, h("li", {
+                  text: failure?.message || `Couldn't create that (${failure?.status ?? 0}).`,
+                }));
+              } finally {
+                submit.disabled = false;
+              }
+            },
+          },
+        },
+          name.node,
+          h("label", { className: "field field-check" }, isPublic,
+            h("span", { className: "field-label",
+              text: "Anybody with the link can see it" })),
+          problems,
+          h("div", { className: "form-actions" }, submit)))
+    )
+  );
 }

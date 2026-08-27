@@ -208,6 +208,8 @@ async function shellServed() {
     // Phase 8d, with "new" ahead of the id route.
     "/sentinel/uptime",
     "/sentinel/uptime/new",
+    // Phase 8e.
+    "/sentinel/uptime/status-pages",
     "/sentinel/uptime/7",
   ]) {
     await check(`${route} serves the shell`, async () => {
