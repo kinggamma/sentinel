@@ -118,7 +118,7 @@ export async function projectsListView({ outlet, signal }, { org, orgs = [], me 
   fill(
     outlet,
     h("div", { className: "issues-view" },
-      h("header", { className: "detail-head" },
+      h("header", { className: "detail-head row" },
         h("h2", { text: "Projects" }),
         can.canManageProjects
           ? h("button", {

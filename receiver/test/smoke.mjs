@@ -205,6 +205,10 @@ async function shellServed() {
     "/sentinel/logs",
     "/sentinel/logs?level=warn&range=7d&q=timeout",
     "/sentinel/logs/019ffabc-82a7-7718-cad4-fe7a13a7efc3",
+    // Phase 8d, with "new" ahead of the id route.
+    "/sentinel/uptime",
+    "/sentinel/uptime/new",
+    "/sentinel/uptime/7",
   ]) {
     await check(`${route} serves the shell`, async () => {
       const res = await get(route, { headers: { accept: "text/html" } });
@@ -261,19 +265,25 @@ async function shellServed() {
       // has no logs — a screen that can only ever be empty is not a
       // destination.
       "nav-logs",
+      // Internal since Phase 8d, and hidden the same way where the
+      // installation has no uptime.
+      "nav-uptime",
       "nav-reports",
       "nav-settings",
     ]) {
       assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
     }
-    for (const external of [
-      "nav-uptime",
-    ]) {
-      const anchor = body.match(new RegExp(`<a[^>]*id="${external}"[^>]*>`))?.[0];
-      assert(anchor, `the sidebar is missing ${external}`);
-      assert(!/\shref=/.test(anchor), `${external} ships with a guessed href: ${anchor}`);
-      assert(/\shidden/.test(anchor), `${external} is visible before it has anywhere to go`);
-    }
+    /**
+     * Nothing is left in the "In GlitchTip" block. Every link that was in it
+     * — Projects, Releases, Performance, Logs, Uptime — is a screen here
+     * now, so the block and its heading are gone rather than left as an
+     * empty container waiting for something.
+     */
+    assert(!body.includes("sidebar-external"), "the external nav block is still in the shell");
+    assert(!body.includes("nav-external-heading"), "its heading is still in the shell");
+    // The one outward link that stays: GlitchTip itself, for the screens no
+    // phase has replaced.
+    assert(body.includes('id="glitchtip-link"'), "the link to GlitchTip itself went too");
   });
 
   await check("a missing asset 404s rather than returning the shell", async () => {

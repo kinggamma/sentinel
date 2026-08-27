@@ -253,7 +253,7 @@ export async function logDetailView({ outlet, params, signal }, { org, orgs = []
     outlet,
     h("div", { className: "issues-view" },
       back,
-      h("header", { className: "detail-head" },
+      h("header", { className: "detail-head row" },
         h("h2", { text: "Log" }),
         levelChip(log.level)),
       h("pre", { className: "mono log-full", text: log.body || "(empty)" }),

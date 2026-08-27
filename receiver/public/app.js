@@ -42,6 +42,7 @@ import { profileView } from "./views/profile.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import { releasesListView, releaseDetailView } from "./views/releases.js";
 import { logsListView, logDetailView } from "./views/logs.js";
+import { monitorsListView, monitorNewView, monitorDetailView } from "./views/uptime.js";
 import {
   performanceListView,
   performanceDetailView,
@@ -238,7 +239,7 @@ let navCanRead = false;
  * paint, and offering something that then disappears is worse than showing
  * it a moment late.
  */
-const FEATURE_NAV = [["nav-logs", "logs"]];
+const FEATURE_NAV = [["nav-logs", "logs"], ["nav-uptime", "uptime"]];
 
 function paintOptionalNav() {
   const enabled = features.enabledFeatures || [];
@@ -256,6 +257,7 @@ const ORG_SCOPED_NAV = [
   "nav-releases",
   "nav-performance",
   "nav-logs",
+  "nav-uptime",
   "nav-reports",
   "nav-settings",
 ];
@@ -459,6 +461,11 @@ route("/performance", guarded(projectsRoute(performanceListView)));
 route("/performance/spans", guarded(projectsRoute(spanGroupsView)));
 route("/performance/n-plus-one", guarded(projectsRoute(nPlusOneView)));
 route("/performance/:id", guarded(projectsRoute(performanceDetailView)));
+
+// Phase 8d. "new" before ":id", which GlitchTip declares as an int.
+route("/uptime", guarded(projectsRoute(monitorsListView)));
+route("/uptime/new", guarded(projectsRoute(monitorNewView)));
+route("/uptime/:id", guarded(projectsRoute(monitorDetailView)));
 
 // Phase 8c.
 route("/logs", guarded(projectsRoute(logsListView)));
@@ -713,6 +720,7 @@ function sectionFor(path) {
   if (path.startsWith("/releases")) return "releases";
   if (path.startsWith("/performance")) return "performance";
   if (path.startsWith("/logs")) return "logs";
+  if (path.startsWith("/uptime")) return "uptime";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
   // Somewhere that isn't a section. Falling through to "reports" would have
@@ -749,35 +757,16 @@ function paintOrg() {
 }
 
 /**
- * The parts of the product that are still GlitchTip's own screens.
+ * The optional screens, once we know which ones this installation has.
  *
- * Real links to real pages, per organisation, rather than a nav of things
- * that do not exist — each becomes an internal route as its phase lands.
- * Uptime and Logs are optional, so they are shown only where GlitchTip says
- * they are switched on; offering a link to a feature an installation does
- * not have is the same mistake as offering one to a screen not yet written.
+ * This used to paint a block of links out to GlitchTip's own screens, each
+ * leaving as its phase landed. Phase 8d took the last of them, so what is
+ * left is the feature check the block was carrying: Logs and Uptime are
+ * screens here now but are still things an installation can be without, and
+ * a nav entry for a feature that does not exist is the same mistake as a
+ * link to a screen that was never written.
  */
 function paintExternalLinks() {
-  const root = (features.glitchtipUrl || glitchtipRoot || "").replace(/\/+$/, "");
-  const enabled = features.enabledFeatures || [];
-
-  // Projects left this list in Phase 4, Releases in 8a and Performance in
-  // 8b — they are screens here now, and a link to somebody else's version of
-  // a screen we have is worse than none.
-  const links = [
-    ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
-  ];
-
-  let anyShown = false;
-  for (const [id, href, allowed] of links) {
-    const node = el(id);
-    const show = Boolean(root && href && allowed);
-    node.hidden = !show;
-    if (show) node.href = href;
-    anyShown = anyShown || show;
-  }
-  // A heading over nothing is worse than no heading.
-  el("nav-external-heading").hidden = !anyShown;
   paintOptionalNav();
 }
 
@@ -797,6 +786,7 @@ function paintChrome() {
     ["nav-releases", "releases"],
     ["nav-performance", "performance"],
     ["nav-logs", "logs"],
+    ["nav-uptime", "uptime"],
     ["nav-profile", "profile"],
     ["nav-reports", "reports"],
     ["nav-settings", "settings"],
@@ -1077,6 +1067,7 @@ async function boot() {
   el("nav-releases").href = routeHref("/releases");
   el("nav-performance").href = routeHref("/performance");
   el("nav-logs").href = routeHref("/logs");
+  el("nav-uptime").href = routeHref("/uptime");
   el("nav-profile").href = routeHref("/profile");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.

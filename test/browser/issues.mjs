@@ -615,21 +615,33 @@ async function main() {
           );
         }
 
+        /**
+         * The block of links out to GlitchTip is gone — Phase 8d turned the
+         * last of them into a screen here — and this check moved onto the
+         * nav that inherited its problem. That nav went from five entries to
+         * eleven over Phase 8, and wrapped it reached far enough down a
+         * phone that the issue began below the fold. It scrolls now, so what
+         * has to stay true is that every entry is on one row and none of
+         * them has been made unreachable to get there.
+         */
+        assert(
+          await page.locator(".sidebar-external").count() === 0,
+          "the GlitchTip block is back, and it should not be"
+        );
         const nav = await page.evaluate(() => {
-          const block = document.querySelector(".sidebar-external");
+          const block = document.querySelector(".sidebar-nav");
           const links = [...block.querySelectorAll("a")].filter((a) => !a.hidden);
           const rows = new Set(links.map((a) => Math.round(a.getBoundingClientRect().top)));
-          return { links: links.length, rows: rows.size, height: block.getBoundingClientRect().height };
+          return {
+            links: links.length,
+            rows: rows.size,
+            scrolls: block.scrollWidth > block.clientWidth,
+            reachable: links.every((a) => a.getBoundingClientRect().width > 0),
+          };
         });
-        /**
-         * However many are left. The block shrinks with every phase that
-         * turns one of GlitchTip's screens into one of ours — it held seven
-         * when this was written and holds four now — so a floor tied to the
-         * old count fails on progress rather than on a bug. What must stay
-         * true is that whatever remains is reachable and on one row.
-         */
-        assert(nav.links >= 1, "the GlitchTip block is empty, so it should not be rendered at all");
-        assert(nav.rows === 1, `the GlitchTip links wrapped onto ${nav.rows} rows`);
+        assert(nav.links >= 5, `only ${nav.links} nav entries are showing`);
+        assert(nav.rows === 1, `the nav wrapped onto ${nav.rows} rows`);
+        assert(nav.reachable, "a nav entry has no width, so it cannot be reached");
       } finally {
         await phone.close();
       }

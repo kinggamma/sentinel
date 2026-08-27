@@ -232,7 +232,7 @@ export async function releaseDetailView({ outlet, params, signal }, { org, orgs 
     outlet,
     h("div", { className: "issues-view" },
       back,
-      h("header", { className: "detail-head" },
+      h("header", { className: "detail-head row" },
         h("h2", { className: "mono", text: release.version }),
         can.canManageReleases
           ? h("button", {

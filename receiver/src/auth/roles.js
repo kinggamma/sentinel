@@ -112,5 +112,22 @@ export function abilities(role) {
      * right today by accident.
      */
     canManageReleases: Boolean(known),
+
+    /**
+     * Uptime monitors, including creating and deleting them.
+     *
+     * Every role again, and for a weaker reason than releases: those
+     * endpoints at least name a scope. The monitor endpoints declare no
+     * permission at all — create, update and delete are gated on being in
+     * the organisation and nothing else — so a member can point a monitor
+     * anywhere and delete anybody else's.
+     *
+     * Recorded rather than corrected. Hiding the controls would take away
+     * something GlitchTip permits, and the same person could do it from
+     * GlitchTip's own screen a click away; what this can do is make the
+     * looseness visible in the one file that answers "what may this role
+     * do", instead of leaving each screen to assume.
+     */
+    canManageUptime: Boolean(known),
   });
 }

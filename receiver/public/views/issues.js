@@ -320,7 +320,10 @@ export async function issuesListView({ outlet, query, signal }, { org, orgs = []
   const rows = h("tbody", { attrs: { id: "issue-rows" } });
   const table = h(
     "table",
-    { className: "issues-table" },
+    // Named, because the phone rules that hide its trend column and pin its
+    // widths are about this list and not about every table that borrows its
+    // styling.
+    { className: "issues-table issue-list" },
     h(
       "thead",
       {},

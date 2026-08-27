@@ -82,21 +82,18 @@
           <!-- What services said, ranked by how alarmed they were. Internal
                since Phase 8c. -->
           <a id="nav-logs" href="/logs">Logs</a>
+          <!-- What is being watched, and whether it is answering. Internal
+               since Phase 8d. -->
+          <a id="nav-uptime" href="/uptime">Uptime</a>
           <a id="nav-profile" href="/profile">Your profile</a>
           <a id="nav-reports" href="/">Reports</a>
           <a id="nav-settings" href="/settings">Settings</a>
         </nav>
 
-        <!-- The rest of the product, which is still GlitchTip's own screens.
-             They are real destinations today; each becomes an internal route
-             as its phase lands, and until then a link that works beats a
-             section of the app you cannot reach at all. Uptime and Logs are
-             optional features, so they appear only where they are switched
-             on. -->
-        <nav class="sidebar-nav sidebar-external" aria-label="In GlitchTip">
-          <h2 id="nav-external-heading" class="sidebar-heading" hidden>In GlitchTip</h2>
-          <a id="nav-uptime" target="_blank" rel="noreferrer noopener" hidden>Uptime ↗</a>
-        </nav>
+        <!-- The "In GlitchTip" block that used to sit here is gone: every
+             link in it — Projects, Releases, Performance, Logs, Uptime — is
+             a screen in this app now. What remains of GlitchTip is reachable
+             from the link in the sidebar foot. -->
 
         <div class="sidebar-foot">
           <a id="glitchtip-link" class="button-link" target="_blank" rel="noreferrer noopener" hidden>

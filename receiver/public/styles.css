@@ -286,21 +286,6 @@ button.ghost {
   max-width: 100%;
 }
 
-/* GlitchTip's own screens, set apart from Sentinel's so it is obvious which
-   ones leave. Each moves up into the list above as its phase lands. */
-.sidebar-heading {
-  margin: 0 0 var(--space-1);
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.sidebar-external a {
-  font-size: var(--text-sm);
-}
-
 .sidebar-nav a {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
@@ -360,6 +345,12 @@ button.ghost {
      is a worse answer than a row that scrolls. */
   #app.signed-in {
     grid-template-columns: 1fr;
+    /* The nav takes what it needs and the screen takes the rest. Without the
+       rows named, the grid's own min-height of 100vh had nowhere to put the
+       spare height and grew both rows to share it — so a bar holding 99px of
+       content stood 281px tall, and on a phone the content began a third of
+       the way down the screen. */
+    grid-template-rows: auto 1fr;
   }
 
   .sidebar {
@@ -380,10 +371,35 @@ button.ghost {
     min-width: 0;
   }
 
+  /* The row that scrolls, not the row that wraps.
+   *
+   * This used to wrap, which was fine at five entries. Phase 8 took it to
+   * eleven — every screen that was a link out to GlitchTip is one of ours
+   * now — and wrapped into four lines it reached far enough down a phone
+   * that an issue began below the fold. That is the same trade the block of
+   * external links took before it disappeared, and the reasoning came with
+   * it: every destination still reachable, in one line instead of four. */
   .sidebar-nav {
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: var(--space-1);
+    width: 100%;
+    overflow-x: auto;
+    /* A flex item's floor is its content unless it is told otherwise, and
+       overflow-x only starts working once there is a width to overflow.
+       Without this the row sets the width of the page instead of scrolling,
+       and every screen scrolls sideways because of the nav above it. */
+    min-width: 0;
+    /* A reserved gutter would cost most of the height this just saved. */
+    scrollbar-width: none;
+  }
+
+  .sidebar-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sidebar-nav a {
+    white-space: nowrap;
   }
 
   .sidebar-foot {
@@ -403,35 +419,6 @@ button.ghost {
   .sidebar-nav a {
     font-size: var(--text-sm);
     padding: var(--space-1) var(--space-2);
-  }
-
-  /* Seven links to GlitchTip's own screens, and wrapped into rows they took
-     more of a phone than the content underneath them — the bar reached far
-     enough down that an issue began below the fold. So this block takes the
-     trade the comment at the top of this one already describes, and becomes
-     the row that scrolls: every destination still reachable, in one line
-     instead of three. */
-  .sidebar-external {
-    width: 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    /* Without this the row cannot be narrower than the links inside it, so
-       it sets the width of the page instead of scrolling — the sidebar grew
-       to 752px in a 390px window and took every screen with it. A flex
-       item's floor is its content unless it is told otherwise, and
-       overflow-x only starts working once there is a width to overflow. */
-    min-width: 0;
-    /* A reserved gutter would cost most of the height this just saved. */
-    scrollbar-width: none;
-  }
-
-  .sidebar-external::-webkit-scrollbar {
-    display: none;
-  }
-
-  .sidebar-external a,
-  .sidebar-heading {
-    white-space: nowrap;
   }
 
   .sidebar-brand a {
@@ -1321,19 +1308,25 @@ button.danger:hover {
     display: none;
   }
 
-  .issues-table .trend-col,
-  .issues-table td:nth-child(3) {
+  /* Every rule in this block is about the issue list specifically, and every
+     one of them used to be written against .issues-table — which four other
+     screens are built on. "Hide the third column" hid Kind on Uptime, p95 on
+     Performance and Service on Logs, and because it hid the cell and not the
+     header the columns came apart and printed on top of each other. Scoped
+     to the list they were written for. */
+  .issue-list .trend-col,
+  .issue-list td:nth-child(3) {
     display: none;
   }
 
   /* With the widths pinned on the two narrow columns, everything left over
      goes to the title rather than being shared out evenly. */
-  .issues-table {
+  .issue-list {
     table-layout: fixed;
   }
 
-  .issues-table .pick,
-  .issues-table td:first-child {
+  .issue-list .pick,
+  .issue-list td.pick {
     width: 30px;
     padding-right: 0;
   }
@@ -1341,10 +1334,26 @@ button.danger:hover {
   /* Wide enough for the word "EVENTS" in the header, which is what sets
      this column's real minimum — the numbers under it are one or two
      digits. */
-  .issues-table .count-col,
-  .issues-table td.issue-count {
+  .issue-list .count-col,
+  .issue-list td.issue-count {
     width: 68px;
     padding-left: 0;
+  }
+
+  /* The rest of them keep every column and scroll inside their own frame.
+     Five or six columns of real values do not fit a phone, and dropping one
+     per screen is a judgement each screen would have to make and get right;
+     a table that scrolls sideways inside itself keeps the page still and
+     leaves nothing unreachable. */
+  .issues-table:not(.issue-list) {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .issues-table:not(.issue-list) .span-description,
+  .issues-table:not(.issue-list) .log-body {
+    white-space: normal;
   }
 
   /* Its own line. Sharing one with the environment picker left room for
@@ -1539,6 +1548,25 @@ button.danger:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 20px;
+}
+
+/* A heading with something to do beside it.
+ *
+ * Not .detail-head itself: the issue screen's head stacks a title, a culprit
+ * and a row of meta, and turning that into a flex row would put three
+ * unrelated things shoulder to shoulder. This is the other shape — a title
+ * and the actions that belong to it — which had the button dropping onto its
+ * own line under the heading on every list screen.
+ */
+.detail-head.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.detail-head.row h2 {
+  margin-right: auto;
 }
 
 .detail-head h2 {
@@ -1990,4 +2018,33 @@ button.danger:hover {
   align-items: center;
   gap: var(--space-2);
   margin: 0 0 var(--space-3);
+}
+
+/* -------------------------------------------------------------- uptime */
+
+/* Up and down borrow the log level chip, because they are the same idea:
+   a state you read before you read anything else on the row. */
+.up-yes {
+  border-color: color-mix(in srgb, green 45%, var(--border));
+  color: color-mix(in srgb, green 65%, var(--text));
+}
+
+.up-no {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* What the form would have been refused for, said before it is sent. The
+   server validates anyway; its 422 just does not say which field. */
+.form-problems {
+  margin: var(--space-3) 0;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+}
+
+.form-problems li + li {
+  margin-top: var(--space-1);
 }

@@ -39,14 +39,14 @@ process.stdout.write("\nWhat a role may do\n");
 // ------------------------------------------------------- the table itself
 
 const TABLE = [
-  // role,     projects, teams, members, project<->team, organisation, releases
-  ["member",   false,    false, false,   false,          false,        true],
-  ["admin",    true,     true,  false,   false,          false,        true],
-  ["manager",  true,     true,  true,    true,           true,         true],
-  ["owner",    true,     true,  true,    true,           true,         true],
+  // role,     projects, teams, members, project<->team, organisation, releases, uptime
+  ["member",   false,    false, false,   false,          false,        true,     true],
+  ["admin",    true,     true,  false,   false,          false,        true,     true],
+  ["manager",  true,     true,  true,    true,           true,         true,     true],
+  ["owner",    true,     true,  true,    true,           true,         true,     true],
 ];
 
-for (const [role, projects, teams, members, linking, organisation, releases] of TABLE) {
+for (const [role, projects, teams, members, linking, organisation, releases, uptime] of TABLE) {
   test(`${role}`, () => {
     const can = abilities(role);
     same(can.role, role, `${role}: role`);
@@ -56,6 +56,7 @@ for (const [role, projects, teams, members, linking, organisation, releases] of 
     same(can.canLinkProjectsToTeams, linking, `${role}: linking projects to teams`);
     same(can.canManageOrganisation, organisation, `${role}: organisation settings`);
     same(can.canManageReleases, releases, `${role}: releases`);
+    same(can.canManageUptime, uptime, `${role}: uptime`);
   });
 }
 
@@ -90,6 +91,16 @@ test("a member can delete a release, which is GlitchTip's answer and not ours", 
   assert(!can.canManageProjects, "and still cannot touch a project setting");
 });
 
+test("and a member can delete an uptime monitor, which is looser still", () => {
+  /**
+   * Releases at least name a scope. The monitor endpoints declare no
+   * permission decorator at all, so membership is the whole check. Pinned so
+   * that if a later GlitchTip tightens it, this fails and says where.
+   */
+  assert(abilities("member").canManageUptime, "a member can manage monitors");
+  assert(!abilities("member").canManageOrganisation, "and still cannot rename the organisation");
+});
+
 test("an admin can make projects and teams but cannot invite anybody", () => {
   const can = abilities("admin");
   assert(can.canManageProjects && can.canManageTeams, "admin should manage projects and teams");
@@ -108,7 +119,8 @@ test("no role is no permission, not some permission", () => {
         !can.canManageMembers &&
         !can.canLinkProjectsToTeams &&
         !can.canManageOrganisation &&
-        !can.canManageReleases,
+        !can.canManageReleases &&
+        !can.canManageUptime,
       `${JSON.stringify(nothing)} granted something`
     );
   }
@@ -129,7 +141,8 @@ test("a role nobody here knows grants nothing, rather than being ranked", () => 
         !can.canManageMembers &&
         !can.canLinkProjectsToTeams &&
         !can.canManageOrganisation &&
-        !can.canManageReleases,
+        !can.canManageReleases &&
+        !can.canManageUptime,
       `${JSON.stringify(unknown)} was granted something`
     );
   }
