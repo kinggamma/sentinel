@@ -11,7 +11,8 @@
     "test:manage": "node test/browser/manage.mjs",
     "test:phase67": "node test/browser/phase67.mjs",
     "test:releases": "node test/browser/releases.mjs",
-    "test:performance": "node test/browser/performance.mjs"
+    "test:performance": "node test/browser/performance.mjs",
+    "test:logs": "node test/browser/logs.mjs"
   },
   "devDependencies": {
     "playwright": "^1.47.0"

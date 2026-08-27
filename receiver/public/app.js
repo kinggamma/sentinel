@@ -41,6 +41,7 @@ import { organisationView } from "./views/organisation.js";
 import { profileView } from "./views/profile.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
 import { releasesListView, releaseDetailView } from "./views/releases.js";
+import { logsListView, logDetailView } from "./views/logs.js";
 import {
   performanceListView,
   performanceDetailView,
@@ -211,7 +212,39 @@ function paintShell({ signedIn, canRead = signedIn }) {
    * sidebar was never painted for one. It is the same rule; it just needs to
    * cover the whole nav now.
    */
+  navCanRead = canRead;
   for (const id of ORG_SCOPED_NAV) el(id).hidden = !canRead;
+  paintOptionalNav();
+}
+
+/**
+ * Whether the last screen painted could read the organisation's data, kept
+ * so the feature check below can be repeated when the answer it needs
+ * arrives. What an installation has switched on is fetched once at boot and
+ * lands after the first render.
+ */
+let navCanRead = false;
+
+/**
+ * The screens that are ours but need a feature switched on to have anything
+ * in them.
+ *
+ * Logs was an external link gated on `enabledFeatures` and became a screen
+ * here in Phase 8c; the gate has to come with it. An installation without
+ * logs still answers the endpoints — with nothing, forever — so a nav entry
+ * for it is the same mistake as a link to a screen that was never written.
+ *
+ * Hidden until proven otherwise: the feature list arrives after the first
+ * paint, and offering something that then disappears is worse than showing
+ * it a moment late.
+ */
+const FEATURE_NAV = [["nav-logs", "logs"]];
+
+function paintOptionalNav() {
+  const enabled = features.enabledFeatures || [];
+  for (const [id, feature] of FEATURE_NAV) {
+    el(id).hidden = !navCanRead || !enabled.includes(feature);
+  }
 }
 
 /** The sidebar entries whose screens need an organisation. Profile does not. */
@@ -222,6 +255,7 @@ const ORG_SCOPED_NAV = [
   "nav-organisation",
   "nav-releases",
   "nav-performance",
+  "nav-logs",
   "nav-reports",
   "nav-settings",
 ];
@@ -425,6 +459,10 @@ route("/performance", guarded(projectsRoute(performanceListView)));
 route("/performance/spans", guarded(projectsRoute(spanGroupsView)));
 route("/performance/n-plus-one", guarded(projectsRoute(nPlusOneView)));
 route("/performance/:id", guarded(projectsRoute(performanceDetailView)));
+
+// Phase 8c.
+route("/logs", guarded(projectsRoute(logsListView)));
+route("/logs/:id", guarded(projectsRoute(logDetailView)));
 
 route("/issues", guarded(issuesRoute(issuesListView)));
 route("/issues/:id", guarded(issuesRoute(issueDetailView)));
@@ -674,6 +712,7 @@ function sectionFor(path) {
   if (path.startsWith("/requests")) return "people";
   if (path.startsWith("/releases")) return "releases";
   if (path.startsWith("/performance")) return "performance";
+  if (path.startsWith("/logs")) return "logs";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
   // Somewhere that isn't a section. Falling through to "reports" would have
@@ -727,7 +766,6 @@ function paintExternalLinks() {
   // a screen we have is worse than none.
   const links = [
     ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
-    ["nav-logs", organisation && `${root}/${organisation}/logs`, enabled.includes("logs")],
   ];
 
   let anyShown = false;
@@ -740,6 +778,7 @@ function paintExternalLinks() {
   }
   // A heading over nothing is worse than no heading.
   el("nav-external-heading").hidden = !anyShown;
+  paintOptionalNav();
 }
 
 /** The chrome, for whatever the route is showing. */
@@ -757,6 +796,7 @@ function paintChrome() {
     ["nav-organisation", "organisation"],
     ["nav-releases", "releases"],
     ["nav-performance", "performance"],
+    ["nav-logs", "logs"],
     ["nav-profile", "profile"],
     ["nav-reports", "reports"],
     ["nav-settings", "settings"],
@@ -1036,6 +1076,7 @@ async function boot() {
   el("nav-organisation").href = routeHref("/organisation");
   el("nav-releases").href = routeHref("/releases");
   el("nav-performance").href = routeHref("/performance");
+  el("nav-logs").href = routeHref("/logs");
   el("nav-profile").href = routeHref("/profile");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.

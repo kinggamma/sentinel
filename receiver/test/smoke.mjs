@@ -200,6 +200,11 @@ async function shellServed() {
     "/sentinel/performance/spans",
     "/sentinel/performance/n-plus-one",
     "/sentinel/performance/42",
+    // Phase 8c. A log's address is the UUIDv7 it is stored under, dots and
+    // all — its id is also its timestamp, which is why it has no other.
+    "/sentinel/logs",
+    "/sentinel/logs?level=warn&range=7d&q=timeout",
+    "/sentinel/logs/019ffabc-82a7-7718-cad4-fe7a13a7efc3",
   ]) {
     await check(`${route} serves the shell`, async () => {
       const res = await get(route, { headers: { accept: "text/html" } });
@@ -252,6 +257,10 @@ async function shellServed() {
       "nav-releases",
       // Internal since Phase 8b.
       "nav-performance",
+      // Internal since Phase 8c, though still hidden where the installation
+      // has no logs — a screen that can only ever be empty is not a
+      // destination.
+      "nav-logs",
       "nav-reports",
       "nav-settings",
     ]) {
@@ -259,7 +268,6 @@ async function shellServed() {
     }
     for (const external of [
       "nav-uptime",
-      "nav-logs",
     ]) {
       const anchor = body.match(new RegExp(`<a[^>]*id="${external}"[^>]*>`))?.[0];
       assert(anchor, `the sidebar is missing ${external}`);
