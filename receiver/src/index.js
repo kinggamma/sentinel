@@ -208,12 +208,23 @@ function looksLikeAsset(pathname, mount = "") {
   return segments.length === 1 && Boolean(path.extname(segments[0]));
 }
 
+/** The path and the query of an arrived-at URL, kept apart. */
+function splitQuery(url) {
+  const cut = url.indexOf("?");
+  return cut === -1 ? [url, ""] : [url.slice(0, cut), url.slice(cut + 1)];
+}
+
 // The trailing slash isn't cosmetic: asset paths are relative, so at
 // /sentinel they'd resolve against the root and land on GlitchTip. Express
 // treats /sentinel and /sentinel/ as one route, so the check is on the URL
 // as it actually arrived — otherwise this redirects to itself.
 app.get("/sentinel", (req, res, next) => {
-  if (req.originalUrl.split("?")[0].endsWith("/sentinel")) return res.redirect("/sentinel/");
+  const [here, query] = splitQuery(req.originalUrl);
+  // The query survives the redirect. An embedded viewer is configured
+  // entirely by it — ?app filters to one site's reports, ?embed drops the
+  // chrome, ?accent matches the host page — and dropping it here left the
+  // frame showing every app's reports in the wrong colours.
+  if (here.endsWith("/sentinel")) return res.redirect("/sentinel/" + (query ? `?${query}` : ""));
   return next();
 });
 // Ahead of the static middleware below, so its own auto-index behaviour
