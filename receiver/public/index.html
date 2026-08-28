@@ -68,25 +68,32 @@
           <!-- Members and the queue of people asking to be one, which were
                two screens answering the same question. -->
           <a id="nav-people" href="/people">People</a>
+          <!-- The organisation itself: what it is called, how much it is
+               reporting, and how people sign into it. -->
+          <a id="nav-organisation" href="/organisation">Organisation</a>
+          <!-- Your own account: name, addresses, what guards it, and the
+               tokens acting as you. -->
+          <!-- What was shipped, when, and what went into it. Internal since
+               Phase 8a. -->
+          <a id="nav-releases" href="/releases">Releases</a>
+          <!-- Which transactions are slow, and what they spend time on.
+               Internal since Phase 8b. -->
+          <a id="nav-performance" href="/performance">Performance</a>
+          <!-- What services said, ranked by how alarmed they were. Internal
+               since Phase 8c. -->
+          <a id="nav-logs" href="/logs">Logs</a>
+          <!-- What is being watched, and whether it is answering. Internal
+               since Phase 8d. -->
+          <a id="nav-uptime" href="/uptime">Uptime</a>
+          <a id="nav-profile" href="/profile">Your profile</a>
           <a id="nav-reports" href="/">Reports</a>
           <a id="nav-settings" href="/settings">Settings</a>
         </nav>
 
-        <!-- The rest of the product, which is still GlitchTip's own screens.
-             They are real destinations today; each becomes an internal route
-             as its phase lands, and until then a link that works beats a
-             section of the app you cannot reach at all. Uptime and Logs are
-             optional features, so they appear only where they are switched
-             on. -->
-        <nav class="sidebar-nav sidebar-external" aria-label="In GlitchTip">
-          <h2 id="nav-external-heading" class="sidebar-heading" hidden>In GlitchTip</h2>
-          <a id="nav-performance" target="_blank" rel="noreferrer noopener" hidden>Performance ↗</a>
-          <a id="nav-uptime" target="_blank" rel="noreferrer noopener" hidden>Uptime ↗</a>
-          <a id="nav-logs" target="_blank" rel="noreferrer noopener" hidden>Logs ↗</a>
-          <a id="nav-releases" target="_blank" rel="noreferrer noopener" hidden>Releases ↗</a>
-          <a id="nav-org-settings" target="_blank" rel="noreferrer noopener" hidden>Organisation ↗</a>
-          <a id="nav-profile" target="_blank" rel="noreferrer noopener" hidden>Your profile ↗</a>
-        </nav>
+        <!-- The "In GlitchTip" block that used to sit here is gone: every
+             link in it — Projects, Releases, Performance, Logs, Uptime — is
+             a screen in this app now. What remains of GlitchTip is reachable
+             from the link in the sidebar foot. -->
 
         <div class="sidebar-foot">
           <a id="glitchtip-link" class="button-link" target="_blank" rel="noreferrer noopener" hidden>

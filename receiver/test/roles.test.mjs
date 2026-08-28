@@ -39,14 +39,14 @@ process.stdout.write("\nWhat a role may do\n");
 // ------------------------------------------------------- the table itself
 
 const TABLE = [
-  // role,     projects, teams, members, project<->team
-  ["member",   false,    false, false,   false],
-  ["admin",    true,     true,  false,   false],
-  ["manager",  true,     true,  true,    true],
-  ["owner",    true,     true,  true,    true],
+  // role,     projects, teams, members, project<->team, organisation, releases, uptime
+  ["member",   false,    false, false,   false,          false,        true,     true],
+  ["admin",    true,     true,  false,   false,          false,        true,     true],
+  ["manager",  true,     true,  true,    true,           true,         true,     true],
+  ["owner",    true,     true,  true,    true,           true,         true,     true],
 ];
 
-for (const [role, projects, teams, members, linking] of TABLE) {
+for (const [role, projects, teams, members, linking, organisation, releases, uptime] of TABLE) {
   test(`${role}`, () => {
     const can = abilities(role);
     same(can.role, role, `${role}: role`);
@@ -54,6 +54,9 @@ for (const [role, projects, teams, members, linking] of TABLE) {
     same(can.canManageTeams, teams, `${role}: teams`);
     same(can.canManageMembers, members, `${role}: members`);
     same(can.canLinkProjectsToTeams, linking, `${role}: linking projects to teams`);
+    same(can.canManageOrganisation, organisation, `${role}: organisation settings`);
+    same(can.canManageReleases, releases, `${role}: releases`);
+    same(can.canManageUptime, uptime, `${role}: uptime`);
   });
 }
 
@@ -74,6 +77,30 @@ test("a member cannot create a project, which is the case that was found the har
   assert(!abilities("member").canManageProjects, "a member was granted project writes");
 });
 
+test("a member can delete a release, which is GlitchTip's answer and not ours", () => {
+  /**
+   * The odd one out, and pinned so nobody tidies it into looking like the
+   * rows above it. project:releases is in the member scope set, and the
+   * release endpoints ask for nothing beyond it — so the least privileged
+   * role in the organisation may delete any release in it. Reading that as
+   * "surely admin" and gating the screen accordingly would hide a control
+   * from people GlitchTip lets use it.
+   */
+  const can = abilities("member");
+  assert(can.canManageReleases, "a member holds project:releases");
+  assert(!can.canManageProjects, "and still cannot touch a project setting");
+});
+
+test("and a member can delete an uptime monitor, which is looser still", () => {
+  /**
+   * Releases at least name a scope. The monitor endpoints declare no
+   * permission decorator at all, so membership is the whole check. Pinned so
+   * that if a later GlitchTip tightens it, this fails and says where.
+   */
+  assert(abilities("member").canManageUptime, "a member can manage monitors");
+  assert(!abilities("member").canManageOrganisation, "and still cannot rename the organisation");
+});
+
 test("an admin can make projects and teams but cannot invite anybody", () => {
   const can = abilities("admin");
   assert(can.canManageProjects && can.canManageTeams, "admin should manage projects and teams");
@@ -90,7 +117,10 @@ test("no role is no permission, not some permission", () => {
       !can.canManageProjects &&
         !can.canManageTeams &&
         !can.canManageMembers &&
-        !can.canLinkProjectsToTeams,
+        !can.canLinkProjectsToTeams &&
+        !can.canManageOrganisation &&
+        !can.canManageReleases &&
+        !can.canManageUptime,
       `${JSON.stringify(nothing)} granted something`
     );
   }
@@ -109,7 +139,10 @@ test("a role nobody here knows grants nothing, rather than being ranked", () => 
       !can.canManageProjects &&
         !can.canManageTeams &&
         !can.canManageMembers &&
-        !can.canLinkProjectsToTeams,
+        !can.canLinkProjectsToTeams &&
+        !can.canManageOrganisation &&
+        !can.canManageReleases &&
+        !can.canManageUptime,
       `${JSON.stringify(unknown)} was granted something`
     );
   }

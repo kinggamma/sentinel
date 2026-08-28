@@ -66,6 +66,41 @@ function encodeCredential(credential) {
   };
 }
 
+function decodeCreationOptions(options) {
+  const publicKey = { ...options };
+  publicKey.challenge = fromBase64Url(options.challenge);
+  publicKey.user = { ...options.user, id: fromBase64Url(options.user.id) };
+  if (Array.isArray(options.excludeCredentials)) {
+    publicKey.excludeCredentials = options.excludeCredentials.map((credential) => ({
+      ...credential,
+      id: fromBase64Url(credential.id),
+    }));
+  }
+  return publicKey;
+}
+
+function encodeRegistration(credential) {
+  return {
+    id: credential.id,
+    rawId: toBase64Url(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || null,
+    response: {
+      clientDataJSON: toBase64Url(credential.response.clientDataJSON),
+      attestationObject: toBase64Url(credential.response.attestationObject),
+      transports: credential.response.getTransports?.() || [],
+    },
+  };
+}
+
+/** Create a new credential from allauth's creation_options response. */
+export async function create(options, signal) {
+  const publicKey = decodeCreationOptions(options.publicKey || options);
+  const credential = await navigator.credentials.create({ publicKey, signal });
+  if (!credential) throw new Error("No credential was returned.");
+  return encodeRegistration(credential);
+}
+
 /**
  * Ask for a signature, and hand back what allauth expects to receive.
  *

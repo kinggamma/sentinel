@@ -37,7 +37,23 @@ import { reportsView } from "./views/reports.js";
 import { projectsListView, projectDetailView, projectNewView } from "./views/project.js";
 import { peopleView } from "./views/people.js";
 import { teamsListView, teamNewView, teamDetailView } from "./views/teams.js";
+import { organisationView } from "./views/organisation.js";
+import { profileView } from "./views/profile.js";
 import { issuesListView, issueDetailView, issueTagsView } from "./views/issues.js";
+import { releasesListView, releaseDetailView } from "./views/releases.js";
+import { logsListView, logDetailView } from "./views/logs.js";
+import {
+  monitorsListView,
+  monitorNewView,
+  monitorDetailView,
+  statusPagesView,
+} from "./views/uptime.js";
+import {
+  performanceListView,
+  performanceDetailView,
+  spanGroupsView,
+  nPlusOneView,
+} from "./views/performance.js";
 import {
   signInView,
   signUpView,
@@ -116,12 +132,12 @@ const MOUNT = document.querySelector('meta[name="sentinel-mount"]')?.content ?? 
  * returns you to the report you followed a link to rather than to the
  * landing screen. auth.js refuses to honour a `next` that leaves this app.
  */
-function guarded(view, { needs = "canRead" } = {}) {
+function guarded(view, { needs = "canRead", loadData = true } = {}) {
   return async (ctx) => {
     const me = await session();
 
     if (me.can?.[needs]) {
-      paintShell({ signedIn: true });
+      paintShell({ signedIn: true, canRead: Boolean(me.can?.canRead) });
       // Which organisation this screen is about. Re-decided on every render
       // because the address can say, and a link to one organisation's issue
       // list must not open somebody else's just because that is the one this
@@ -130,8 +146,10 @@ function guarded(view, { needs = "canRead" } = {}) {
       organisation = activeOrg({ orgs: organisations, query: ctx.query });
       el("nav-issues").hidden = !organisation;
       paintOrg();
-      await ensureData();
-      void refreshRequestCount();
+      if (loadData) {
+        await ensureData();
+        void refreshRequestCount();
+      }
       return view(ctx, me);
     }
 
@@ -144,6 +162,22 @@ function guarded(view, { needs = "canRead" } = {}) {
         return goRoute("/access", { replace: true });
       case "mfa_required":
         return to("/mfa");
+      /**
+       * A live session being asked to prove itself again. The account screen
+       * is exactly what that guard stands in front of, so `can` withholds it
+       * — which leaves the question of where such a session goes instead.
+       *
+       * Sign-in, for now, and not happily: it is a heavier answer than the
+       * state deserves, since nothing is wrong with the session. It is
+       * nonetheless a real way out — signing in again satisfies the flow —
+       * and it cannot be reached in this deployment anyway, because allauth
+       * derives the reauthentication window from SESSION_COOKIE_AGE here, so
+       * the window is the whole session and the state never fires. Written
+       * out rather than left to `default` so that the day a reauthentication
+       * screen exists, this is the one line that has to change.
+       */
+      case "reauth_required":
+        return to("/signin");
       case "unreachable":
         // Not signed out — unknown. Sending someone to a sign-in form
         // because a request timed out is how a blip becomes a lost session.
@@ -166,13 +200,72 @@ function guarded(view, { needs = "canRead" } = {}) {
  * there is nothing yet to navigate, and no page header because the card says
  * what it is.
  */
-function paintShell({ signedIn }) {
+function paintShell({ signedIn, canRead = signedIn }) {
   app.hidden = false;
   viewOutlet.hidden = false;
   app.classList.toggle("signed-in", signedIn);
   el("sidebar").hidden = !signedIn;
   el("topbar").hidden = !signedIn;
+
+  /**
+   * Every screen behind these needs an organisation. A signed-in account
+   * without one can open exactly one thing — its own profile — so offering
+   * the other six to somebody the guard will bounce straight back to /access
+   * is a menu of six dead ends.
+   *
+   * Issues already hid itself for this reason, one link at a time, back when
+   * the profile was the only screen a pending account could reach and the
+   * sidebar was never painted for one. It is the same rule; it just needs to
+   * cover the whole nav now.
+   */
+  navCanRead = canRead;
+  for (const id of ORG_SCOPED_NAV) el(id).hidden = !canRead;
+  paintOptionalNav();
 }
+
+/**
+ * Whether the last screen painted could read the organisation's data, kept
+ * so the feature check below can be repeated when the answer it needs
+ * arrives. What an installation has switched on is fetched once at boot and
+ * lands after the first render.
+ */
+let navCanRead = false;
+
+/**
+ * The screens that are ours but need a feature switched on to have anything
+ * in them.
+ *
+ * Logs was an external link gated on `enabledFeatures` and became a screen
+ * here in Phase 8c; the gate has to come with it. An installation without
+ * logs still answers the endpoints — with nothing, forever — so a nav entry
+ * for it is the same mistake as a link to a screen that was never written.
+ *
+ * Hidden until proven otherwise: the feature list arrives after the first
+ * paint, and offering something that then disappears is worse than showing
+ * it a moment late.
+ */
+const FEATURE_NAV = [["nav-logs", "logs"], ["nav-uptime", "uptime"]];
+
+function paintOptionalNav() {
+  const enabled = features.enabledFeatures || [];
+  for (const [id, feature] of FEATURE_NAV) {
+    el(id).hidden = !navCanRead || !enabled.includes(feature);
+  }
+}
+
+/** The sidebar entries whose screens need an organisation. Profile does not. */
+const ORG_SCOPED_NAV = [
+  "nav-issues",
+  "nav-projects",
+  "nav-people",
+  "nav-organisation",
+  "nav-releases",
+  "nav-performance",
+  "nav-logs",
+  "nav-uptime",
+  "nav-reports",
+  "nav-settings",
+];
 
 const landing = (ctx) => {
   // Every route repaints the chrome, because the chrome describes the route.
@@ -336,6 +429,18 @@ const projectsRoute = (view) => (ctx, me) => {
 
 route("/people", guarded(projectsRoute(peopleView)));
 
+route("/organisation", guarded(projectsRoute(organisationView)));
+
+// Yours rather than the organisation's, so it takes no org and no role.
+route("/profile", guarded((ctx, me) => {
+  paintChrome();
+  return profileView(ctx, me);
+}, { needs: "canManageProfile", loadData: false }));
+route("/profile/setup-wizard/:hash", guarded((ctx, me) => {
+  paintChrome();
+  return profileView(ctx, me, { wizardHash: ctx.params.hash });
+}, { needs: "canManageProfile", loadData: false }));
+
 route("/teams", guarded(projectsRoute(teamsListView)));
 // Before :slug, which would otherwise match "new" as a team.
 route("/teams/new", guarded(projectsRoute(teamNewView)));
@@ -346,6 +451,33 @@ route("/projects", guarded(projectsRoute(projectsListView)));
 route("/projects/new", guarded(projectsRoute(projectNewView)));
 route("/projects/:slug", guarded(projectsRoute(projectDetailView)));
 
+/**
+ * Phase 8a. A release belongs to the organisation rather than to one
+ * project, so it takes the same context every org-scoped screen does.
+ */
+route("/releases", guarded(projectsRoute(releasesListView)));
+route("/releases/:version", guarded(projectsRoute(releaseDetailView)));
+
+/**
+ * Phase 8b. The two literal paths are registered before "/:id", which would
+ * otherwise match "spans" and fail on an id GlitchTip declares as an int.
+ */
+route("/performance", guarded(projectsRoute(performanceListView)));
+route("/performance/spans", guarded(projectsRoute(spanGroupsView)));
+route("/performance/n-plus-one", guarded(projectsRoute(nPlusOneView)));
+route("/performance/:id", guarded(projectsRoute(performanceDetailView)));
+
+// Phase 8d. "new" before ":id", which GlitchTip declares as an int.
+route("/uptime", guarded(projectsRoute(monitorsListView)));
+route("/uptime/new", guarded(projectsRoute(monitorNewView)));
+// Phase 8e, and also before ":id" for the same reason.
+route("/uptime/status-pages", guarded(projectsRoute(statusPagesView)));
+route("/uptime/:id", guarded(projectsRoute(monitorDetailView)));
+
+// Phase 8c.
+route("/logs", guarded(projectsRoute(logsListView)));
+route("/logs/:id", guarded(projectsRoute(logDetailView)));
+
 route("/issues", guarded(issuesRoute(issuesListView)));
 route("/issues/:id", guarded(issuesRoute(issueDetailView)));
 // Every value of every tag, which the detail screen only summarises.
@@ -353,6 +485,62 @@ route("/issues/:id/tags", guarded(issuesRoute(issueTagsView)));
 
 route("/reports/:app", guarded(reportsRoute));
 route("/reports/:app/:id", guarded(reportsRoute));
+
+// ------------------------------------------------- the addresses we replaced
+//
+// Phase 9. Caddy stopped serving GlitchTip's own interface, which means every
+// address that used to open one of its screens now arrives here — typed,
+// bookmarked, or followed out of an email GlitchTip sent months ago.
+//
+// They are answered rather than 404'd, and answered here rather than with
+// rewrite rules in the proxy. These are the client's addresses: they have to
+// move when the client moves, and one router that knows both the old shapes
+// and the new ones is easier to keep honest than a second copy of the mapping
+// in a proxy config that nothing tests.
+//
+// Registered last on purpose. The router returns the first route that
+// matches, and "/:org/projects" would otherwise sit in front of
+// "/projects/:slug" and turn a project's own screen into a redirect.
+//
+// GlitchTip carries the organisation in the path and Sentinel carries it in
+// the query, so that is the shape of the translation; the rest is a rename.
+
+/** Where GlitchTip's own UI put the organisation, and where this one does. */
+const legacy = (to) => (ctx) => {
+  const org = ctx.params.org;
+  const query = new URLSearchParams(location.search);
+  if (org) query.set("org", org);
+  const search = query.toString();
+  return goRoute(`${to(ctx)}${search ? `?${search}` : ""}`, { replace: true });
+};
+
+// Signing in and signing up. GlitchTip had three addresses for two screens.
+route("/login", legacy(() => "/signin"));
+route("/login/:org", legacy(() => "/signin"));
+route("/auth", legacy(() => "/signin"));
+route("/register", legacy(() => "/signup"));
+// Its password reset link is the one an email is most likely to still hold.
+route("/reset-password", legacy(() => "/password/request"));
+route("/reset-password/:key", legacy((ctx) => `/password/reset/${encodeURIComponent(ctx.params.key)}`));
+// It listed every organisation on its own screen; here the switcher does
+// that, so the list is the landing screen.
+route("/organizations", legacy(() => "/"));
+// Everything under its profile — /profile/auth-tokens, /profile/settings —
+// is one screen here.
+route("/profile/:section", legacy(() => "/profile"));
+// And the per-organisation screens, which is most of them.
+route("/:org/issues", legacy(() => "/issues"));
+route("/:org/issues/:id", legacy((ctx) => `/issues/${encodeURIComponent(ctx.params.id)}`));
+route("/:org/projects", legacy(() => "/projects"));
+route("/:org/projects/:slug", legacy((ctx) => `/projects/${encodeURIComponent(ctx.params.slug)}`));
+route("/:org/releases", legacy(() => "/releases"));
+route("/:org/performance", legacy(() => "/performance"));
+route("/:org/logs", legacy(() => "/logs"));
+route("/:org/uptime-monitors", legacy(() => "/uptime"));
+// Its "settings" for an organisation is this app's Organisation screen; the
+// project-level one is the project's own.
+route("/:org/settings", legacy(() => "/organisation"));
+route("/:org/settings/:section", legacy(() => "/organisation"));
 
 if (!scopedApp) {
   // hueFor is app.js's own appHue(), not a copy: it's keyed off appNames,
@@ -448,7 +636,7 @@ let organisation = null;
 let organisations = [];
 
 /** What this installation has switched on, for gating the links below. */
-let features = { enabledFeatures: [], glitchtipUrl: null };
+let features = { enabledFeatures: [], glitchtipUrl: null, glitchtipUiUrl: null };
 
 let projects = [];
 let reports = [];
@@ -589,7 +777,13 @@ function sectionFor(path) {
   if (path.startsWith("/projects")) return "projects";
   if (path.startsWith("/people")) return "people";
   if (path.startsWith("/teams")) return "people";
+  if (path.startsWith("/organisation")) return "organisation";
+  if (path.startsWith("/profile")) return "profile";
   if (path.startsWith("/requests")) return "people";
+  if (path.startsWith("/releases")) return "releases";
+  if (path.startsWith("/performance")) return "performance";
+  if (path.startsWith("/logs")) return "logs";
+  if (path.startsWith("/uptime")) return "uptime";
   if (path.startsWith("/settings")) return "settings";
   if (path === "/" || path.startsWith("/reports")) return "reports";
   // Somewhere that isn't a section. Falling through to "reports" would have
@@ -626,39 +820,17 @@ function paintOrg() {
 }
 
 /**
- * The parts of the product that are still GlitchTip's own screens.
+ * The optional screens, once we know which ones this installation has.
  *
- * Real links to real pages, per organisation, rather than a nav of things
- * that do not exist — each becomes an internal route as its phase lands.
- * Uptime and Logs are optional, so they are shown only where GlitchTip says
- * they are switched on; offering a link to a feature an installation does
- * not have is the same mistake as offering one to a screen not yet written.
+ * This used to paint a block of links out to GlitchTip's own screens, each
+ * leaving as its phase landed. Phase 8d took the last of them, so what is
+ * left is the feature check the block was carrying: Logs and Uptime are
+ * screens here now but are still things an installation can be without, and
+ * a nav entry for a feature that does not exist is the same mistake as a
+ * link to a screen that was never written.
  */
 function paintExternalLinks() {
-  const root = (features.glitchtipUrl || glitchtipRoot || "").replace(/\/+$/, "");
-  const enabled = features.enabledFeatures || [];
-
-  // Projects left this list in Phase 4 — it is a screen here now, and a
-  // link to somebody else's version of a screen we have is worse than none.
-  const links = [
-    ["nav-performance", organisation && `${root}/${organisation}/performance`, true],
-    ["nav-uptime", organisation && `${root}/${organisation}/uptime-monitors`, enabled.includes("uptime")],
-    ["nav-logs", organisation && `${root}/${organisation}/logs`, enabled.includes("logs")],
-    ["nav-releases", organisation && `${root}/${organisation}/releases`, true],
-    ["nav-org-settings", organisation && `${root}/${organisation}/settings`, true],
-    ["nav-profile", root && `${root}/profile`, true],
-  ];
-
-  let anyShown = false;
-  for (const [id, href, allowed] of links) {
-    const node = el(id);
-    const show = Boolean(root && href && allowed);
-    node.hidden = !show;
-    if (show) node.href = href;
-    anyShown = anyShown || show;
-  }
-  // A heading over nothing is worse than no heading.
-  el("nav-external-heading").hidden = !anyShown;
+  paintOptionalNav();
 }
 
 /** The chrome, for whatever the route is showing. */
@@ -673,6 +845,12 @@ function paintChrome() {
     ["nav-issues", "issues"],
     ["nav-projects", "projects"],
     ["nav-people", "people"],
+    ["nav-organisation", "organisation"],
+    ["nav-releases", "releases"],
+    ["nav-performance", "performance"],
+    ["nav-logs", "logs"],
+    ["nav-uptime", "uptime"],
+    ["nav-profile", "profile"],
     ["nav-reports", "reports"],
     ["nav-settings", "settings"],
   ]) {
@@ -697,6 +875,8 @@ function paintChrome() {
     // one of them — a page that looks like its header failed to load, which
     // is exactly what the comment above says this exists to prevent.
     projects: "Projects",
+    organisation: "Organisation",
+    profile: "Your profile",
     people: currentPath().startsWith("/teams") ? "Teams" : "People",
     settings: "Settings",
     reports: appName || "Your apps",
@@ -708,10 +888,18 @@ function paintChrome() {
   crumb.textContent = heading || "";
   document.title = appName ? `${appName} — Sentinel` : "Sentinel";
 
-  const url = appName ? projectFor(appName)?.glitchtipUrl || glitchtipRoot : glitchtipRoot;
+  /**
+   * The way out to GlitchTip's own screens, while there still is one.
+   *
+   * It used to point at whatever GLITCHTIP_URL was, per app. Since the flip
+   * that address is this app, so the link led back to the page it was on —
+   * and the per-app version led to a screen that exists here now anyway.
+   * What is left is one link to the escape hatch, offered only where the
+   * server says GlitchTip's interface is still reachable.
+   */
   const link = el("glitchtip-link");
-  link.hidden = !url;
-  if (url) link.href = url;
+  link.hidden = !features.glitchtipUiUrl;
+  if (features.glitchtipUiUrl) link.href = features.glitchtipUiUrl;
 }
 
 /**
@@ -934,7 +1122,11 @@ async function boot() {
     features = {
       enabledFeatures: settings?.enabledFeatures || [],
       glitchtipUrl: config?.glitchtipUrl || null,
+      glitchtipUiUrl: config?.glitchtipUiUrl || null,
     };
+    // The sidebar's way out depends on this answer, and it arrives after
+    // the first paint like the feature list does.
+    paintChrome();
     paintExternalLinks();
   });
 
@@ -946,6 +1138,12 @@ async function boot() {
   el("nav-issues").href = routeHref("/issues");
   el("nav-projects").href = routeHref("/projects");
   el("nav-people").href = routeHref("/people");
+  el("nav-organisation").href = routeHref("/organisation");
+  el("nav-releases").href = routeHref("/releases");
+  el("nav-performance").href = routeHref("/performance");
+  el("nav-logs").href = routeHref("/logs");
+  el("nav-uptime").href = routeHref("/uptime");
+  el("nav-profile").href = routeHref("/profile");
   // A scoped session has no "all projects" to go home to, so both of these
   // point at the one app it is allowed to show.
   const home = routeHref(scopedApp ? `/reports/${encodeURIComponent(scopedApp)}` : "/");

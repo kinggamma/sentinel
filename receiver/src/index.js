@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import path from "node:path";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { reportRouter } from "./routes/report.js";
 import { authRouter } from "./routes/auth.js";
@@ -154,6 +154,60 @@ function sendShell(mount) {
   };
 }
 
+/**
+ * Whether a path is asking for a file rather than for a screen.
+ *
+ * This has been wrong twice, in the same way, and the second time is the
+ * instructive one.
+ *
+ * It began as `path.extname(req.path)` — anything with a dot is a file. A
+ * release is addressed by whatever version somebody put in their build and
+ * almost every version has dots in it, so /sentinel/releases/1.0.0 had an
+ * "extension" of ".0" and 404'd from a bookmark while clicking through to it
+ * worked. The fix was to ask the question the other way round: is the suffix
+ * one this app actually serves.
+ *
+ * That is still classification by suffix, and it still gets the same class of
+ * address wrong — a version *is* allowed to be "app.js", and a release named
+ * after a document is allowed to be "manual.pdf". Any rule that reads the end
+ * of the path will keep finding new versions of this bug, because the suffix
+ * of a client route is the client's business and carries no information about
+ * what the server holds.
+ *
+ * So the question is asked about the *shape* of the path instead, and the
+ * shape comes from the filesystem rather than from a list kept by hand:
+ *
+ *   - the first segment names a directory this app serves assets out of
+ *     (lib/, views/, vendor/) — an asset, and a missing one is a 404;
+ *   - a single segment with a suffix is the root of the asset directory,
+ *     where styles.css and app.bundle.js live — likewise;
+ *   - anything else is a screen, whatever it ends in.
+ *
+ * No client route is a bare filename at the root, and none begins with an
+ * asset directory, so the two spaces do not overlap. The 404 that the
+ * original rule was protecting is kept for the case it was actually about: a
+ * page asking for a script that is not there, which must not be handed HTML
+ * to parse. Those requests are caught by the Accept check at the call site
+ * anyway — a browser fetching a script does not ask for text/html — and this
+ * covers the address typed by hand as well.
+ */
+const ASSET_DIRECTORIES = new Set(
+  readdirSync(PUBLIC_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+);
+
+function looksLikeAsset(pathname, mount = "") {
+  // The mount is given rather than sniffed for: standalone serves the same
+  // app from the root, where a release could legitimately be called
+  // "sentinel" and must not have its first segment eaten.
+  const within = mount && pathname.startsWith(mount) ? pathname.slice(mount.length) : pathname;
+  const segments = within.split("/").filter(Boolean);
+  if (!segments.length) return false;
+  if (ASSET_DIRECTORIES.has(segments[0])) return true;
+  return segments.length === 1 && Boolean(path.extname(segments[0]));
+}
+
 // The trailing slash isn't cosmetic: asset paths are relative, so at
 // /sentinel they'd resolve against the root and land on GlitchTip. Express
 // treats /sentinel and /sentinel/ as one route, so the check is on the URL
@@ -181,7 +235,7 @@ app.use("/sentinel", express.static(PUBLIC_DIR, staticOptions));
 app.get("/sentinel/*", (req, res, next) => {
   if (req.method !== "GET") return next();
   if (!String(req.headers.accept || "").includes("text/html")) return next();
-  if (path.extname(req.path)) return next();
+  if (looksLikeAsset(req.path, "/sentinel")) return next();
   return sendShell("/sentinel")(req, res);
 });
 // Standalone: the same shell, at the root this port serves it from.
@@ -198,7 +252,17 @@ app.use(express.static(PUBLIC_DIR, staticOptions));
 app.get("/*", (req, res, next) => {
   if (req.method !== "GET") return next();
   if (!String(req.headers.accept || "").includes("text/html")) return next();
-  if (path.extname(req.path)) return next();
+  /**
+   * Anything under /sentinel already had its turn above and was declined, so
+   * it must not be picked up again here. Both mounts are the same Express
+   * app, and while the classifier read suffixes the two agreed by accident:
+   * /sentinel/nope.css looked like a file to each of them. Reading the shape
+   * instead, this handler sees two segments beginning with a directory it
+   * knows nothing about and calls it a screen — so a missing asset under the
+   * mount came back as the shell, served with the wrong <base> at that.
+   */
+  if (req.path === "/sentinel" || req.path.startsWith("/sentinel/")) return next();
+  if (looksLikeAsset(req.path, "")) return next();
   return sendShell("")(req, res);
 });
 

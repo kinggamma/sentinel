@@ -123,12 +123,21 @@ const getStandalone = (path, init) => fetch(`${STANDALONE}${path}`, { redirect: 
 async function shellServed() {
   process.stdout.write("\nThe viewer is served\n");
 
-  await check("the bare address lands in Sentinel", async () => {
-    const res = await get("/");
-    assertStatus(res, [301, 302]);
+  await check("the bare address is Sentinel, rather than a redirect to it", async () => {
+    /**
+     * Phase 9. It used to answer 302 to /sentinel/, because GlitchTip's own
+     * interface was still behind everything else on this origin and the
+     * redirect was how you got past it. There is nothing to get past now:
+     * the address people type is the app.
+     */
+    const res = await get("/", { headers: { accept: "text/html" } });
+    assertStatus(res, 200);
+    const body = await res.text();
+    assert(body.includes("<title>Sentinel</title>"), "the bare address is not Sentinel");
+    assert(body.includes('<base href="/" />'), "<base> is missing or wrong at the bare address");
     assert(
-      (res.headers.get("location") || "").includes("/sentinel"),
-      `redirects to ${res.headers.get("location")}, wanted /sentinel/`
+      body.includes('<meta name="sentinel-mount" content="" />'),
+      "the mount should be empty at the bare address"
     );
   });
 
@@ -155,6 +164,8 @@ async function shellServed() {
     "/sentinel/projects/new",
     "/sentinel/projects/e-library",
     "/sentinel/people",
+    "/sentinel/organisation",
+    "/sentinel/profile",
     "/sentinel/teams",
     "/sentinel/teams/new",
     "/sentinel/teams/just-me",
@@ -177,6 +188,49 @@ async function shellServed() {
     "/sentinel/issues/123456?event=019ffabc82a7718cad4fe7a13a7efc37",
     "/sentinel/reports/e-library-admin",
     "/sentinel/reports/e-library-admin/2f8a1c",
+    /**
+     * Phase 8a, and the case that broke the rule the fallback was using —
+     * twice, in the same way.
+     *
+     * A release is addressed by whatever version somebody put in their
+     * build, and almost every version has dots in it, so "the path has an
+     * extension, therefore it is a file" 404'd every release opened from a
+     * bookmark, a shared link or a reload. Narrowing that to a list of
+     * extensions the app actually serves fixed the versions that looked like
+     * numbers and left the ones that look like filenames: "app.js" and
+     * "manual.pdf" are both legal versions, and both went on 404ing.
+     *
+     * The last four exist to keep any suffix-based rule from coming back.
+     * The classification is by the shape of the path now, so what a client
+     * route happens to end in stops being the server's business.
+     */
+    "/sentinel/releases",
+    "/sentinel/releases/1.0.0",
+    "/sentinel/releases/v2.3.1-rc.1",
+    "/sentinel/releases/2026.08.26-nightly.4471",
+    "/sentinel/releases/" + encodeURIComponent("app@1.0.0+build.7"),
+    "/sentinel/releases/app.js",
+    "/sentinel/releases/manual.pdf",
+    "/sentinel/releases/styles.css",
+    "/sentinel/releases/index.html",
+    // Phase 8b. The two literal paths come before "/:id" in the router, and
+    // a reload of any of the four has to find the shell.
+    "/sentinel/performance",
+    "/sentinel/performance?sort=-count&range=7d&q=checkout",
+    "/sentinel/performance/spans",
+    "/sentinel/performance/n-plus-one",
+    "/sentinel/performance/42",
+    // Phase 8c. A log's address is the UUIDv7 it is stored under, dots and
+    // all — its id is also its timestamp, which is why it has no other.
+    "/sentinel/logs",
+    "/sentinel/logs?level=warn&range=7d&q=timeout",
+    "/sentinel/logs/019ffabc-82a7-7718-cad4-fe7a13a7efc3",
+    // Phase 8d, with "new" ahead of the id route.
+    "/sentinel/uptime",
+    "/sentinel/uptime/new",
+    // Phase 8e.
+    "/sentinel/uptime/status-pages",
+    "/sentinel/uptime/7",
   ]) {
     await check(`${route} serves the shell`, async () => {
       const res = await get(route, { headers: { accept: "text/html" } });
@@ -216,27 +270,60 @@ async function shellServed() {
     // nav-projects joined this list in Phase 4: a project's keys, alerts and
     // environments are a screen here now, so linking across to GlitchTip's
     // version of half of it would be a link to somewhere worse.
-    for (const id of ["nav-issues", "nav-projects", "nav-people", "nav-reports", "nav-settings"]) {
+    for (const id of [
+      "nav-issues",
+      "nav-projects",
+      "nav-people",
+      // Internal since Phase 6: the organisation's name, its error counts and
+      // its sign-on settings are a screen here now.
+      "nav-organisation",
+      // Internal since Phase 7.
+      "nav-profile",
+      // Internal since Phase 8a: what shipped, when, and what went into it.
+      "nav-releases",
+      // Internal since Phase 8b.
+      "nav-performance",
+      // Internal since Phase 8c, though still hidden where the installation
+      // has no logs — a screen that can only ever be empty is not a
+      // destination.
+      "nav-logs",
+      // Internal since Phase 8d, and hidden the same way where the
+      // installation has no uptime.
+      "nav-uptime",
+      "nav-reports",
+      "nav-settings",
+    ]) {
       assert(body.includes(`id="${id}"`), `the sidebar is missing ${id}`);
     }
-    for (const external of [
-      "nav-performance",
-      "nav-uptime",
-      "nav-logs",
-      "nav-releases",
-      "nav-org-settings",
-      "nav-profile",
-    ]) {
-      const anchor = body.match(new RegExp(`<a[^>]*id="${external}"[^>]*>`))?.[0];
-      assert(anchor, `the sidebar is missing ${external}`);
-      assert(!/\shref=/.test(anchor), `${external} ships with a guessed href: ${anchor}`);
-      assert(/\shidden/.test(anchor), `${external} is visible before it has anywhere to go`);
-    }
+    /**
+     * Nothing is left in the "In GlitchTip" block. Every link that was in it
+     * — Projects, Releases, Performance, Logs, Uptime — is a screen here
+     * now, so the block and its heading are gone rather than left as an
+     * empty container waiting for something.
+     */
+    assert(!body.includes("sidebar-external"), "the external nav block is still in the shell");
+    assert(!body.includes("nav-external-heading"), "its heading is still in the shell");
+    // The one outward link that stays: GlitchTip itself, for the screens no
+    // phase has replaced.
+    assert(body.includes('id="glitchtip-link"'), "the link to GlitchTip itself went too");
   });
 
   await check("a missing asset 404s rather than returning the shell", async () => {
-    const res = await get("/sentinel/definitely-not-here.js");
-    assertStatus(res, 404);
+    /**
+     * The half of the rule that survived Phase 8a. Widening the fallback to
+     * cover dotted routes must not widen it to cover assets: an HTML answer
+     * to a missing script is a confusing failure to debug, because the
+     * browser reports a syntax error in a file that was never there.
+     */
+    for (const missing of [
+      "/sentinel/definitely-not-here.js",
+      "/sentinel/nope.css",
+      "/sentinel/lib/gone.js",
+      "/sentinel/vendor/missing.woff2",
+      "/sentinel/missing.map",
+    ]) {
+      assertStatus(await get(missing, { headers: { accept: "text/html" } }), 404, missing);
+    }
   });
 
   for (const asset of [
@@ -502,9 +589,43 @@ async function standaloneMode() {
     );
   });
 
+  await check("a client route that looks like a file serves the shell standalone", async () => {
+    /**
+     * The same rule at the other root, where it has to hold without a mount
+     * to strip — and where a release could legitimately be called
+     * "sentinel", which is why the mount is passed to the classifier rather
+     * than recognised inside it.
+     */
+    if (!reachable) return "skip";
+    for (const route of [
+      "/releases/app.js",
+      "/releases/manual.pdf",
+      "/releases/1.0.0",
+      "/releases/styles.css",
+    ]) {
+      const res = await getStandalone(route, { headers: { accept: "text/html" } });
+      assertStatus(res, 200, route);
+      const body = await res.text();
+      assert(body.includes("<title>Sentinel</title>"), `${route} did not return the shell`);
+      assert(body.includes('<base href="/" />'), `${route}: <base> is missing or wrong`);
+    }
+  });
+
   await check("a missing asset 404s at the bare root too", async () => {
     if (!reachable) return "skip";
-    assertStatus(await getStandalone("/definitely-not-here.js"), 404);
+    /**
+     * The other half, kept: asset space is the root of the served directory
+     * and the directories under it, so a missing file in either still 404s
+     * rather than being handed HTML to parse.
+     */
+    for (const missing of [
+      "/definitely-not-here.js",
+      "/nope.css",
+      "/lib/gone.js",
+      "/vendor/missing.woff2",
+    ]) {
+      assertStatus(await getStandalone(missing, { headers: { accept: "text/html" } }), 404, missing);
+    }
   });
 }
 
@@ -558,6 +679,168 @@ async function backendsOwnTheirPaths() {
     // matcher is a wildcard and could swallow GlitchTip paths.
     const res = await get("/api/reportsomething");
     assert(res.status !== 201, "a made-up /api/reports* path reached the receiver");
+  });
+
+  /**
+   * Phase 9 inverted this origin. Sentinel had one prefix and GlitchTip had
+   * everything else; now GlitchTip has a named list and Sentinel has
+   * everything else. Both halves of that are worth pinning, because a
+   * mistake in either direction is silent: a backend path routed to the
+   * receiver 404s something an SDK depends on, and a UI path left with
+   * GlitchTip serves an interface that is supposed to be gone.
+   */
+  await check("what GlitchTip still owns still reaches GlitchTip", async () => {
+    /**
+     * This list comes from GlitchTip's own urls.py, not from the Caddyfile,
+     * and the difference is the entire point of the check.
+     *
+     * Written from the proxy config it can only ever confirm that the config
+     * matches itself: a backend route nobody remembered to add is missing
+     * from both lists at once, so the test passes while the route is broken.
+     * Three were, and this is how they were found — an event's JSON, the
+     * metrics endpoint, and every namespace root without its trailing slash.
+     *
+     * Add a route here when GlitchTip gains one, not when Caddy does.
+     */
+    for (const [path, wanted] of [
+      ["/api/settings/", [200]],
+      ["/api/0/organizations/", [200, 401, 403]],
+      ["/_allauth/browser/v1/config", [200]],
+      // A redirect to its login page is Django answering, which is the point.
+      ["/admin/", [200, 302]],
+      ["/static/favicon.ico", [200]],
+      ["/_health/", [200]],
+      // Django's own 404, not a shell: the page does not exist, the route does.
+      ["/status-pages/nobody/nothing/", [404]],
+      ["/accounts/definitely-not-a-view/", [404]],
+      /**
+       * Prometheus. Only routed when ENABLE_OBSERVABILITY_API is on, so a
+       * 404 is a normal answer — what must never happen is a scraper being
+       * handed an HTML page, which it reports as a parse error rather than
+       * as a misconfigured target.
+       */
+      ["/metrics", [200, 404]],
+      /**
+       * Every namespace, without its trailing slash.
+       *
+       * "/api/*" does not match "/api". Django answers that one with a
+       * redirect to "/api/" — which never happens if the request stops at
+       * the proxy instead, and the client sees an HTML page where it asked
+       * for an API.
+       */
+      ["/api", [301, 302]],
+      ["/_allauth", [200, 301, 302, 404]],
+      ["/accounts", [200, 301, 302, 404]],
+      ["/static", [200, 301, 302, 404]],
+      ["/media", [200, 301, 302, 404]],
+      ["/oauth", [200, 301, 302, 404]],
+      ["/status-pages", [200, 301, 302, 404]],
+      ["/stripe", [200, 301, 302, 404]],
+    ]) {
+      const res = await get(path, { headers: { accept: "text/html" } });
+      assertStatus(res, wanted, path);
+      const body = await res.text();
+      assert(
+        !body.includes("<title>Sentinel</title>"),
+        `${path} was answered by Sentinel — the receiver has taken a backend path`
+      );
+    }
+  });
+
+  await check("an event's JSON is GlitchTip's, inside a namespace that is ours", async () => {
+    /**
+     * The one backend route that lives under a path Sentinel owns.
+     * "/organizations" is this app's landing screen — it was the address of
+     * GlitchTip's list-of-organisations screen — so the namespace cannot be
+     * handed over wholesale, and one route beneath it still belongs to
+     * GlitchTip: Sentry-compatible clients fetch an event as JSON at this
+     * shape, and GlitchTip answers with a redirect to the same thing under
+     * /api/0/.
+     *
+     * Routed to Sentinel it came back 200 with the app's own HTML, which a
+     * client parsing JSON reports as a corrupt event rather than as a
+     * misrouted request. Checked by following the redirect rather than by
+     * reading the status, because "not Sentinel" was true of the broken
+     * version too — it was Sentinel, answering perfectly.
+     */
+    const path = "/organizations/nobody/issues/1/events/abc123/json/";
+    const res = await get(path, { headers: { accept: "application/json" } });
+    assertStatus(res, [301, 302], path);
+    const to = res.headers.get("location") || "";
+    assert(
+      to.includes("/api/0/organizations/nobody/issues/1/events/abc123/json/"),
+      `redirected to ${to}, wanted the same event under /api/0/`
+    );
+
+    // And the screens either side of it are still Sentinel's.
+    for (const ours of ["/organizations", "/nobody/issues", "/nobody/issues/1"]) {
+      const mine = await get(ours, { headers: { accept: "text/html" } });
+      assertStatus(mine, 200, ours);
+      assert(
+        (await mine.text()).includes("<title>Sentinel</title>"),
+        `${ours} stopped being Sentinel's — the JSON matcher is too greedy`
+      );
+    }
+  });
+
+  await check("every address GlitchTip's own interface used is Sentinel now", async () => {
+    /**
+     * These are the routes its Angular app claimed, and they arrive here
+     * from bookmarks and from emails it sent months ago. The shell has to be
+     * served for all of them; which screen the client then shows is the
+     * router's business and is checked in the browser suite.
+     */
+    for (const path of [
+      "/",
+      "/login",
+      "/auth",
+      "/register",
+      "/organizations",
+      "/profile",
+      "/profile/auth-tokens",
+      "/reset-password/abc-123",
+      "/accept/12/ddar27-abc123",
+      "/system-info",
+      "/some-org/issues",
+      "/some-org/issues/4321",
+      "/some-org/projects",
+      "/some-org/releases",
+      "/some-org/performance",
+      "/some-org/logs",
+      "/some-org/uptime-monitors",
+      "/some-org/settings",
+    ]) {
+      const res = await get(path, { headers: { accept: "text/html" } });
+      assertStatus(res, 200, path);
+      const body = await res.text();
+      assert(body.includes("<title>Sentinel</title>"), `${path} is not Sentinel`);
+      assert(
+        !body.includes("<title>GlitchTip</title>"),
+        `${path} still serves GlitchTip's own interface`
+      );
+    }
+  });
+
+  await check("GlitchTip's interface is on its own port, and nowhere on this one", async () => {
+    /**
+     * The escape hatch: one release of "the screen Sentinel got wrong is a
+     * port away rather than a release away". Published unproxied because its
+     * shell declares <base href="/"> and its bundles are hash-named under
+     * /static/ — from a sub-path both would need rewriting and its router
+     * would then disagree with the URL.
+     *
+     * Skipped rather than failed where the port is closed: closing it is the
+     * intended end of this arrangement, not a broken deployment.
+     */
+    const fallback = (process.env.GLITCHTIP_FALLBACK_URL || "http://localhost:8080").replace(/\/+$/, "");
+    const res = await fetch(`${fallback}/`, { headers: { accept: "text/html" } }).catch(() => null);
+    if (!res) return "skip";
+    assertStatus(res, 200, fallback);
+    const body = await res.text();
+    assert(
+      body.includes("<title>GlitchTip</title>"),
+      "the fallback port is not serving GlitchTip's interface"
+    );
   });
 }
 

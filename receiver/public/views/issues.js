@@ -19,7 +19,7 @@
 import { glitchtip } from "../lib/api.js";
 import { h, fill, emptyState } from "../lib/dom.js";
 import { since, at } from "../lib/time.js";
-import { parseLinks } from "../lib/pagination.js";
+import { parseLinks, cursorOf } from "../lib/pagination.js";
 import { throwIfAborted } from "../lib/abort.js";
 import { href as routeHref, go, refresh as refreshRoute } from "../lib/router.js";
 
@@ -99,20 +99,6 @@ function apiPath(org, filters) {
 }
 
 /**
- * The Link header hands back whole URLs. Only the cursor inside one is ours
- * to keep — the rest of that URL is the filters we already have, and storing
- * it whole would let a stale page's filters override the current ones.
- */
-function cursorOf(link) {
-  if (!link) return null;
-  try {
-    return new URL(link, location.origin).searchParams.get("cursor");
-  } catch {
-    return null;
-  }
-}
-
-/**
  * What went wrong, in terms of what to do about it.
  *
  * 404 means two entirely different things depending on who asked, and the
@@ -189,7 +175,12 @@ function issueRow(issue, { filters, selected, onPick, org = null }) {
   return h(
     "tr",
     { className: issue.status === "unresolved" ? "" : "resolved", attrs: { "data-id": issue.id } },
-    h("td", {}, box),
+    // Named rather than left to :first-child. The 36px that keeps this
+    // column to the width of a checkbox used to be addressed by position,
+    // which meant every other table built on .issues-table had its first
+    // column squeezed too — a release version wrapped one character at a
+    // time to fit a width meant for a tick box.
+    h("td", { className: "pick" }, box),
     h(
       "td",
       {},
@@ -329,7 +320,10 @@ export async function issuesListView({ outlet, query, signal }, { org, orgs = []
   const rows = h("tbody", { attrs: { id: "issue-rows" } });
   const table = h(
     "table",
-    { className: "issues-table" },
+    // Named, because the phone rules that hide its trend column and pin its
+    // widths are about this list and not about every table that borrows its
+    // styling.
+    { className: "issues-table issue-list" },
     h(
       "thead",
       {},
@@ -1087,15 +1081,14 @@ export async function issueDetailView(
           { className: "detail-actions" },
           resolve,
           ignore,
-          issue.permalink
-            ? h("a", {
-                className: "button-link",
-                href: issue.permalink,
-                target: "_blank",
-                attrs: { rel: "noreferrer noopener" },
-                text: "Open in GlitchTip ↗",
-              })
-            : null
+          /**
+           * "Open in GlitchTip ↗" used to be here, built from the
+           * permalink GlitchTip returns. Since the flip that address is
+           * this app, and the route it names is the screen it was on — a
+           * link back to the page you are reading. Removed rather than
+           * repointed: there is nowhere else to go.
+           */
+          null
         )
       ),
       body

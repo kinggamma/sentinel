@@ -7,6 +7,8 @@
  * checked against the running instance rather than assumed:
  *
  *   member   project:read, event:*, member:read        — reads, nothing else
+ *            ...and project:releases, which is not a read: it is the whole
+ *            of what the release endpoints ask for, delete included
  *   admin    + project:write, project:admin, team:write
  *   manager  + member:write, org:write
  *   owner    everything
@@ -83,5 +85,49 @@ export function abilities(role) {
      * hardest kind of gap to notice.
      */
     canLinkProjectsToTeams: Boolean(known) && atLeast(known, "manager"),
+
+    /**
+     * The organisation's own settings, and how people sign into it.
+     *
+     * org:write, which is manager and above — the same scope covers renaming
+     * the organisation and configuring single sign-on, so they are one
+     * answer rather than two that would drift apart. A member cannot even
+     * read the social-app list, which is why the whole section is hidden
+     * rather than shown empty.
+     */
+    canManageOrganisation: Boolean(known) && atLeast(known, "manager"),
+
+    /**
+     * Releases, including deleting one.
+     *
+     * Every role, member included. That is not an oversight here: GlitchTip
+     * puts project:releases in the member scope set alongside project:read,
+     * and the release endpoints ask for nothing else — so an ordinary member
+     * may edit and delete any release in the organisation, which is more than
+     * they may do to a single project setting.
+     *
+     * Written out as its own answer rather than folded into canRead, because
+     * it is the one place where "can see it" and "can destroy it" are the
+     * same scope, and a screen reading canRead for a delete button would be
+     * right today by accident.
+     */
+    canManageReleases: Boolean(known),
+
+    /**
+     * Uptime monitors, including creating and deleting them.
+     *
+     * Every role again, and for a weaker reason than releases: those
+     * endpoints at least name a scope. The monitor endpoints declare no
+     * permission at all — create, update and delete are gated on being in
+     * the organisation and nothing else — so a member can point a monitor
+     * anywhere and delete anybody else's.
+     *
+     * Recorded rather than corrected. Hiding the controls would take away
+     * something GlitchTip permits, and the same person could do it from
+     * GlitchTip's own screen a click away; what this can do is make the
+     * looseness visible in the one file that answers "what may this role
+     * do", instead of leaving each screen to assume.
+     */
+    canManageUptime: Boolean(known),
   });
 }

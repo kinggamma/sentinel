@@ -319,12 +319,43 @@ await test("having nowhere to go is not the same as not being signed in", () => 
   // Pending and denied are fully authenticated identities that happen to
   // belong to no organisation. Account-level abilities are theirs; only
   // Sentinel's data is not.
-  for (const state of [STATES.PENDING, STATES.DENIED, STATES.REAUTH_REQUIRED]) {
+  for (const state of [STATES.PENDING, STATES.DENIED]) {
     const can = capabilities({ state, user: { hasPasswordAuth: true }, orgs: [] });
     assert(can.canChangePassword, `${state} may change its password`);
     assert(!can.canRead, `${state} may not read`);
     assert(!can.canManageAccess, `${state} may not manage access`);
   }
+});
+
+await test("a signed-in identity may manage its profile without organisation access", () => {
+  assert(capabilities({ state: STATES.PENDING }).canManageProfile, "pending identity");
+  assert(capabilities({ state: STATES.DENIED }).canManageProfile, "denied identity");
+  assert(capabilities({ state: STATES.AUTHENTICATED }).canManageProfile, "authorised identity");
+  assert(!capabilities({ state: STATES.ANONYMOUS }).canManageProfile, "anonymous browser");
+  assert(!capabilities({ state: STATES.DISABLED }).canManageProfile, "disabled identity");
+});
+
+await test("a session asked to prove itself again may not touch the account first", () => {
+  /**
+   * The one state where "is this identity signed in" and "may this identity
+   * change its own credentials" give different answers, so it is pinned
+   * rather than left to whichever list it happens to fall into.
+   *
+   * The abilities below are the account screen: minting a token that acts as
+   * you, removing the second factor, changing the address a password reset
+   * goes to. That set is precisely what reauthentication exists to stand in
+   * front of, and nothing further down would catch it — the token endpoints
+   * are GlitchTip's, not allauth's, so allauth's own guard never sees the
+   * request. Signing in again satisfies the flow; the router says so.
+   */
+  const can = capabilities({
+    state: STATES.REAUTH_REQUIRED,
+    user: { hasPasswordAuth: true },
+    orgs: [],
+  });
+  assert(!can.canManageProfile, "may not manage the account mid-reauthentication");
+  assert(!can.canChangePassword, "may not change the password mid-reauthentication");
+  assert(!can.canRead, "may not read");
 });
 
 await test("only a password account has its sessions invalidated by changing it", () => {

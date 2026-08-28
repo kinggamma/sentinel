@@ -37,19 +37,16 @@ function projectCard(project, hue, onOpenReports) {
   });
   actions.append(open);
 
-  if (project.glitchtipUrl) {
-    actions.append(
-      h("a", {
-        className: "button-link",
-        href: project.glitchtipUrl,
-        target: "_blank",
-        attrs: { rel: "noreferrer noopener" },
-        text: "GlitchTip ↗",
-        // The whole card is clickable; the link is the one thing that isn't.
-        on: { click: (event) => event.stopPropagation() },
-      })
-    );
-  }
+  /**
+   * "GlitchTip ↗" used to be here, built from GLITCHTIP_URL and opened in a
+   * new tab. The flip put Sentinel on that address, so it left the tab, came
+   * back here, and landed on an unfiltered issue list — the project filter
+   * it carried is GlitchTip's query parameter and not ours.
+   *
+   * Nothing replaces it. The card already leads to the project's own screen
+   * a few lines down, which is where everything that link promised now
+   * lives, and two links to one destination is not a way out of anywhere.
+   */
 
   // Shown only for projects Sentinel created, which is exactly when the app
   // still needs its DSN pasting into a config somewhere.

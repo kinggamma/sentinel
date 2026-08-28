@@ -112,10 +112,14 @@ export function field({ label, id, type = "text", value = "", placeholder = "", 
  * A dialog. Closing on the backdrop and on Escape used to be written out
  * separately for each of the three overlays that existed.
  */
-export function modal({ title, body, actions = [], onClose } = {}) {
+export function modal({ title, body, actions = [], onClose, signal } = {}) {
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     overlay.remove();
     document.removeEventListener("keydown", onKey);
+    signal?.removeEventListener("abort", close);
     onClose?.();
   };
   const onKey = (event) => {
@@ -138,6 +142,8 @@ export function modal({ title, body, actions = [], onClose } = {}) {
 
   document.body.append(overlay);
   document.addEventListener("keydown", onKey);
+  signal?.addEventListener("abort", close, { once: true });
+  if (signal?.aborted) close();
   return { close, panel };
 }
 
@@ -169,7 +175,7 @@ export function modal({ title, body, actions = [], onClose } = {}) {
  *   `detail`; a dialog asking both at once is two dialogs wearing one hat.
  * @param {string} [options.confirm]
  */
-export function confirmAction({ title, detail, body = null, confirm = "Yes, do it" } = {}) {
+export function confirmAction({ title, detail, body = null, confirm = "Yes, do it", signal } = {}) {
   return new Promise((resolve) => {
     let answered = false;
     const answer = (value) => {
@@ -196,6 +202,7 @@ export function confirmAction({ title, detail, body = null, confirm = "Yes, do i
       ],
       // Escape and clicking away are answers too, and the answer is no.
       onClose: () => answer(false),
+      signal,
     });
 
     go.focus();

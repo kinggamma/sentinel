@@ -74,7 +74,7 @@ export async function teamsListView({ outlet, signal }, { org, orgs = [], me } =
   fill(
     outlet,
     h("div", { className: "issues-view" },
-      h("header", { className: "detail-head" },
+      h("header", { className: "detail-head row" },
         h("h2", { text: "Teams" }),
         can.canManageTeams
           ? h("button", {

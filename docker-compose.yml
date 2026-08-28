@@ -91,15 +91,27 @@ services:
     depends_on:
       glitchtip-migrate:
         condition: service_completed_successfully
+    # The escape hatch, for one release.
+    #
+    # Caddy sends every UI path to Sentinel now, so GlitchTip's own interface
+    # has no address on :8000 any more. This publishes it unproxied, where it
+    # needs no rewriting to work: its shell declares <base href="/"> and its
+    # bundles are hash-named under /static/, so serving it from a sub-path
+    # would mean rewriting the base and every asset reference, and its router
+    # would then disagree with the URL. A second port costs nothing and
+    # rewrites nothing.
+    #
+    # It is here so that a screen Sentinel got wrong is one port away rather
+    # than one release away. Close it when nobody has needed it.
+    ports:
+      - "${GLITCHTIP_FALLBACK_PORT:-8080}:8000"
     volumes:
       - glitchtip_uploads:/code/uploads
-      # Adds a "Bug reports in Sentinel" link to GlitchTip's UI, which ships
-      # as a prebuilt image with nowhere to configure one. This file is a
-      # patched copy of the image's own SPA shell and references its
-      # hash-named JS bundles, so it MUST be regenerated after every
-      # GlitchTip upgrade or GlitchTip will fail to load:
-      #   ./scripts/patch-glitchtip-index.sh --check
-      - ./glitchtip/index.html:/code/dist/index.html:ro
+      # The patched SPA shell that used to be mounted here is gone with the
+      # flip: it existed to add a "Bug reports in Sentinel" link to
+      # GlitchTip's UI, and there is no longer a GlitchTip UI to add it to.
+      # scripts/patch-glitchtip-index.sh went with it, and so did the chore
+      # of re-running it after every upgrade.
 
   glitchtip-worker:
     image: glitchtip/glitchtip@sha256:a3d8eb1b36c1e1603d55ab32711ea3dd8115874742a781a57391a62a16e0dff6
@@ -127,6 +139,10 @@ services:
       # GLITCHTIP_URL goes into links staff click, so it must be reachable
       # from their browser; the API call is made container-to-container.
       GLITCHTIP_URL: ${GLITCHTIP_DOMAIN}
+      # Where GlitchTip's own interface still answers, which since the flip
+      # is not GLITCHTIP_DOMAIN — that address is Sentinel. Unset it when the
+      # escape hatch closes and the UI stops offering a way out to it.
+      GLITCHTIP_UI_URL: ${GLITCHTIP_UI_URL:-}
       GLITCHTIP_API_URL: http://glitchtip-web:8000
       GLITCHTIP_ORG: ${GLITCHTIP_ORG}
       # Sign out a session nobody has touched for this many minutes. 0 leaves

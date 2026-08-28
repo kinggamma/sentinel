@@ -23,6 +23,18 @@ import { serviceTeam, serviceToken } from "./settings.js";
 const GLITCHTIP_URL = (process.env.GLITCHTIP_URL || "").replace(/\/+$/, "");
 export const GLITCHTIP_API_URL = (process.env.GLITCHTIP_API_URL || GLITCHTIP_URL).replace(/\/+$/, "");
 /**
+ * And since Phase 9, a third: where GlitchTip's *own interface* still is.
+ *
+ * GLITCHTIP_URL used to be both — the API and the screens were the same
+ * address. The flip put Sentinel on that address, so a link built from it
+ * now leads back here, which is a link to yourself dressed up as a way out.
+ *
+ * Unset by default and the link is simply not offered. That is the intended
+ * end of this arrangement: the escape hatch closes, and nothing has to be
+ * edited for the UI to stop advertising it.
+ */
+const GLITCHTIP_UI_URL = (process.env.GLITCHTIP_UI_URL || "").replace(/\/+$/, "");
+/**
  * There is deliberately no "the organisation" here.
  *
  * GlitchTip already knows which organisations a person belongs to and which
@@ -50,7 +62,7 @@ export function orgSlug() {
 export const glitchtipConfigured = Boolean(GLITCHTIP_URL);
 
 export function glitchtipInfo() {
-  return { url: GLITCHTIP_URL, org: orgSlug() };
+  return { url: GLITCHTIP_URL, uiUrl: GLITCHTIP_UI_URL, org: orgSlug() };
 }
 
 /**
